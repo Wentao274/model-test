@@ -1,0 +1,240 @@
+# 主流大模型推理功能测试点矩阵
+
+> 日期：2026-04-07
+> 覆盖模型：Qwen 3.5、Kimi K2.5、GLM-5、Minimax 2.1、Minimax 2.5
+> 目标：梳理推理服务需要覆盖的完整测试点，形成可执行的测试清单
+
+---
+
+## 一、模型基本信息对照
+
+| 维度           | Qwen 3.5                 | Kimi K2.5           | GLM-5               | Minimax 2.1                                 | Minimax 2.5                                 |
+|--------------|--------------------------|---------------------|---------------------|---------------------------------------------|---------------------------------------------|
+| **发布日期**     | 2026.02.15               | 2026.01             | 2026.02.11          | 以当前接入的 `minimax-m21` 为准                     | 以当前接入的 `minimax-m2.5` 为准                    |
+| **架构**       | Hybrid（线性注意力+MoE）        | MoE（384 experts）    | MoE                 | 商业闭源服务形态                                    | 商业闭源服务形态                                    |
+| **总参数/激活参数** | 397B / 17B               | 1T / 32B            | 744B / 40B          | 未公开                                         | 未公开                                         |
+| **最大上下文**    | 262K（扩展至 1M）             | 128K                | 205K                | 以服务端配置与实测边界为准                               | 以服务端配置与实测边界为准                               |
+| **多模态**      | 原生视觉-语言                  | 原生视觉-语言-视频          | 文本为主                | 当前套件已覆盖图片 content parts                     | 当前套件已覆盖图片 content parts                     |
+| **思考模式**     | 支持 thinking/non-thinking | 支持 instant/thinking | 支持                  | 支持，关闭后 `reasoning` 仍可能返回文本                  | 支持，关闭后 `reasoning` 仍可能返回文本                  |
+| **工具调用**     | 原生内置                     | 原生内置                | 原生内置                | 支持，当前稳定 passing path 为 `tool_choice="auto"` | 支持，当前稳定 passing path 为 `tool_choice="auto"` |
+| **开源协议**     | Apache 2.0               | 开源                  | 开源                  | 闭源商用                                        | 闭源商用                                        |
+| **推理框架支持**   | vLLM/SGLang/TRT-LLM      | vLLM/SGLang         | vLLM/SGLang/TRT-LLM | 当前通过 OpenAI-compatible 服务接入                 | 当前通过 OpenAI-compatible 服务接入                 |
+
+---
+
+## 二、测试点总览（9 大类 × 62 个测试点）
+
+### 分类概览
+
+| 分类           | 测试点数 | 说明                  |
+|--------------|------|---------------------|
+| A. 基础推理能力    | 8    | 文本生成、对话、基础控制等       |
+| B. 高级生成功能    | 9    | 思考模式、工具调用、结构化输出等    |
+| C. 多模态能力     | 8    | 图片理解、视频理解、跨模态推理     |
+| D. 长上下文处理    | 8    | 长文本输入/输出、大海捞针、上下文边界 |
+| E. 性能指标      | 12   | 延迟、吞吐、并发、显存         |
+| F. 稳定性与边界    | 8    | 异常输入、OOM 恢复、长时间运行   |
+| G. API 兼容性   | 4    | OpenAI 兼容、参数一致性     |
+| H. 质量评估      | 4    | 生成质量、一致性、幻觉率        |
+| I. 单项超长上下文验证 | 1    | 验证超长上下文可用性和边界       |
+
+---
+
+## 三、详细测试点矩阵
+
+状态说明：`✅` 已通过，`⏳` 未测试，`❌` 未通过，`⚠️` 部分通过
+
+### A. 基础推理能力（8 项）
+
+| #   | 测试点           | 测试内容                             | Qwen 3.5 | Kimi K2.5 | GLM-5 | Minimax 2.1 | Minimax 2.5 | 优先级 |
+|-----|---------------|----------------------------------|----------|-----------|-------|-------------|-------------|-----|
+| A1  | 单轮对话          | 发送单条 prompt，验证正常生成               | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+| A2  | 多轮对话          | 3-5 轮对话，验证上下文保持和连贯性              | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+| A3  | System Prompt | 设置系统角色，验证模型遵循程度                  | ✅        | ✅         | ✅     | ❌           | ✅           | P0  |
+| A4  | 流式输出          | stream=true，验证 SSE 逐 token 返回    | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+| A5  | 非流式输出         | stream=false，验证完整返回              | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+| A6  | Max Tokens 限制 | 设置 max_tokens=50/100/500，验证输出不超限 | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+| A7  | 多语言能力         | 中/英/日/韩/法 等多语言输入输出               | ✅        | ✅         | ✅     | ✅           | ✅           | P1  |
+| A8  | 特殊 Token 处理   | 含 emoji、代码块、数学符号、HTML 标签的输入      | ✅        | ✅         | ✅     | ✅           | ✅           | P1  |
+
+> A3 当前 `Minimax 2.1` 列记为 `❌`、`Minimax 2.5` 列记为 `✅`：`minimax-m2.5` 通过，但 `minimax-m21` 在 system prompt 冲突场景下仍返回 user 指令结果。
+
+---
+
+### B. 高级生成功能（9 项）
+
+| #   | 测试点            | 测试内容                                           | Qwen 3.5 | Kimi K2.5 | GLM-5 | Minimax 2.1 | Minimax 2.5 | 优先级 |
+|-----|----------------|------------------------------------------------|----------|-----------|-------|-------------|-------------|-----|
+| B1  | 思考模式（Thinking） | 开启 thinking mode，验证返回思考链 + 最终答案                | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+| B2  | 非思考模式（Instant） | 关闭 thinking，拆分验证“请求可接受”与“无 hidden thinking 泄漏” | ✅        | ⚠️        | ✅     | ⚠️          | ⚠️          | P0  |
+| B3  | 思考模式切换         | 同一会话内 thinking↔non-thinking 切换                 | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| B4  | 工具调用-单工具       | 定义单个 function，验证模型正确调用并传参                      | ❌        | ✅         | ❌     | ❌           | ❌           | P0  |
+| B5  | 工具调用-多工具       | 定义多个 function，验证模型选择正确的工具                      | ✅        | ✅         | ✅     | ✅           | P0          |
+| B6  | 工具调用-并行调用      | 单次回复中并行调用多个工具                                  | ❌        | ✅         | ✅     | ⚠️          | ✅           | P1  |
+| B7  | 工具调用-多步链式      | 工具结果作为下一步输入，验证 3+ 步链式执行                        | ❌        | ❌         | ✅     | ✅           | ✅           | P1  |
+| B8  | JSON Mode      | response_format=json_object，验证输出合法 JSON        | ✅        | ✅         | ⚠️    | ⚠️          | ⚠️          | P0  |
+| B9  | 结构化输出          | JSON Schema 约束输出格式，验证字段完整性                     | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |
+
+> **说明**：
+> - B1 当前依据 `tests/test_chat.py` 中新增的 thinking mode create / stream 路径回填：5 个当前接入模型均满足 `message.reasoning` 非空，且流式增量里可采集到 reasoning 片段。
+> - B2 现在拆成两层验证：
+>   - 请求可接受性：依据 `tests/test_chat.py` 中 `test_create_accepts_chat_template_kwargs_enable_thinking_false` 与 `test_stream_accepts_chat_template_kwargs_enable_thinking_false` 回填，当前 5 个模型的 create / stream 路径都可稳定通过。
+>   - suppress hidden thinking：依据 `tests/test_chat.py` 中 `test_create_suppresses_reasoning_when_thinking_disabled` 与 `test_stream_suppresses_reasoning_when_thinking_disabled` 回填；流式链路现在按三通道占用关系判定，只有在 `content` 非空、且 `reasoning` / `reasoning_content` 都为空时才算通过。`qwen35` 与 `glm-5` 当前稳定通过，`kimi-k25`、`minimax-m21`、`minimax-m2.5` 若仍返回 `reasoning` 或 `reasoning_content`，则以 `xfail` 记录，因此整体仍按 `⚠️` 记为部分通过。
+> - B3 当前已补齐用例骨架（待跑回填矩阵结果）：新增 `tests/test_chat.py` 中
+>   - `test_create_switches_thinking_to_instant_within_same_conversation`
+>   - `test_create_switches_instant_to_thinking_within_same_conversation`
+>   主要验证同一 messages history 下 `chat_template_kwargs.enable_thinking` 的 `true↔false` 切换是否可用；其中 `enable_thinking=false` 下的严格 suppress hidden thinking 口径沿用 B2（显式 reasoning 非空，或 explanation 混进最终 `content`，都记为 `xfail`）。
+> - B4 当前依据 `tests/test_tool_calling.py` 中 `single_tool_nonstream` 回填：仅 `kimi-k25` 稳定通过；`glm-5`、`qwen35`、`minimax-m21`、`minimax-m2.5` 在当前后端上复现 `500` / `upstream_error` 等失败。
+> - B6 当前依据 `tests/test_tool_calling.py` 中 `parallel_distinct_tool_calls` 回填：`glm-5`、`kimi-k25`、`minimax-m2.5` 稳定通过；`qwen35` 返回 `finish_reason=length` 且只输出 reasoning，未产生结构化 `tool_calls`；`minimax-m21` 会以文本/XML 形式写出工具调用并因长度截断，因此 `Minimax 2.1` 记为 `⚠️`，`Minimax 2.5` 记为 `✅`。
+> - B7 当前依据 `tests/test_tool_calling.py` 中 `test_multi_step_tool_chain_round_trip` 回填：`glm-5`、`minimax-m21`、`minimax-m2.5` 可稳定完成 `fetch_seed_word -> uppercase_word -> decorate_word -> [STONE]` 的 3 步链式 tool loop；`qwen35` 第二步会退化成文本/XML 风格的伪工具调用并因长度截断，`kimi-k25` 当前可完成前两步但第三步会丢失结构化 `tool_calls`，因此 `Qwen 3.5` 与 `Kimi K2.5` 记为 `❌`，`GLM-5`、`Minimax 2.1` 与 `Minimax 2.5` 均记为 `✅`。
+> - B8 当前依据 `tests/test_chat.py` 中 `test_json_mode_returns_valid_json_object` 回填：`qwen35`、`kimi-k25` 能稳定在 `message.content` 返回合法 JSON；`glm-5`、`minimax-m21`、`minimax-m2.5` 当前会把 JSON 放到 `message.reasoning` 且 `message.content=null`，因此以 `xfail` 记录并在矩阵中标为 `⚠️`。
+> - B9 当前依据 `tests/test_chat.py` 中 `StructuredOutput` 路径回填，5 个当前接入模型均通过。
+
+---
+
+### C. 多模态能力（8 项）
+
+| #   | 测试点     | 测试内容                        | Qwen 3.5 | Kimi K2.5 | GLM-5 | Minimax 2.1 | Minimax 2.5 | 优先级 |
+|-----|---------|-----------------------------|----------|-----------|-------|-------------|-------------|-----|
+| C1  | 单图理解    | 输入一张图片 + 文本提问，验证视觉理解        | ✅        | ✅         | ❌     | ❌           | ❌           | P0  |
+| C2  | 多图对比    | 输入多张图片，验证跨图比较和推理            | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| C3  | 高分辨率图片  | 4K 分辨率图片，验证细节识别能力           | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| C4  | 图表/OCR  | 表格截图、流程图、手写文字识别             | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P0  |
+| C5  | 视频理解    | 输入视频文件，验证时序理解和总结            | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| C6  | 代码截图→代码 | UI 设计稿/代码截图，生成对应代码          | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P2  |
+| C7  | 多模态工具调用 | 基于图片内容触发工具调用                | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P2  |
+| C8  | 图片格式兼容性 | PNG/JPEG/WebP/GIF/Base64 编码 | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+
+> **说明**：
+> - C1 当前依据 `tests/test_chat.py::test_create_understands_single_image_dominant_color` 回填：`qwen35`、`kimi-k25` 可稳定识别内置纯红色图片并返回 `red`；`glm-5`、`minimax-m21`、`minimax-m2.5` 在当前端点返回 `400 not a multimodal model`，因此分别记为 `❌`。
+> - GLM-5 当前版本以文本为主；Minimax 2.1 / 2.5 在本仓库当前已覆盖图片 content parts 的 create/stream 路径，更多多模态能力需要单独补测
+
+---
+
+### D. 长上下文处理（8 项）
+
+| #   | 测试点        | 测试内容                           | Qwen 3.5 | Kimi K2.5 | GLM-5 | Minimax 2.1 | Minimax 2.5 | 优先级 |
+|-----|------------|--------------------------------|----------|-----------|-------|-------------|-------------|-----|
+| D1  | 短上下文基线     | input 1K tokens，验证正常推理         | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P0  |
+| D2  | 中等上下文      | input 8K-16K tokens，验证质量不降     | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P0  |
+| D3  | 长上下文       | input 32K-64K tokens，验证召回和推理   | ✅        | ✅         | ✅     | ✅           | P0          |
+| D4  | 超长上下文      | input 128K+ tokens，验证不 OOM 且可用 | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| D5  | 大海捞针（NIAH） | 长文本中插入特定信息，验证召回率               | ✅        | ✅         | ✅     | ✅           | P0          |
+| D6  | 上下文边界行为    | 输入恰好等于 max_model_len，验证行为      | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| D7  | 超出上下文截断    | 输入超过模型限制，验证截断/拒绝策略             | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+| D8  | 长输出生成      | 要求生成 4K-8K tokens 的长文本，验证完整性   | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+
+---
+
+### E. 性能指标（12 项）
+
+| #   | 测试点                | 测试内容                              | 测试方法                         | 优先级 |
+|-----|--------------------|-----------------------------------|------------------------------|-----|
+| E1  | TTFT（首 Token 延迟）   | 从请求发出到收到第一个 token 的时间             | benchmark_serving.py / 自定义脚本 | P0  |
+| E2  | TPOT（每 Token 生成时间） | Decode 阶段平均每个 token 耗时            | 统计流式输出 token 间隔              | P0  |
+| E3  | ITL P50/P95/P99    | Token 间延迟的分位数统计                   | 多轮测试取分位数                     | P0  |
+| E4  | 端到端延迟              | 从请求到完整响应的总时间                      | 非流式请求测量                      | P0  |
+| E5  | 吞吐量（tokens/s）      | 单位时间生成的 token 总数                  | 并发压测                         | P0  |
+| E6  | 请求吞吐（req/s）        | 单位时间完成的请求数                        | 固定 QPS 压测                    | P0  |
+| E7  | 并发扩展性              | 并发 1→10→50→100→200 时指标变化          | 阶梯加压测试                       | P0  |
+| E8  | 显存占用               | 不同并发/序列长度下的 GPU 显存消耗              | nvidia-smi 监控                | P0  |
+| E9  | GPU 利用率            | 推理时 GPU 计算单元利用率                   | nvidia-smi / nvtop           | P1  |
+| E10 | 预热时间               | 首次推理 vs 稳态推理的延迟差异                 | 对比前 5 次和稳态                   | P1  |
+| E11 | Prefill 速度         | 不同输入长度（1K/4K/16K/64K）的 prefill 耗时 | 固定短输出，变输入长度                  | P1  |
+| E12 | 突发流量恢复             | 瞬间 100 并发后恢复到正常响应时间               | burst 模式压测                   | P1  |
+
+> **注**：以上测试点需在每个模型 × 每种部署配置（FP16/量化/不同 TP）上分别执行
+
+---
+
+### F. 稳定性与边界（8 项）
+
+| #   | 测试点    | 测试内容                           | 预期行为              | 优先级 |
+|-----|--------|--------------------------------|-------------------|-----|
+| G1  | 空输入    | 发送空 prompt 或空 messages         | 返回错误提示，不崩溃        | P0  |
+| G2  | 超大输入   | 超过 max_model_len 的输入           | 截断或返回 413 错误      | P0  |
+| G3  | 非法参数   | temperature=-1, max_tokens=0 等 | 返回 400 参数错误       | P0  |
+| G4  | 特殊字符注入 | SQL 注入、Prompt 注入、XSS payload   | 不执行恶意指令，正常回复      | P0  |
+| G5  | 并发稳定性  | 200+ 并发持续运行 1 小时               | 无 crash、无内存泄漏     | P0  |
+| G6  | OOM 恢复 | 显存耗尽后的服务行为                     | 拒绝新请求但不崩溃，显存释放后恢复 | P1  |
+| G7  | 长时间运行  | 连续服务 24 小时                     | 性能不退化，无内存泄漏       | P1  |
+| G8  | 请求超时处理 | 客户端超时断开                        | 服务端正确释放资源         | P1  |
+
+---
+
+### G. API 兼容性（4 项）
+
+| #   | 测试点                     | 测试内容                                                     | Qwen 3.5 | Kimi K2.5 | GLM-5 | Minimax 2.1 | Minimax 2.5 | 优先级 | 结果说明                                                                                       |
+|-----|-------------------------|----------------------------------------------------------|----------|-----------|-------|-------------|-------------|-----|--------------------------------------------------------------------------------------------|
+| H1  | OpenAI Chat Completions | `/v1/chat/completions` 接口兼容，验证请求格式、返回格式完全兼容              | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |                                                                                            |
+| H2  | OpenAI Completions      | `/v1/completions` 接口兼容，验证传统 completion 格式支持              | ✅        | ✅         | ✅     | ✅           | ✅           | P1  |                                                                                            |
+| H3  | 模型列表                    | `/v1/models` 返回可用模型，验证正确返回模型 ID 和元信息                     | ✅        | ✅         | ✅     | ✅           | ✅           | P1  | `/v1/models` 当前返回 `object=list`，默认模型矩阵 5 个模型都能在列表中找到，且带 `id` / `created` / `owned_by` 等元信息 |
+| H4  | Usage 统计                | 返回中 usage 字段准确，验证 `prompt_tokens + completion_tokens` 计数 | ✅        | ✅         | ✅     | ✅           | ✅           | P0  |                                                                                            |
+
+> **本轮回填（2026-03-18）**：
+> - G 场景已固化到 `tests/test_api_compatibility.py`
+
+---
+
+### H. 质量评估（4 项）
+
+| #   | 测试点    | 测试内容                     | 评估方法                      | 优先级 |
+|-----|--------|--------------------------|---------------------------|-----|
+| I1  | 量化质量损失 | FP16 vs INT4/INT8 输出质量对比 | 相同 prompt 对比，人工评分 + 自动化指标 | P0  |
+| I2  | 生成一致性  | 相同输入多次生成的稳定性             | seed 固定后比较输出              | P1  |
+| I3  | 幻觉率    | 生成内容中事实错误的比例             | RAG 场景下对比原文验证             | P1  |
+| I4  | 指令遵循度  | 复杂指令（格式、长度、角色）遵循程度       | IFBench / 自定义指令集          | P0  |
+
+---
+
+### I. 长上下文脚本验证（1 项）
+
+| #   | 测试点         | 测试内容                                                                                                     | Qwen 3.5 | Kimi K2.5 | GLM-5 | Minimax 2.1 | Minimax 2.5 | 优先级 |
+|-----|-------------|----------------------------------------------------------------------------------------------------------|----------|-----------|-------|-------------|-------------|-----|
+| L1  | 超长上下文（脚本验证） | 使用 `tests/test_long_context.py` 独立脚本执行超长上下文 create/stream 探测，观察 `reasoning_content`、`content`、最终可用性与边界行为 | ⏳        | ⏳         | ⏳     | ⏳           | ⏳           | P1  |
+
+
+
+---
+
+## 四、按模型特性的差异化测试点
+
+除通用测试点外，各模型还需要结合当前仓库的已知 passing path 和接口差异做专项验证：
+
+### Qwen 3.5 专项
+
+| #   | 测试点            | 说明                            |
+|-----|----------------|-------------------------------|
+| Q1  | 混合注意力机制        | 线性注意力 + 标准注意力的切换行为，特别是在超长上下文下 |
+| Q2  | 201 语言覆盖       | 抽样测试小语种（泰语、阿拉伯语、斯瓦希里语等）质量     |
+| Q3  | 1M Token 扩展上下文 | 验证扩展到 1M tokens 后的质量和性能       |
+| Q4  | 早期融合多模态        | 视觉-语言混合推理的一致性（vs 后期融合方案）      |
+
+### Kimi K2.5 专项
+
+| #   | 测试点            | 说明                          |
+|-----|----------------|-----------------------------|
+| K1  | Agent Swarm 模式 | 多 agent 协作执行复杂任务的稳定性        |
+| K2  | 3.2% 激活率       | 极低激活率下的质量保持，边缘 case 是否有性能退化 |
+| K3  | 视频理解深度         | 2K 视频多片段理解、时序推理准确度          |
+| K4  | 原生 INT4 QAT    | QAT 量化 vs PTQ 量化的质量对比       |
+
+### GLM-5 专项
+
+| #   | 测试点                                    | 说明                                                               |
+|-----|----------------------------------------|------------------------------------------------------------------|
+| G-1 | `enable_thinking=false` 返回行为           | 当前重点验证显式 `reasoning=null`，且最终 `content` 不混入 explanation，需要持续回归验证 |
+| G-2 | forced named `tool_choice` 错误路径        | 明确记录顶层 `error` 的错误形状，防止回归为 silent failure                        |
+| G-3 | auto `tool_choice` StructuredOutput 路径 | 持续验证 `tool_choice="auto"` 是否仍是最佳 passing path                    |
+| G-4 | 205K 上下文边界                             | 接近上限时的质量、延迟和拒绝策略变化                                               |
+
+### Minimax 2.1 与 2.5 专项
+
+| #   | 测试点                                           | 说明                                                                                                  |
+|-----|-----------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| M-1 | `enable_thinking=false` 下的 hidden thinking 泄漏 | 当前已知请求可接受，但 `reasoning` 仍可能返回文本，且流式 explanation 也可能混进 `content`，需要比较 `minimax-m21` 与 `minimax-m2.5` |
+| M-2 | forced named `tool_choice` 错误路径               | 当前已知 forced named `tool_choice` 可能返回 `500 upstream_error`，需持续量化                                     |
+| M-3 | 图片 content parts create / stream              | 与基础 chat 套件对齐，持续验证图片输入的 create / stream 路径                                                          |
+| M-4 | `minimax-m21` vs `minimax-m2.5` 稳定性差异         | 比较重复同名 tool call、structured output 和上下文边界等细分行为差异                                                    |
+
+---

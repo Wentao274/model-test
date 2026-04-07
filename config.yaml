@@ -1,0 +1,88 @@
+# model-test/config.yaml
+# 大模型推理能力测试框架配置文件
+
+# 全局配置
+global:
+  timeout: 120                    # 请求超时时间（秒）
+  retry_times: 3                  # 重试次数
+  log_level: INFO                 # 日志级别
+  output_dir: ./test_results      # 测试结果输出目录
+
+# 模型配置 - 支持多模型测试
+models:
+  qwen35:
+    name: qwen35
+    display_name: Qwen 3.5
+    api_key: ${QWEN_API_KEY}
+    base_url: http://localhost:8000/v1
+    enabled: false
+
+  kimi_k25:
+    name: kimi-k25
+    display_name: Kimi K2.5
+    api_key: ${KIMI_API_KEY}
+    base_url: http://localhost:8001/v1
+    enabled: false
+
+  glm5:
+    name: glm-5
+    display_name: GLM-5
+    api_key: ${GLM_API_KEY}
+    base_url: http://localhost:8002/v1
+    enabled: false
+
+  minimax21:
+    name: minimax-m21
+    display_name: Minimax 2.1
+    api_key: ${MINIMAX_API_KEY}
+    base_url: http://localhost:8003/v1
+    enabled: false
+
+  minimax25:
+    name: minimax-m2.5
+    display_name: Minimax 2.5
+    api_key: ${MINIMAX_API_KEY}
+    base_url: http://localhost:8004/v1
+    enabled: true
+
+# 默认测试模型
+default_model: qwen35
+
+# 测试分类配置
+test_config:
+  # A. 基础推理能力测试配置
+  basic_reasoning:
+    multi_turn_rounds: 5          # 多轮对话轮数
+    max_tokens_values: [50, 100, 500]  # Max Tokens测试值
+    languages: [zh, en, ja, ko, fr]    # 多语言测试语言
+
+  # B. 高级生成功能测试配置
+  advanced_generation:
+    thinking_mode: true
+    json_schema_strict: true
+    tool_call_max_steps: 5
+
+  # C. 多模态测试配置
+  multimodal:
+    image_formats: [png, jpeg, webp, gif]
+    max_image_size: 4096
+    video_max_duration: 60
+
+  # D. 长上下文测试配置
+  long_context:
+    short_context_tokens: 1000
+    medium_context_tokens: 16000
+    long_context_tokens: 128000
+    max_output_tokens: 8000
+
+  # E. 性能测试配置
+  performance:
+    concurrency_levels: [1, 10, 50, 100, 200]
+    benchmark_iterations: 100
+    percentiles: [50, 95, 99]
+
+# 报告配置
+reporting:
+  format: [html, json, junit]
+  output_path: ./test_results/reports
+  include_screenshots: true

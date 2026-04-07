@@ -1,0 +1,15 @@
+# 大模型推理能力测试框架依赖
+
+# Core dependencies
+pytest>=7.4.0
+pytest-html>=4.1.0
+pytest-json-report>=1.5.0
+requests>=2.31.0
+pyyaml>=6.0.1
+
+# Optional dependencies for enhanced features
+pytest-xdist>=3.5.0  # Parallel test execution
+pytest-timeout>=2.2.0  # Test timeout handling
+sseclient-py>=1.8.0  # Server-Sent Events support
+Pillow>=10.0.0  # Image processing for multimodal tests
+aiohttp>=3.9.0  # Async HTTP for performance testing
