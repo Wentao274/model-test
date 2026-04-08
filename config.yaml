@@ -41,12 +41,12 @@ models:
   minimax25:
     name: minimax-m2.5
     display_name: Minimax 2.5
-    api_key: ${MINIMAX_API_KEY}
-    base_url: http://localhost:8004/v1
+    api_key: abc123
+    base_url: http://10.212.16.21:8080/v1
     enabled: true
 
 # 默认测试模型
-default_model: qwen35
+default_model: minimax25
 
 # 测试分类配置
 test_config:

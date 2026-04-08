@@ -65,8 +65,19 @@ class ModelAPIClient:
         }
 
         response = self.session.post(url, json=payload, timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()
+
+        # 检查响应状态
+        if response.status_code != 200:
+            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+
+        # 检查响应内容
+        if not response.text or response.text.strip() == "":
+            raise Exception(f"API returned empty response. Status: {response.status_code}")
+
+        try:
+            return response.json()
+        except json.JSONDecodeError as e:
+            raise Exception(f"Failed to parse JSON response: {e}. Response text: {response.text[:500]}")
 
     def chat_completion_stream(
         self,
@@ -88,7 +99,10 @@ class ModelAPIClient:
         }
 
         response = self.session.post(url, json=payload, timeout=self.timeout, stream=True)
-        response.raise_for_status()
+
+        # 检查响应状态
+        if response.status_code != 200:
+            raise Exception(f"API request failed with status {response.status_code}: {response.text[:500]}")
 
         for line in response.iter_lines():
             if line:

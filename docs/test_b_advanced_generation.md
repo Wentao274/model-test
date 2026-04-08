@@ -5,17 +5,18 @@
 
 ## 测试点列表
 
-| ID | 测试点 | 测试内容 | 优先级 |
-|----|--------|---------|--------|
-| B1 | 思考模式 | 开启thinking mode，验证返回思考链+最终答案 | P0 |
-| B2 | 非思考模式 | 关闭thinking，验证无hidden thinking泄漏 | P0 |
-| B3 | 思考模式切换 | 同一会话内thinking↔non-thinking切换 | P1 |
-| B4 | 工具调用-单工具 | 定义单个function，验证模型正确调用并传参 | P0 |
-| B5 | 工具调用-多工具 | 定义多个function，验证模型选择正确的工具 | P0 |
-| B6 | 工具调用-并行调用 | 单次回复中并行调用多个工具 | P1 |
-| B7 | 工具调用-多步链式 | 工具结果作为下一步输入，验证3+步链式执行 | P1 |
-| B8 | JSON Mode | response_format=json_object，验证输出合法JSON | P0 |
-| B9 | 结构化输出 | JSON Schema约束输出格式，验证字段完整性 | P0 |
+| ID  | 测试点              | 测试内容                                    | 优先级 |
+|-----|-------------------|-----------------------------------------|-----|
+| B1  | 思考模式（Thinking） | 开启thinking mode，验证返回思考链+最终答案        | P0  |
+| B2  | 非思考模式（Instant） | 关闭thinking，验证无hidden thinking泄漏       | P0  |
+| B3  | 思考模式切换         | 同一会话内thinking↔non-thinking切换          | P1  |
+| B4  | 工具调用-单工具       | 定义单个function，验证模型正确调用并传参           | P0  |
+| B5  | 工具调用-多工具       | 定义多个function，验证模型选择正确的工具           | P0  |
+| B6  | 工具调用-并行调用      | 单次回复中并行调用多个工具                      | P1  |
+| B7  | 工具调用-多步链式      | 工具结果作为下一步输入，验证3+步链式执行            | P1  |
+| B8  | JSON Mode         | response_format=json_object，验证输出合法JSON  | P0  |
+| B9  | 结构化输出           | JSON Schema约束输出格式，验证字段完整性          | P0  |
+| B10 | Prefix/Suffix约束  | 指定输出前缀或格式模板，验证遵循度                 | P2  |
 
 ## 运行方式
 
@@ -56,7 +57,10 @@ pytest tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_thinkin
 ### test_structured_output
 测试结构化输出，使用JSON Schema约束输出格式。
 
+### test_prefix_suffix_constraint
+测试输出前缀/后缀约束功能，验证模型能遵循指定的格式模板。
+
 ## 注意事项
 - 工具调用测试需要模型支持function calling功能
 - 部分模型可能不支持思考模式切换
-- B5（多工具）是新增测试点
+- B10 为新增测试点，属于 P2 优先级

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from base.base_test import BaseTest, StreamingTestMixin, MultimodalTestMixin
 from base.api_client import ModelAPIClient
+from base.logger import TestLogger
 
 
 # 测试用图片路径
@@ -33,8 +34,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p0
-    def test_single_image_understanding(self, api_client: ModelAPIClient):
+    @pytest.mark.smoke
+    def test_single_image_understanding(self, api_client: ModelAPIClient, test_logger):
         """C1: 单图理解 - 输入一张图片+文本提问"""
+        test_logger.info("=== 测试开始: 单图理解 ===")
+
         # 创建简单的红色图片
         import io
         from PIL import Image
@@ -59,20 +63,25 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 ]
             }
         ]
+        test_logger.info("请求: 单图理解")
 
         response = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response, "单图理解响应")
+
         self.assert_response_success(response)
 
         content = self.get_message_content(response)
         # 简单验证有输出
         assert content and len(content) > 0, "Should have response content"
-        print(f"Image understanding response: {content[:100]}...")
+        test_logger.info(f"Image understanding response: {content[:100]}...")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
     @pytest.mark.skipif(not IMAGES_DIR.exists(), reason="Images directory not found")
-    def test_multi_image_comparison(self, api_client: ModelAPIClient):
+    def test_multi_image_comparison(self, api_client: ModelAPIClient, test_logger):
         """C2: 多图对比 - 输入多张图片，验证跨图比较"""
+        test_logger.info("=== 测试开始: 多图对比 ===")
+
         # 查找测试图片
         image_files = list(IMAGES_DIR.glob("*.png"))[:2]
 
@@ -92,15 +101,20 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         content_parts.insert(0, {"type": "text", "text": "这两张图片有什么区别？"})
 
         messages = [{"role": "user", "content": content_parts}]
+        test_logger.info("请求: 多图对比")
+
         response = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response, "多图对比响应")
 
         self.assert_response_success(response)
-        print("Multi-image comparison completed")
+        test_logger.info("Multi-image comparison completed")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
-    def test_high_resolution_image(self, api_client: ModelAPIClient):
+    def test_high_resolution_image(self, api_client: ModelAPIClient, test_logger):
         """C3: 高分辨率图片 - 4K分辨率图片"""
+        test_logger.info("=== 测试开始: 高分辨率图片 ===")
+
         # 生成4K图片
         import io
         from PIL import Image
@@ -122,6 +136,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 ]
             }
         ]
+        test_logger.info("请求: 4K高分辨率图片")
 
         response = api_client.chat_completion(messages)
         # 部分模型可能不支持，捕获异常
@@ -129,12 +144,14 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             pytest.skip(f"Model does not support high-res images: {response['error']}")
 
         self.assert_response_success(response)
-        print("High resolution image test completed")
+        test_logger.info("High resolution image test completed")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p0
-    def test_chart_ocr(self, api_client: ModelAPIClient):
+    def test_chart_ocr(self, api_client: ModelAPIClient, test_logger):
         """C4: 图表/OCR - 表格截图识别"""
+        test_logger.info("=== 测试开始: 图表/OCR ===")
+
         # 创建包含文字的图片
         import io
         from PIL import Image, ImageDraw, ImageFont
@@ -160,6 +177,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 ]
             }
         ]
+        test_logger.info("请求: OCR识别")
 
         response = api_client.chat_completion(messages)
         if response.get("error"):
@@ -167,12 +185,13 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
-        print(f"OCR result: {content[:100] if content else 'empty'}")
+        test_logger.info(f"OCR result: {content[:100] if content else 'empty'}")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
-    def test_video_understanding(self, api_client: ModelAPIClient):
+    def test_video_understanding(self, api_client: ModelAPIClient, test_logger):
         """C5: 视频理解 - 输入视频文件"""
+        test_logger.info("=== 测试开始: 视频理解 ===")
         messages = [
             {"role": "user", "content": "请描述这个视频的内容"}
         ]
@@ -182,22 +201,26 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
-    def test_screenshot_to_code(self, api_client: ModelAPIClient):
+    def test_screenshot_to_code(self, api_client: ModelAPIClient, test_logger):
         """C6: 代码截图→代码 - UI设计稿生成代码"""
+        test_logger.info("=== 测试开始: 代码截图→代码 ===")
         # 需要UI截图
         pytest.skip("Screenshot to code test requires UI screenshot")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
-    def test_multimodal_tool_call(self, api_client: ModelAPIClient):
+    def test_multimodal_tool_call(self, api_client: ModelAPIClient, test_logger):
         """C7: 多模态工具调用 - 基于图片内容触发工具调用"""
+        test_logger.info("=== 测试开始: 多模态工具调用 ===")
         pytest.skip("Multimodal tool call test needs tool definition")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
     @pytest.mark.parametrize("format", ["png", "jpeg", "webp"])
-    def test_image_format_compatibility(self, api_client: ModelAPIClient, format: str):
+    def test_image_format_compatibility(self, api_client: ModelAPIClient, format: str, test_logger):
         """C8: 图片格式兼容性 - PNG/JPEG/WebP"""
+        test_logger.info(f"=== 测试开始: 图片格式兼容性 ({format}) ===")
+
         import io
         from PIL import Image
 
@@ -218,10 +241,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 ]
             }
         ]
+        test_logger.info(f"请求: {format}格式图片")
 
         response = api_client.chat_completion(messages)
         if response.get("error"):
             pytest.skip(f"Model does not support {format} format")
 
         self.assert_response_success(response)
-        print(f"Format {format} test passed")
+        test_logger.info(f"Format {format} test passed")

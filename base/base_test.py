@@ -10,9 +10,9 @@ from abc import ABC
 class BaseTest(ABC):
     """测试基类，提供通用的测试方法和断言"""
 
-    def __init__(self, api_client, config: Dict[str, Any]):
-        self.api_client = api_client
-        self.config = config
+    # 这些属性将由 pytest fixture 自动注入
+    api_client = None
+    config = None
 
     def assert_response_success(self, response: Dict[str, Any], message: str = ""):
         """断言响应成功"""

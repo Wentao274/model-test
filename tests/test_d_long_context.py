@@ -17,6 +17,7 @@ from typing import List
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
+from base.logger import TestLogger
 
 
 def generate_long_text(tokens: int) -> str:
@@ -35,61 +36,83 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
-    def test_short_context_baseline(self, api_client: ModelAPIClient):
+    @pytest.mark.smoke
+    def test_short_context_baseline(self, api_client: ModelAPIClient, test_logger):
         """D1: 短上下文基线 - input 1K tokens"""
+        test_logger.info("=== 测试开始: 短上下文基线 ===")
+
         # 约250字
         prompt = "请简短介绍一下人工智能的发展历史" + "。" * 100
 
         messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+
         response = api_client.chat_completion(messages, max_tokens=100)
+        TestLogger.log_response(test_logger, response, "短上下文响应")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
-        print(f"Short context test passed, response tokens: {response.get('usage', {}).get('completion_tokens')}")
+
+        usage = response.get('usage', {})
+        test_logger.info(f"Short context test passed, completion_tokens: {usage.get('completion_tokens')}")
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
-    def test_medium_context(self, api_client: ModelAPIClient):
+    def test_medium_context(self, api_client: ModelAPIClient, test_logger):
         """D2: 中等上下文 - input 8K-16K tokens"""
+        test_logger.info("=== 测试开始: 中等上下文 ===")
+
         # 约4000字
         prompt = "请分析以下内容：" + "这是一个测试段落。 " * 1000
 
         messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
+
         response = api_client.chat_completion(messages, max_tokens=500)
+        TestLogger.log_response(test_logger, response, "中等上下文响应")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
-        print(f"Medium context test passed")
+        test_logger.info("Medium context test passed")
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
-    def test_long_context(self, api_client: ModelAPIClient):
+    def test_long_context(self, api_client: ModelAPIClient, test_logger):
         """D3: 长上下文 - input 32K-64K tokens，验证召回和推理"""
+        test_logger.info("=== 测试开始: 长上下文 ===")
+
         # 约16000字
         prompt = "以下是一篇长文章：" + "这是第" + "测试段落。 " * 4000
 
         messages = [{"role": "user", "content": prompt + "\n\n请总结这篇文章的主要内容。"}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
 
         response = api_client.chat_completion(messages, max_tokens=500)
+        TestLogger.log_response(test_logger, response, "长上下文响应")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
-        print(f"Long context test passed, input tokens estimated: 16000+")
+        test_logger.info("Long context test passed, input tokens estimated: 16000+")
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
     @pytest.mark.slow
-    def test_super_long_context(self, api_client: ModelAPIClient):
+    @pytest.mark.smoke
+    def test_super_long_context(self, api_client: ModelAPIClient, test_logger):
         """D4: 超长上下文 - input 128K+ tokens"""
+        test_logger.info("=== 测试开始: 超长上下文 ===")
+
         # 约32000字
         prompt = "以下是一篇长文章：" + "这是第" + "测试段落。 " * 8000
 
         messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(test_logger, messages)
 
         try:
             response = api_client.chat_completion(messages, max_tokens=1000)
+            TestLogger.log_response(test_logger, response, "超长上下文响应")
             self.assert_response_success(response)
-            print(f"Long context test passed, input tokens estimated: 32000+")
+            test_logger.info("Long context test passed, input tokens estimated: 32000+")
         except Exception as e:
             if "max_model_len" in str(e).lower() or "context" in str(e).lower():
                 pytest.skip(f"Model does not support this context length: {e}")
@@ -97,8 +120,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
-    def test_niah_needle_in_a_haystack(self, api_client: ModelAPIClient):
+    def test_niah_needle_in_a_haystack(self, api_client: ModelAPIClient, test_logger):
         """D5: 大海捞针（NIAH）- 长文本中插入特定信息，验证召回率"""
+        test_logger.info("=== 测试开始: 大海捞针 ===")
+
         # 生成一篇长文章，在中间插入一个特定的事实
         base_text = "这是一篇关于科技发展的文章。" * 100
         needle = "特殊标记：答案是42"
@@ -107,7 +132,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         prompt = needle_text + "\n\n请问文章中的特殊标记是什么？"
 
         messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+
         response = api_client.chat_completion(messages, max_tokens=100)
+        TestLogger.log_response(test_logger, response, "大海捞针响应")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
@@ -115,12 +143,14 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         # 验证模型能召回插入的信息
         assert "42" in content or "答案" in content, \
             f"Model should recall the needle info, got: {content[:100]}"
-        print(f"NIAH test passed, response: {content[:100]}")
+        test_logger.info(f"NIAH test passed, response: {content[:100]}")
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
-    def test_context_boundary_behavior(self, api_client: ModelAPIClient):
+    def test_context_boundary_behavior(self, api_client: ModelAPIClient, test_logger):
         """D6: 上下文边界行为 - 输入接近模型限制"""
+        test_logger.info("=== 测试开始: 上下文边界行为 ===")
+
         # 尝试获取模型信息
         model_info = api_client.get_model_info()
         max_len = model_info.get("max_model_len", 0)
@@ -131,47 +161,60 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             prompt = "测试内容 " * (estimated_tokens // 4)
 
             messages = [{"role": "user", "content": prompt}]
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+
             response = api_client.chat_completion(messages, max_tokens=100)
+            TestLogger.log_response(test_logger, response, "边界响应")
 
             # 应该能正常处理
             self.assert_response_success(response)
+            test_logger.info(f"Context boundary test passed, max_len: {max_len}")
         else:
             pytest.skip("Model max_model_len not available")
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
-    def test_context_truncation(self, api_client: ModelAPIClient):
+    def test_context_truncation(self, api_client: ModelAPIClient, test_logger):
         """D7: 超出上下文截断 - 验证截断策略"""
+        test_logger.info("=== 测试开始: 上下文截断 ===")
+
         # 生成超长文本
         prompt = "这是一段很长的测试文本， " * 10000
 
         messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(test_logger, messages)
 
         try:
             response = api_client.chat_completion(messages, max_tokens=100)
+            TestLogger.log_response(test_logger, response, "截断响应")
             # 应该被处理（截断或拒绝）
-            print(f"Context truncation handled: {response.get('choices', [{}])[0].get('finish_reason')}")
+            finish_reason = response.get('choices', [{}])[0].get('finish_reason')
+            test_logger.info(f"Context truncation handled: {finish_reason}")
         except Exception as e:
             # 可能返回错误
-            print(f"Context exceeded: {e}")
+            test_logger.info(f"Context exceeded: {e}")
             assert "context" in str(e).lower() or "length" in str(e).lower()
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
     @pytest.mark.slow
-    def test_long_output_generation(self, api_client: ModelAPIClient):
+    def test_long_output_generation(self, api_client: ModelAPIClient, test_logger):
         """D8: 长输出生成 - 要求生成4K-8K tokens的长文本"""
+        test_logger.info("=== 测试开始: 长输出生成 ===")
+
         messages = [
             {"role": "user", "content": "请写一篇关于人工智能发展史的详细文章，不少于2000字"}
         ]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 4000})
 
         response = api_client.chat_completion(messages, max_tokens=4000)
+        TestLogger.log_response(test_logger, response, "长输出响应")
 
         self.assert_response_success(response)
 
         usage = response.get("usage", {})
         completion_tokens = usage.get("completion_tokens", 0)
-        print(f"Long output: {completion_tokens} tokens generated")
+        test_logger.info(f"Long output: {completion_tokens} tokens generated")
 
         # 验证有足够输出
         assert completion_tokens > 100, f"Expected long output, got {completion_tokens} tokens"
@@ -179,19 +222,22 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     @pytest.mark.d_long_context
     @pytest.mark.p1
     @pytest.mark.slow
-    def test_long_context_script_validation(self, api_client: ModelAPIClient):
+    def test_long_context_script_validation(self, api_client: ModelAPIClient, test_logger):
         """L1: 超长上下文脚本验证"""
+        test_logger.info("=== 测试开始: 超长上下文脚本验证 ===")
+
         # 独立的超长上下文探测脚本
         long_prompt = "请分析以下大量数据并给出总结：" + "数据点" * 10000
 
         messages = [{"role": "user", "content": long_prompt}]
+        TestLogger.log_request(test_logger, messages)
 
         try:
             # 流式测试
             response_iter = api_client.chat_completion_stream(messages, max_tokens=500)
             chunks = list(response_iter)
 
+            test_logger.info(f"Long context streaming: {len(chunks)} chunks")
             assert len(chunks) > 0, "Should receive chunks"
-            print(f"Long context streaming: {len(chunks)} chunks")
         except Exception as e:
             pytest.skip(f"Long context streaming not supported: {e}")
