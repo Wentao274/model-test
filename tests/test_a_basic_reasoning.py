@@ -47,7 +47,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         content = self.get_message_content(response)
         assert len(content) > 0, "Response should contain text"
-        test_logger.info(f"Response: {content[:100]}...")
+        test_logger.info(f"Response: {content[:200]}...")
 
     @pytest.mark.a_basic
     @pytest.mark.p0
@@ -195,7 +195,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response0)
         content0 = self.get_message_content(response0)
-        test_logger.info(f"temp=0 响应: {content0[:100]}...")
+        test_logger.info(f"temp=0 响应: {content0[:200]}...")
 
         # temp=1.0 多样性输出
         test_logger.info("temp=1.0: 多样性输出")
@@ -204,7 +204,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response1)
         content1 = self.get_message_content(response1)
-        test_logger.info(f"temp=1.0 响应: {content1[:100]}...")
+        test_logger.info(f"temp=1.0 响应: {content1[:200]}...")
 
         # temp=0 应该更确定，多次调用结果应该相同
         test_logger.info("验证temp=0的确定性：再次调用相同prompt")
@@ -242,7 +242,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
-        test_logger.info(f"{param_type}={param_value} 响应: {content[:100]}...")
+        test_logger.info(f"{param_type}={param_value} 响应: {content[:200]}...")
 
     @pytest.mark.a_basic
     @pytest.mark.p0
