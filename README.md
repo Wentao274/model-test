@@ -174,7 +174,6 @@ model-test/
 │   ├── test_i_long_context.md
 │   └── README.md
 ├── scripts/             # 工具脚本
-│   ├── run_tests.py     # 批量运行测试
 │   ├── generate_report.py  # 生成测试报告
 │   └── quick_report.py  # 快速报告生成
 ├── test_results/        # 测试结果（运行后生成）
@@ -269,23 +268,63 @@ logs/
 
 ## 生成测试报告
 
-运行测试后，可以使用脚本生成类似 checkpoints.md 格式的测试报告：
+### 报告生成方式
+
+测试报告支持三种生成方式：
+
+| 方式 | 命令 | 说明 |
+|------|------|------|
+| **自动生成** | `pytest` | pytest测试完成后自动生成报告 |
+| **快速测试** | `python scripts/quick_report.py` | 运行P0测试并生成报告 |
+| **手动生成** | `python scripts/generate_report.py -j results.json` | 基于已有pytest结果JSON生成报告 |
+
+### 1. 自动生成（推荐）
+
+运行pytest测试后会自动生成报告（通过conftest.py的hook）：
 
 ```bash
-# 运行测试并生成报告
-.venv\Scripts\python.exe scripts\quick_report.py
+# 运行测试
+pytest -v
+
+# 测试完成后报告自动生成在 test_reports/{模型名}_{时间}/
 ```
 
-报告将保存在 `test_reports/{模型名}_{日期}/` 目录下，文件名格式为：
-- `test_report_{模型名}_{日期}.md` - Markdown 格式报告
+### 2. 快速测试报告
+
+运行P0级别的核心测试并生成报告：
+
+```bash
+python scripts/quick_report.py
+```
+
+### 3. 手动生成报告
+
+基于已有的pytest JSON结果重新生成或定制报告：
+
+```bash
+# 基于pytest JSON结果生成
+python scripts/generate_report.py -j test_results/test_output.json
+
+# 指定模型生成
+python scripts/generate_report.py -j test_results/test_output.json -m minimax25
+
+# 指定输出目录
+python scripts/generate_report.py -o my_reports
+```
 
 ### 报告目录结构
 
 ```
 test_reports/
-└── minimax25_2026-04-07/
-    └── test_report_minimax25_2026-04-07.md
+└── minimax25_20260408172556/
+    └── test_report_minimax25_20260408172556.md
 ```
+
+### 报告格式
+
+报告包含：
+- 各测试分类的测试点表格（状态：✅通过 ❌未通过 ⏳未测试）
+- 统计汇总表格（通过率统计）
 
 ## uv 虚拟环境使用指南
 

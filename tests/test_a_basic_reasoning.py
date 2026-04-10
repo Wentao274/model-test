@@ -191,16 +191,16 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         # temp=0 确定性输出
         test_logger.info("temp=0: 确定性输出")
         response0 = api_client.chat_completion(messages, temperature=0.0)
-        TestLogger.log_response(test_logger, response0, "temp=0响应")
+        TestLogger.log_response(test_logger, response0, "temp=0第一次响应")
 
         self.assert_response_success(response0)
         content0 = self.get_message_content(response0)
-        test_logger.info(f"temp=0 响应: {content0[:200]}...")
+        test_logger.info(f"temp=0 第一次响应: {content0[:200]}...")
 
-        # temp=1.0 多样性输出
-        test_logger.info("temp=1.0: 多样性输出")
+        # temp=1.0 多样性第一次输出
+        test_logger.info("temp=1.0: 多样性第一次输出")
         response1 = api_client.chat_completion(messages, temperature=1.0)
-        TestLogger.log_response(test_logger, response1, "temp=1.0响应")
+        TestLogger.log_response(test_logger, response1, "temp=1.0第一次响应")
 
         self.assert_response_success(response1)
         content1 = self.get_message_content(response1)
@@ -210,8 +210,19 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("验证temp=0的确定性：再次调用相同prompt")
         response0_repeat = api_client.chat_completion(messages, temperature=0.0)
         content0_repeat = self.get_message_content(response0_repeat)
+        test_logger.info(f"temp=0 第二次响应: {content0_repeat[:200]}...")
 
         # temp=0 时输出应该一致或非常相似
+
+        # temp=1.0 多样性第二次输出
+        test_logger.info("temp=1.0: 多样性第二次输出")
+        response1_repeat = api_client.chat_completion(messages, temperature=1.0)
+        TestLogger.log_response(test_logger, response1_repeat, "temp=1.0第二次响应")
+
+        self.assert_response_success(response1_repeat)
+        content1_repeat = self.get_message_content(response1_repeat)
+        test_logger.info(f"temp=1.0 第二次响应: {content1_repeat[:200]}...")
+        # temp=1 时输出不确定
         test_logger.info("Temperature控制测试完成")
 
     @pytest.mark.a_basic
@@ -269,7 +280,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         """A9: Stop Sequences - 设置stop token，验证截断"""
         test_logger.info("=== 测试开始: Stop Sequences ===")
 
-        messages = [{"role": "user", "content": "请列举五个水果："}]
+        messages = [{"role": "user", "content": "请列举五个水果，并简单介绍各水果的营养价值"}]
         TestLogger.log_request(test_logger, messages)
 
         # 设置在句号处停止
@@ -350,7 +361,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        test_logger.info(f"Language {lang} 响应: {content[:50]}...")
+        test_logger.info(f"Language {lang} 响应: {content[:500]}...")
 
         # 简单验证有实际输出
         assert len(content) > 10, f"Response too short for {lang}"
