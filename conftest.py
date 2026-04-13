@@ -60,9 +60,15 @@ def default_model(config: Dict[str, Any]) -> str:
 
 
 @pytest.fixture(scope="function")
-def api_client(config: Dict[str, Any], default_model: str) -> ModelAPIClient:
-    """为每个测试创建API客户端（默认模型）"""
-    model_config = config["models"][default_model]
+def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPIClient:
+    """为每个测试创建API客户端（使用第一个启用的模型）"""
+    # 使用第一个启用的模型，如果没有启用的则使用 default_model
+    if enabled_models:
+        model_name = enabled_models[0]
+    else:
+        model_name = config.get("default_model", "qwen35")
+
+    model_config = config["models"][model_name]
     return ModelAPIClient(
         api_key=model_config["api_key"],
         base_url=model_config["base_url"],

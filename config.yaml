@@ -11,39 +11,39 @@ global:
 # 模型配置 - 支持多模型测试
 models:
   qwen35:
-    name: qwen35
+    name: qwen3.5
     display_name: Qwen 3.5
     api_key: ${QWEN_API_KEY}
-    base_url: http://localhost:8000/v1
-    enabled: false
+    base_url: http://127.0.0.1:8080/v1
+    enabled: true
 
   kimi_k25:
     name: kimi-k25
     display_name: Kimi K2.5
     api_key: ${KIMI_API_KEY}
-    base_url: http://localhost:8001/v1
+    base_url: http://127.0.0.1:8080/v1
     enabled: false
 
   glm5:
     name: glm-5
     display_name: GLM-5
     api_key: ${GLM_API_KEY}
-    base_url: http://localhost:8002/v1
+    base_url: http://127.0.0.1:8080/v1
     enabled: false
 
   minimax21:
     name: minimax-m21
     display_name: Minimax 2.1
     api_key: ${MINIMAX_API_KEY}
-    base_url: http://localhost:8003/v1
+    base_url: http://127.0.0.1:8080/v1
     enabled: false
 
   minimax25:
     name: minimax-m2.5
     display_name: Minimax 2.5
-    api_key: abc123
-    base_url: http://10.212.16.21:8080/v1
-    enabled: true
+    api_key: ${MINIMAX_API_KEY}
+    base_url: http://127.0.0.1:8080/v1
+    enabled: false
 
 # 默认测试模型
 default_model: minimax25
