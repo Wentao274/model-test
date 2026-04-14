@@ -78,21 +78,41 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
         messages = [{"role": "user", "content": "测试"}]
         TestLogger.log_request(test_logger, messages)
 
-        # 测试非法温度值
-        try:
+        # 测试非法温度值：负数
+        with pytest.raises(Exception) as exc_info:
             response = api_client.chat_completion(messages, temperature=-1)
-            test_logger.info(f"Negative temperature handled")
-        except Exception as e:
-            test_logger.info(f"Negative temperature rejected: {e}")
-            assert "400" in str(e) or "temperature" in str(e).lower(), \
-                "Should return proper error for invalid temperature"
+            # 如果没抛异常，检查响应是否包含错误
+            if response.get("error"):
+                raise Exception(response["error"])
+
+        error_msg = str(exc_info.value).lower()
+        assert "400" in error_msg or "temperature" in error_msg or "invalid" in error_msg or "non-negative" in error_msg, \
+            f"Should return 400 error for negative temperature, got: {exc_info.value}"
+        test_logger.info(f"非法温度-1正确拒绝: {exc_info.value}")
 
         # 测试 max_tokens=0
-        try:
+        with pytest.raises(Exception) as exc_info:
             response = api_client.chat_completion(messages, max_tokens=0)
-            test_logger.info(f"max_tokens=0 handled")
-        except Exception as e:
-            test_logger.info(f"max_tokens=0 rejected: {e}")
+            if response.get("error"):
+                raise Exception(response["error"])
+
+        error_msg = str(exc_info.value).lower()
+        assert "400" in error_msg or "max_tokens" in error_msg or "invalid" in error_msg, \
+            f"Should return 400 error for max_tokens=0, got: {exc_info.value}"
+        test_logger.info(f"max_tokens=0正确拒绝: {exc_info.value}")
+
+        # 测试非法温度值：超过范围（>2）
+        with pytest.raises(Exception) as exc_info:
+            response = api_client.chat_completion(messages, temperature=5.0)
+            if response.get("error"):
+                raise Exception(response["error"])
+
+        error_msg = str(exc_info.value).lower()
+        assert "400" in error_msg or "temperature" in error_msg or "invalid" in error_msg, \
+            f"Should return 400 error for temperature>2, got: {exc_info.value}"
+        test_logger.info(f"temperature=5.0正确拒绝: {exc_info.value}")
+
+        test_logger.info("非法参数测试通过：所有非法参数都被正确拒绝")
 
     @pytest.mark.f_stability
     @pytest.mark.p0
