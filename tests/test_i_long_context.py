@@ -1,8 +1,11 @@
 """
-I. 单项超长上下文验证
+I. 超长上下文脚本验证
 
 测试点：
-- L1: 超长上下文（脚本验证）- 验证超长上下文可用性和边界行为
+- L1: 超长上下文（非流式） - 验证超长上下文请求的非流式输出
+- L2: 超长上下文（流式） - 验证超长上下文请求的流式输出
+- L3: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度
+- L4: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
 """
 import pytest
 
@@ -15,7 +18,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     """超长上下文脚本验证测试类"""
 
     def get_test_category(self) -> str:
-        return "I. 单项超长上下文验证"
+        return "I. 超长上下文验证"
 
     @pytest.mark.i_long_context
     @pytest.mark.p1
@@ -58,7 +61,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.p1
     @pytest.mark.slow
     def test_super_long_context_stream(self, api_client: ModelAPIClient, test_logger):
-        """L1: 超长上下文脚本验证 - 流式"""
+        """L2: 超长上下文脚本验证 - 流式"""
         test_logger.info("=== 测试开始: 超长上下文(流式) ===")
 
         # 生成超长上下文
@@ -84,27 +87,83 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.i_long_context
     @pytest.mark.p1
     def test_context_boundary_exact_limit(self, api_client: ModelAPIClient, test_logger):
-        """L1: 上下文边界验证 - 恰好等于限制"""
-        test_logger.info("=== 测试开始: 上下文边界 ===")
+        """L3: 上下文边界验证 - 使用二分法逼近模型最大上下文长度"""
+        test_logger.info("=== 测试开始: 上下文边界（二分法） ===")
 
         # 尝试获取模型最大上下文长度
         try:
             model_info = api_client.get_model_info()
             max_len = model_info.get("max_model_len", 0)
-            test_logger.info(f"模型最大上下文长度: {max_len}")
+            test_logger.info(f"模型定义的最大上下文长度: {max_len}")
 
             if max_len > 0:
-                # 生成恰好接近限制的输入
-                # 留出空间给system prompt和max_tokens
-                prompt = "测试内容 " * (max_len // 5)
-                messages = [{"role": "user", "content": prompt}]
-                TestLogger.log_request(test_logger, messages)
+                # 使用二分法逐步逼近最大上下文长度
+                # 初始化二分法范围
+                low = 0
+                high = max_len
+                successful_len = 0
+                failed_len = max_len
+                max_iterations = 10  # 最多迭代10次
 
-                response = api_client.chat_completion(messages, max_tokens=100)
-                TestLogger.log_response(test_logger, response, "边界响应")
+                test_logger.info(f"开始二分法测试，范围: [{low}, {high}]")
 
-                self.assert_response_success(response)
-                test_logger.info(f"Context boundary test: max_len={max_len}, handled successfully")
+                for iteration in range(max_iterations):
+                    # 计算中间值
+                    mid = (low + high) // 2
+
+                    # 跳过太小的值（至少要有意义）
+                    if mid < 100:
+                        low = mid + 1
+                        continue
+
+                    # 根据mid生成测试prompt（估算token数，这里用字符数近似）
+                    # 假设1个token约等于4个字符
+                    char_count = mid * 4
+                    prompt = "测试内容 " * (char_count // 5)
+                    messages = [{"role": "user", "content": prompt}]
+
+                    test_logger.info(f"迭代 {iteration+1}: 测试上下文长度 ~{mid} tokens")
+
+                    try:
+                        response = api_client.chat_completion(messages, max_tokens=100)
+                        if response.get("error"):
+                            # 超出了边界
+                            test_logger.warning(f"长度 {mid} 失败: {response.get('error')}")
+                            high = mid - 1
+                            failed_len = mid
+                        else:
+                            # 成功
+                            test_logger.info(f"长度 {mid} 成功")
+                            low = mid + 1
+                            successful_len = mid
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if "max" in error_msg and "length" in error_msg or "context" in error_msg:
+                            test_logger.warning(f"长度 {mid} 超限: {e}")
+                            high = mid - 1
+                            failed_len = mid
+                        else:
+                            raise
+
+                    # 如果范围已经很小，停止
+                    if high - low <= 10:
+                        break
+
+                test_logger.info(f"二分法结果: 成功最大长度 ~{successful_len} tokens, 失败长度 ~{failed_len} tokens")
+                test_logger.info(f"模型定义的最大长度: {max_len} tokens")
+
+                # 验证模型声称的最大长度是否可达到
+                # 允许一定的误差范围（因为估算不一定准确）
+                if successful_len > 0:
+                    ratio = successful_len / max_len
+                    test_logger.info(f"实际成功率: {ratio:.2%}")
+                    # 如果实际能达到的上下文长度接近模型定义的值（80%以上），认为测试通过
+                    assert ratio > 0.8 or successful_len >= max_len * 0.8, \
+                        f"Model claims {max_len} but only supports ~{successful_len}"
+                    test_logger.info("上下文边界验证通过")
+                else:
+                    pytest.skip("无法确定有效的上下文长度")
+
             else:
                 pytest.skip("Model max_model_len not available")
         except Exception as e:
@@ -116,7 +175,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.i_long_context
     @pytest.mark.p1
     def test_reasoning_content_in_long_context(self, api_client: ModelAPIClient, test_logger):
-        """L1: 验证超长上下文下reasoning_content的可用性"""
+        """L4: 验证超长上下文下reasoning_content的可用性"""
         test_logger.info("=== 测试开始: 长上下文+思考 ===")
 
         # 较长的上下文

@@ -10,7 +10,6 @@ D. 长上下文处理测试
 - D6: 上下文边界行为 - 输入恰好等于max_model_len
 - D7: 超出上下文截断 - 输入超过模型限制
 - D8: 长输出生成 - 要求生成4K-8K tokens的长文本
-- L1: 超长上下文脚本验证
 """
 import pytest
 from typing import List
@@ -218,26 +217,3 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         # 验证有足够输出
         assert completion_tokens > 100, f"Expected long output, got {completion_tokens} tokens"
-
-    @pytest.mark.d_long_context
-    @pytest.mark.p1
-    @pytest.mark.slow
-    def test_long_context_script_validation(self, api_client: ModelAPIClient, test_logger):
-        """L1: 超长上下文脚本验证"""
-        test_logger.info("=== 测试开始: 超长上下文脚本验证 ===")
-
-        # 独立的超长上下文探测脚本
-        long_prompt = "请分析以下大量数据并给出总结：" + "数据点" * 10000
-
-        messages = [{"role": "user", "content": long_prompt}]
-        TestLogger.log_request(test_logger, messages)
-
-        try:
-            # 流式测试
-            response_iter = api_client.chat_completion_stream(messages, max_tokens=500)
-            chunks = list(response_iter)
-
-            test_logger.info(f"Long context streaming: {len(chunks)} chunks")
-            assert len(chunks) > 0, "Should receive chunks"
-        except Exception as e:
-            pytest.skip(f"Long context streaming not supported: {e}")

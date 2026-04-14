@@ -206,7 +206,10 @@ TEST_CATEGORIES = {
     "i_long_context": {
         "name": "I. 超长上下文验证",
         "tests": [
-            ("L1", "超长上下文", "create/stream探测", "ultra_long_context"),
+            ("L1", "超长上下文（非流式）", "验证超长上下文请求的非流式输出", "super_long_context_create"),
+            ("L2", "超长上下文（流式）", "验证超长上下文请求的流式输出", "super_long_context_stream"),
+            ("L3", "超长上下文（边界验证）", "使用二分法逼近模型最大上下文长度", "context_boundary_exact_limit"),
+            ("L4", "超长上下文（思考模式）", "验证超长上下文下reasoning_content的可用性", "reasoning_content_in_long_context"),
         ],
     },
 }
