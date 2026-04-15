@@ -73,9 +73,15 @@ class TestReportGenerator:
         skipped_tests = 0
         partial_tests = 0
 
+        # 按分类统计
+        category_stats = {}  # {category_name: {"passed": 0, "failed": 0, "skipped": 0, "partial": 0, "total": 0}}
+
         for marker, category in TEST_CATEGORIES.items():
             category_name = category["name"]
             tests = category["tests"]
+
+            # 初始化分类统计
+            category_stats[category_name] = {"passed": 0, "failed": 0, "skipped": 0, "partial": 0, "total": 0}
 
             lines.append(f"## {category_name}")
             lines.append("")
@@ -99,24 +105,30 @@ class TestReportGenerator:
                 if status == "PASSED":
                     status_icon = "✅"
                     passed_tests += 1
+                    category_stats[category_name]["passed"] += 1
                 elif status == "FAILED":
                     status_icon = "❌"
                     failed_tests += 1
+                    category_stats[category_name]["failed"] += 1
                     issue_notes.append((test_idx, test_name, "测试未通过"))
                 elif status == "PARTIAL":
                     status_icon = "⚠️"
                     partial_tests += 1
+                    category_stats[category_name]["partial"] += 1
                     issue_notes.append((test_idx, test_name, "部分用例未通过"))
                 elif status == "SKIPPED":
                     status_icon = "⏳"
                     skipped_tests += 1
+                    category_stats[category_name]["skipped"] += 1
                     issue_notes.append((test_idx, test_name, "未运行此测试"))
                 else:
                     status_icon = "⏳"
                     skipped_tests += 1
+                    category_stats[category_name]["skipped"] += 1
                     issue_notes.append((test_idx, test_name, "未运行此测试"))
 
                 total_tests += 1
+                category_stats[category_name]["total"] += 1
 
                 if len(test_desc) > 26:
                     test_desc = test_desc[:23] + "..."
@@ -166,6 +178,22 @@ class TestReportGenerator:
         lines.append(
             f"> **通过率：{pass_rate}** ({passed_tests}/{tested_count} 明确测试的用例)"
         )
+        lines.append("")
+
+        # 各测试分类统计
+        lines.append("## 分类统计")
+        lines.append("")
+        lines.append("| 测试分类           | 总数 | 通过 | 失败 | 跳过 | 通过率 |")
+        lines.append("|-------------------|-----|-----|-----|-----|-------|")
+
+        for category_name, stats in category_stats.items():
+            total = stats["total"]
+            passed = stats["passed"]
+            failed = stats["failed"]
+            skipped = stats["skipped"]
+            cat_pass_rate = f"{passed * 100 // max(passed + failed, 1)}%" if (passed + failed) > 0 else "N/A"
+            lines.append(f"| {category_name:17s} | {total:3d} | {passed:3d} | {failed:3d} | {skipped:3d} | {cat_pass_rate:5s} |")
+
         lines.append("")
 
         return "\n".join(lines)

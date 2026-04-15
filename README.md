@@ -101,7 +101,7 @@ pytest --model=qwen35 -v
 | F. 稳定性与边界  | 8    | test_f_stability.py           | 空输入、超大输入、非法参数、特殊字符注入、并发稳定性、OOM恢复、长时间运行、请求超时处理                                                |
 | G. API兼容性  | 4    | test_g_api_compatibility.py   | OpenAI Chat/Completions接口、模型列表、Usage统计                                                       |
 | H. 质量评估    | 4    | test_h_quality.py             | 生成质量、生成一致性、幻觉率、指令遵循度                                                                         |
-| I. 超长上下文验证 | 1    | test_i_long_context.py        | 超长上下文脚本验证                                                                                    |
+| I. 超长上下文验证 | 4    | test_i_long_context.py        | 超长上下文脚本验证                                                                                    |
 
 > 总计：67 个测试点
 

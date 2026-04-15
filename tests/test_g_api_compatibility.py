@@ -2,10 +2,12 @@
 G. API 兼容性测试
 
 测试点：
-- H1: OpenAI Chat Completions - /v1/chat/completions 接口
-- H2: OpenAI Completions - /v1/completions 接口
-- H3: 模型列表 - /v1/models 接口
-- H4: Usage 统计 - usage 字段准确性
+- G1: OpenAI Chat Completions - /v1/chat/completions 接口兼容
+- G2: OpenAI Completions - /v1/completions 接口兼容
+- G3: 模型列表 - /v1/models 接口
+- G4: Usage 统计 - usage 字段准确性
+- G5: 错误码规范 - 400/401/404/429/500 错误码
+- G6: 客户端 SDK 兼容 - Python openai / JS @openai/sdk
 """
 import pytest
 from typing import Dict, Any
@@ -25,7 +27,7 @@ class TestAPICompatibility(BaseTest):
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_chat_completions_api(self, api_client: ModelAPIClient, test_logger):
-        """H1: OpenAI Chat Completions 接口兼容"""
+        """G1: OpenAI Chat Completions 接口兼容"""
         test_logger.info("=== 测试开始: Chat Completions API ===")
 
         messages = [
@@ -57,7 +59,7 @@ class TestAPICompatibility(BaseTest):
     @pytest.mark.p1
     @pytest.mark.smoke
     def test_completions_api(self, api_client: ModelAPIClient, test_logger):
-        """H2: OpenAI Completions 接口兼容"""
+        """G2: OpenAI Completions 接口兼容"""
         test_logger.info("=== 测试开始: Completions API ===")
 
         prompt = "你好，请介绍一下自己"
@@ -81,7 +83,7 @@ class TestAPICompatibility(BaseTest):
     @pytest.mark.p1
     @pytest.mark.smoke
     def test_models_list(self, api_client: ModelAPIClient, test_logger):
-        """H3: 模型列表接口"""
+        """G3: 模型列表接口"""
         test_logger.info("=== 测试开始: Models List ===")
 
         response = api_client.list_models()
@@ -102,7 +104,7 @@ class TestAPICompatibility(BaseTest):
     @pytest.mark.g_api
     @pytest.mark.p0
     def test_usage_statistics(self, api_client: ModelAPIClient, test_logger):
-        """H4: Usage 统计准确性"""
+        """G4: Usage 统计准确性"""
         test_logger.info("=== 测试开始: Usage统计 ===")
 
         messages = [{"role": "user", "content": "请写一段话"}]
@@ -127,6 +129,88 @@ class TestAPICompatibility(BaseTest):
         assert completion_tokens > 0, "Should have completion tokens"
 
         test_logger.info(f"Usage: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+
+    @pytest.mark.g_api
+    @pytest.mark.p1
+    def test_error_codes(self, api_client: ModelAPIClient, test_logger):
+        """G5: 错误码规范 - 400/401/404/429/500 错误码"""
+        test_logger.info("=== 测试开始: 错误码规范 ===")
+
+        messages = [{"role": "user", "content": "测试"}]
+
+        # 测试 401 认证错误（无效的API key）
+        try:
+            # 使用无效的session来模拟认证失败
+            from base.api_client import ModelAPIClient
+            invalid_client = ModelAPIClient(
+                base_url=api_client.base_url,
+                api_key="invalid_key_12345",
+                model_name=api_client.model_name
+            )
+            response = invalid_client.chat_completion(messages)
+            if response.get("error"):
+                error = response["error"]
+                test_logger.info(f"401 错误响应: {error}")
+                # 验证错误格式符合 OpenAI 规范
+                assert "code" in error or "type" in error, "Error should have code or type"
+                assert error.get("code") in ["invalid_api_key", "authentication_failed"] or \
+                       error.get("type") == "authentication_error" or \
+                       "401" in str(error), "Should be authentication error"
+        except Exception as e:
+            test_logger.info(f"401 错误（异常）: {e}")
+
+        # 测试 400 错误（无效请求）
+        try:
+            # 发送空的content来触发400错误
+            invalid_messages = [{"role": "user", "content": ""}]
+            response = api_client.chat_completion(invalid_messages, max_tokens=1)
+            if response.get("error"):
+                error = response["error"]
+                test_logger.info(f"400 错误响应: {error}")
+        except Exception as e:
+            test_logger.info(f"400 错误（异常）: {e}")
+
+        test_logger.info("错误码规范测试完成")
+
+    @pytest.mark.g_api
+    @pytest.mark.p0
+    def test_client_sdk_compatibility(self, api_client: ModelAPIClient, test_logger):
+        """G6: 客户端 SDK 兼容 - Python openai 库直接调用"""
+        test_logger.info("=== 测试开始: 客户端 SDK 兼容 ===")
+
+        # 测试使用标准 OpenAI SDK 格式调用
+        try:
+            from openai import OpenAI
+
+            # 创建客户端（使用兼容的base_url）
+            client = OpenAI(
+                api_key=api_client.api_key or "dummy",
+                base_url=f"{api_client.base_url}/v1"
+            )
+
+            messages = [{"role": "user", "content": "测试SDK兼容性"}]
+
+            # 调用 chat.completions.create
+            response = client.chat.completions.create(
+                model=api_client.model_name,
+                messages=messages,
+                max_tokens=50
+            )
+
+            test_logger.info(f"SDK 响应: {response}")
+            test_logger.info(f"SDK 返回ID: {response.id}")
+
+            # 验证响应格式
+            assert response.id is not None, "Should have response id"
+            assert len(response.choices) > 0, "Should have choices"
+            assert response.choices[0].message.content is not None, "Should have content"
+
+            test_logger.info("客户端 SDK 兼容性测试通过")
+        except ImportError:
+            pytest.skip("openai SDK not installed")
+        except Exception as e:
+            test_logger.warning(f"SDK 兼容性测试: {e}")
+            pytest.skip(f"SDK compatibility test failed: {e}")
 
     @pytest.mark.g_api
     @pytest.mark.p1

@@ -2,14 +2,14 @@
 F. 稳定性与边界测试
 
 测试点：
-- G1: 空输入 - 发送空 prompt 或空 messages
-- G2: 超大输入 - 超过 max_model_len 的输入
-- G3: 非法参数 - temperature=-1, max_tokens=0 等
-- G4: 特殊字符注入 - SQL注入、Prompt注入、XSS payload
-- G5: 并发稳定性 - 200+ 并发持续运行
-- G6: OOM恢复 - 显存耗尽后的服务行为
-- G7: 长时间运行 - 连续服务 24 小时
-- G8: 请求超时处理 - 客户端超时断开
+- F1: 空输入 - 发送空 prompt 或空 messages
+- F2: 超大输入 - 超过 max_model_len 的输入
+- F3: 非法参数 - temperature=-1, max_tokens=0 等
+- F4: 特殊字符注入 - SQL注入、Prompt注入、XSS payload
+- F5: 并发稳定性 - 200+ 并发持续运行
+- F6: OOM恢复 - 显存耗尽后的服务行为
+- F7: 长时间运行 - 连续服务 24 小时
+- F8: 请求超时处理 - 客户端超时断开
 """
 import pytest
 import time
@@ -29,7 +29,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.f_stability
     @pytest.mark.p0
     def test_empty_input(self, api_client: ModelAPIClient, test_logger):
-        """G1: 空输入 - 发送空 prompt 或空 messages"""
+        """F1: 空输入 - 发送空 prompt 或空 messages"""
         test_logger.info("=== 测试开始: 空输入 ===")
 
         # 测试空消息
@@ -48,7 +48,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.f_stability
     @pytest.mark.p0
     def test_oversized_input(self, api_client: ModelAPIClient, test_logger):
-        """G2: 超大输入 - 超过 max_model_len 的输入"""
+        """F2: 超大输入 - 超过 max_model_len 的输入"""
         test_logger.info("=== 测试开始: 超大输入 ===")
 
         # 生成超长文本
@@ -72,7 +72,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.f_stability
     @pytest.mark.p0
     def test_invalid_parameters(self, api_client: ModelAPIClient, test_logger):
-        """G3: 非法参数 - temperature=-1, max_tokens=0 等"""
+        """F3: 非法参数 - temperature=-1, max_tokens=0 等"""
         test_logger.info("=== 测试开始: 非法参数 ===")
 
         messages = [{"role": "user", "content": "测试"}]
@@ -117,7 +117,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.f_stability
     @pytest.mark.p0
     def test_special_character_injection(self, api_client: ModelAPIClient, test_logger):
-        """G4: 特殊字符注入 - SQL注入、Prompt注入、XSS payload"""
+        """F4: 特殊字符注入 - SQL注入、Prompt注入、XSS payload"""
         test_logger.info("=== 测试开始: 特殊字符注入 ===")
 
         # SQL注入测试
@@ -146,7 +146,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.p0
     @pytest.mark.slow
     def test_concurrent_stability(self, api_client: ModelAPIClient, test_logger):
-        """G5: 并发稳定性 - 200+ 并发持续运行"""
+        """F5: 并发稳定性 - 200+ 并发持续运行"""
         test_logger.info("=== 测试开始: 并发稳定性 ===")
 
         messages = [{"role": "user", "content": "快速测试"}]
@@ -172,7 +172,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.p1
     @pytest.mark.slow
     def test_oom_recovery(self, api_client: ModelAPIClient, test_logger):
-        """G6: OOM恢复 - 显存耗尽后的服务行为"""
+        """F6: OOM恢复 - 显存耗尽后的服务行为"""
         test_logger.info("=== 测试开始: OOM恢复 ===")
 
         # 尝试触发OOM（通过发送超大请求）
@@ -196,7 +196,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.slow
     @pytest.mark.skip(reason="需要长时间运行")
     def test_long_running_service(self, api_client: ModelAPIClient, test_logger):
-        """G7: 长时间运行 - 连续服务 24 小时"""
+        """F7: 长时间运行 - 连续服务 24 小时"""
         test_logger.info("=== 测试开始: 长时间运行 ===")
         # 简化版本：连续运行10分钟
         start_time = time.time()
@@ -213,7 +213,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     @pytest.mark.f_stability
     @pytest.mark.p1
     def test_request_timeout_handling(self, api_client: ModelAPIClient, test_logger):
-        """G8: 请求超时处理 - 客户端超时断开"""
+        """F8: 请求超时处理 - 客户端超时断开"""
         test_logger.info("=== 测试开始: 请求超时处理 ===")
 
         # 使用较短的超时时间测试

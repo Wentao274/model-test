@@ -2,10 +2,10 @@
 H. 质量评估测试
 
 测试点：
-- I1: 量化质量损失 - FP16 vs INT4/INT8 输出质量对比
-- I2: 生成一致性 - 相同输入多次生成的稳定性
-- I3: 幻觉率 - 生成内容中事实错误的比例
-- I4: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度
+- H1: 量化质量损失 - FP16 vs INT4/INT8 输出质量对比
+- H2: 生成一致性 - 相同输入多次生成的稳定性
+- H3: 幻觉率 - 生成内容中事实错误的比例
+- H4: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度
 """
 import pytest
 from typing import List
@@ -24,7 +24,7 @@ class TestQuality(BaseTest):
     @pytest.mark.h_quality
     @pytest.mark.p0
     def test_generation_quality(self, api_client: ModelAPIClient, test_logger):
-        """I1: 生成质量评分"""
+        """H1: 生成质量评分"""
         test_logger.info("=== 测试开始: 生成质量 ===")
 
         # 使用简单问题测试生成质量
@@ -58,7 +58,7 @@ class TestQuality(BaseTest):
     @pytest.mark.h_quality
     @pytest.mark.p0
     def test_generation_consistency(self, api_client: ModelAPIClient, test_logger):
-        """I2: 生成一致性 - 相同输入多次生成的稳定性"""
+        """H2: 生成一致性 - 相同输入多次生成的稳定性"""
         test_logger.info("=== 测试开始: 生成一致性 ===")
 
         prompt = "请用一句话介绍北京"
@@ -82,7 +82,7 @@ class TestQuality(BaseTest):
     @pytest.mark.h_quality
     @pytest.mark.p1
     def test_hallucination_detection(self, api_client: ModelAPIClient, test_logger):
-        """I3: 幻觉率检测 - 验证事实性回答"""
+        """H3: 幻觉率检测 - 验证事实性回答"""
         test_logger.info("=== 测试开始: 幻觉检测 ===")
 
         # 使用简单事实问题
@@ -115,7 +115,7 @@ class TestQuality(BaseTest):
     @pytest.mark.h_quality
     @pytest.mark.p0
     def test_instruction_following(self, api_client: ModelAPIClient, test_logger):
-        """I4: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度"""
+        """H4: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度"""
         test_logger.info("=== 测试开始: 指令遵循 ===")
 
         # 测试格式要求遵循

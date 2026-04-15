@@ -2,10 +2,10 @@
 I. 超长上下文脚本验证
 
 测试点：
-- L1: 超长上下文（非流式） - 验证超长上下文请求的非流式输出
-- L2: 超长上下文（流式） - 验证超长上下文请求的流式输出
-- L3: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度
-- L4: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
+- I1: 超长上下文（非流式） - 验证超长上下文请求的非流式输出
+- I2: 超长上下文（流式） - 验证超长上下文请求的流式输出
+- I3: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度
+- I4: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
 """
 import pytest
 
@@ -24,7 +24,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.p1
     @pytest.mark.slow
     def test_super_long_context_create(self, api_client: ModelAPIClient, test_logger):
-        """L1: 超长上下文脚本验证 - 非流式"""
+        """I1: 超长上下文脚本验证 - 非流式"""
         test_logger.info("=== 测试开始: 超长上下文(非流式) ===")
 
         # 生成超长上下文（估计 100K+ tokens）
@@ -61,7 +61,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.p1
     @pytest.mark.slow
     def test_super_long_context_stream(self, api_client: ModelAPIClient, test_logger):
-        """L2: 超长上下文脚本验证 - 流式"""
+        """I2: 超长上下文脚本验证 - 流式"""
         test_logger.info("=== 测试开始: 超长上下文(流式) ===")
 
         # 生成超长上下文
@@ -87,7 +87,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.i_long_context
     @pytest.mark.p1
     def test_context_boundary_exact_limit(self, api_client: ModelAPIClient, test_logger):
-        """L3: 上下文边界验证 - 使用二分法逼近模型最大上下文长度"""
+        """I3: 上下文边界验证 - 使用二分法逼近模型最大上下文长度"""
         test_logger.info("=== 测试开始: 上下文边界（二分法） ===")
 
         # 尝试获取模型最大上下文长度
@@ -175,7 +175,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
     @pytest.mark.i_long_context
     @pytest.mark.p1
     def test_reasoning_content_in_long_context(self, api_client: ModelAPIClient, test_logger):
-        """L4: 验证超长上下文下reasoning_content的可用性"""
+        """I4: 验证超长上下文下reasoning_content的可用性"""
         test_logger.info("=== 测试开始: 长上下文+思考 ===")
 
         # 较长的上下文
