@@ -243,6 +243,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                     end = content.find("</think>")
                     thinking_content = content[after_start:end].strip()
                     has_thinking_tags = len(thinking_content) > 0
+            # 方式3: MiniMax M2 格式 - 只有 </think> 标签，之前的内容都是思考内容
+            elif "</think>" in content and "<think>" not in content:
+                end = content.find("</think>")
+                thinking_content = content[:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+                test_logger.info("检测到 MiniMax M2 格式（仅有 </think> 结束标签）")
 
         test_logger.info(f"reasoning 字段: {reasoning[:100] if reasoning else 'None'}...")
         test_logger.info(f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}")
@@ -282,16 +288,25 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         # 检查内容中是否有实际的思考内容（标签之间不应有内容）
         if content:
-            # 检查 <think> 标签之间是否有实际内容
-            import re
-            # 匹配 <think> 和 </think> 之间的内容
-            thinking_blocks = re.findall(r'<think>\s*(.*?)\s*</think>', content, re.DOTALL)
-            for block in thinking_blocks:
-                block = block.strip()
-                # 允许空思考或只有空白字符
-                assert block == "" or len(block) < 10, \
-                    f"Thinking disabled but found thinking content: {block[:50]}..."
+            if "<think>" not in content and "</think>" not in content:
+               pass
+            elif "<think>" in content and "</think>" in content:
+                # 检查 <think> 标签之间是否有实际内容
+                import re
+                # 匹配 <think> 和 </think> 之间的内容
+                thinking_blocks = re.findall(r'<think>\s*(.*?)\s*</think>', content, re.DOTALL)
+                for block in thinking_blocks:
+                    block = block.strip()
+                    # 允许空思考或只有空白字符
+                    assert not block.strip(), \
+                        f"Thinking disabled but found thinking content: {block[:50]}..."
 
+            elif "</think>" in content and "<think>" not in content:
+                # 方式2: 检查 MiniMax M2 格式 - 只有</think>结束标签，之前不应有思考内容
+                end = content.find("</think>")
+                potential_thinking = content[:end].strip()
+                assert not potential_thinking.strip(), \
+                    f"Thinking disabled but found thinking content before </think> 标签: {potential_thinking[:50]}..."
         test_logger.info("非思考模式测试通过，无thinking泄漏")
 
     @pytest.mark.b_advanced
@@ -316,7 +331,22 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.assert_response_success(response1)
         reasoning1 = self.get_reasoning_content(response1)
         test_logger.info(f"开启thinking后的reasoning: {reasoning1[:100] if reasoning1 else 'None'}...")
-        assert reasoning1, "First request should have reasoning"
+        content1 = self.get_message_content(response1)
+        # 验证开启thinking时有思考内容
+        has_thinking1 = reasoning1 and len(reasoning1) > 0
+
+        # 检查标签格式
+        if content1:
+            # 标准格式: 同时有  标签
+            if "" in content1:
+                has_thinking1 = True
+            # MiniMax M2 格式: 只有结尾</think>标签
+            elif "</think>" in content1 and "<think>" not in content1:
+                end = content1.find("</think>")
+                thinking_text = content1[:end].strip()
+                has_thinking1 = len(thinking_text) > 0
+
+        assert has_thinking1, "First request should have thinking content"
 
         # 关闭thinking
         test_logger.info("第2轮: 关闭thinking模式")
@@ -331,6 +361,101 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.assert_response_success(response2)
         self.assert_no_thinking_leakage(response2)
         test_logger.info("思考模式切换测试通过")
+
+    def _execute_tool(self, tool_name: str, arguments: dict) -> dict:
+        """模拟工具执行"""
+        if tool_name == "get_weather":
+            return {"city": arguments.get("city"), "temperature": 25, "humidity": 60, "condition": "晴朗"}
+        elif tool_name == "get_stock_price":
+            return {"symbol": arguments.get("symbol"), "price": 150.25, "currency": "USD"}
+        elif tool_name == "search_news":
+            return {"keyword": arguments.get("keyword"), "results": ["AI领域最新突破", "大模型发展迅速"]}
+        elif tool_name == "calculate":
+            try:
+                result = eval(arguments.get("expression", "0"))
+                return {"expression": arguments.get("expression"), "result": result}
+            except:
+                return {"expression": arguments.get("expression"), "result": "计算错误"}
+        elif tool_name == "translate":
+            return {"text": arguments.get("text"), "target_lang": arguments.get("target_lang"), "result": "你好"}
+        elif tool_name == "get_time":
+            return {"timezone": arguments.get("timezone"), "time": "2024-01-01 10:00:00"}
+        elif tool_name == "get_seed_word":
+            return {"word": "hello"}
+        elif tool_name == "uppercase_word":
+            return {"word": arguments.get("word"), "result": arguments.get("word", "").upper() if arguments.get("word") else ""}
+        return {}
+
+    def _execute_tool_call(self, api_client, messages, tool_call, test_logger):
+        """执行单个工具调用并获取模型最终响应"""
+        tool_call_id = tool_call.get("id")
+        function_name = tool_call.get("function", {}).get("name")
+        function_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+
+        # 执行工具
+        tool_result = self._execute_tool(function_name, function_args)
+        test_logger.info(f"工具 [{function_name}] 执行结果: {tool_result}")
+
+        # 将工具调用和结果添加到消息中
+        messages.append({
+            "role": "assistant",
+            "tool_calls": [{
+                "id": tool_call_id,
+                "function": {"name": function_name, "arguments": json.dumps(function_args)}
+            }]
+        })
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": json.dumps(tool_result)
+        })
+
+        # 获取模型最终响应
+        final_response = api_client.chat_completion(messages)
+        final_content = self.get_message_content(final_response)
+        test_logger.info(f"模型最终响应: {final_content}")
+        return final_content
+
+    def _execute_parallel_tool_calls(self, api_client, messages, tool_calls, tools, test_logger):
+        """执行多个并行工具调用并获取模型最终响应"""
+        # 执行所有工具调用
+        tool_results = []
+        for tool_call in tool_calls:
+            tool_call_id = tool_call.get("id")
+            function_name = tool_call.get("function", {}).get("name")
+            function_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+
+            tool_result = self._execute_tool(function_name, function_args)
+            test_logger.info(f"工具 [{function_name}] 执行结果: {tool_result}")
+            tool_results.append({
+                "id": tool_call_id,
+                "function_name": function_name,
+                "function_args": function_args,
+                "result": tool_result
+            })
+
+        # 将所有工具调用添加到消息中
+        messages.append({
+            "role": "assistant",
+            "tool_calls": [{
+                "id": tr["id"],
+                "function": {"name": tr["function_name"], "arguments": json.dumps(tr["function_args"])}
+            } for tr in tool_results]
+        })
+
+        # 将所有工具结果添加到消息中
+        for tr in tool_results:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tr["id"],
+                "content": json.dumps(tr["result"])
+            })
+
+        # 获取模型最终响应
+        final_response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
+        final_content = self.get_message_content(final_response)
+        test_logger.info(f"模型最终响应: {final_content}")
+        return final_content
 
     @pytest.mark.b_advanced
     @pytest.mark.p0
@@ -366,6 +491,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert "city" in args, "Should have city parameter"
         test_logger.info(f"Tool call: {tool_name}({args})")
 
+        # 执行工具调用并获取最终响应
+        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+
     @pytest.mark.b_advanced
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -391,6 +519,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info(f"Selected tool: {tool_name}")
         assert tool_name == "get_weather", f"Expected 'get_weather', got '{tool_name}'"
 
+        # 执行工具调用并获取最终响应
+        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+
         # 测试2: 股票相关问题
         test_logger.info("【测试2】股票相关问题 -> 应选择 get_stock_price")
         messages = [{"role": "user", "content": "现在苹果公司(AAPL)的股价是多少？"}]
@@ -403,6 +534,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         tool_name = tool_calls[0].get("function", {}).get("name")
         test_logger.info(f"Selected tool: {tool_name}")
         assert tool_name == "get_stock_price", f"Expected 'get_stock_price', got '{tool_name}'"
+        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
 
         # 测试3: 新闻搜索问题
         test_logger.info("【测试3】新闻搜索问题 -> 应选择 search_news")
@@ -416,6 +548,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         tool_name = tool_calls[0].get("function", {}).get("name")
         test_logger.info(f"Selected tool: {tool_name}")
         assert tool_name == "search_news", f"Expected 'search_news', got '{tool_name}'"
+        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
 
         # 测试4: 数学计算问题
         test_logger.info("【测试4】数学计算问题 -> 应选择 calculate")
@@ -429,6 +562,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         tool_name = tool_calls[0].get("function", {}).get("name")
         test_logger.info(f"Selected tool: {tool_name}")
         assert tool_name == "calculate", f"Expected 'calculate', got '{tool_name}'"
+        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
 
         # 测试5: 翻译问题
         test_logger.info("【测试5】翻译问题 -> 应选择 translate")
@@ -442,6 +576,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         tool_name = tool_calls[0].get("function", {}).get("name")
         test_logger.info(f"Selected tool: {tool_name}")
         assert tool_name == "translate", f"Expected 'translate', got '{tool_name}'"
+        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
 
         test_logger.info("多工具调用测试完成")
 
@@ -469,6 +604,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         # 可能有多个工具调用或单个工具调用都算通过
         test_logger.info(f"工具调用数量: {len(tool_calls)}")
         assert len(tool_calls) > 0, "Should have tool calls"
+
+        # 执行并行工具调用并获取最终响应
+        self._execute_parallel_tool_calls(api_client, messages, tool_calls, TOOLS_MULTIPLE, test_logger)
 
     @pytest.mark.b_advanced
     @pytest.mark.p1
@@ -513,19 +651,47 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         if len(tool_calls) == 0:
             pytest.skip("Model does not support multi-step tool chain")
 
-        # 模拟工具返回
-        tool_result = "hello"
+        # 使用 _execute_tool 执行工具并打印结果
+        tool_call = tool_calls[0]
+        function_name = tool_call.get("function", {}).get("name")
+        function_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+        tool_result = self._execute_tool(function_name, function_args)
+        test_logger.info(f"工具 [{function_name}] 执行结果: {tool_result}")
+
+        # 将工具调用和结果添加到消息中
         messages.append(response1["choices"][0]["message"])
         messages.append({
             "role": "tool",
-            "tool_call_id": tool_calls[0].get("id"),
-            "content": tool_result
+            "tool_call_id": tool_call.get("id"),
+            "content": json.dumps(tool_result)
         })
 
         # 第2步
         test_logger.info("第2步: 调用uppercase_word")
         response2 = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
         TestLogger.log_response(test_logger, response2, "第2步响应")
+
+        # 获取第2步的工具调用并执行
+        tool_calls2 = self.get_tool_calls(response2)
+        if len(tool_calls2) > 0:
+            tool_call2 = tool_calls2[0]
+            function_name2 = tool_call2.get("function", {}).get("name")
+            function_args2 = json.loads(tool_call2.get("function", {}).get("arguments", "{}"))
+            tool_result2 = self._execute_tool(function_name2, function_args2)
+            test_logger.info(f"工具 [{function_name2}] 执行结果: {tool_result2}")
+
+            # 将第2步工具调用和结果添加到消息中
+            messages.append(response2["choices"][0]["message"])
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call2.get("id"),
+                "content": json.dumps(tool_result2)
+            })
+
+            # 获取最终响应
+            final_response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
+            final_content = self.get_message_content(final_response)
+            test_logger.info(f"模型最终响应: {final_content}")
 
         self.assert_response_success(response2)
         test_logger.info("多步工具链测试完成")

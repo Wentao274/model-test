@@ -73,7 +73,7 @@ class BaseTest(ABC):
             f"Thinking disabled but reasoning is not empty: {message}"
 
         # 检查常见思考模式标记
-        thinking_markers = ["让我思考", "让我分析", "首先", "其次", "因此"]
+        thinking_markers = ["让我思考", "让我分析", "首先", "其次", "因此", "<think>", "</think>"]
         for marker in thinking_markers:
             if marker in content:
                 pytest.fail(f"Potential thinking leakage in content: found '{marker}'")
