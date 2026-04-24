@@ -90,6 +90,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("第3轮: 问水果")
         messages.append({"role": "user", "content": "那我喜欢的水果是什么呢？"})
         response3 = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response3, "第3轮响应")
         self.assert_response_success(response3, "Third round")
         messages.append(response3["choices"][0]["message"])
 
@@ -97,6 +98,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("第4轮: 问城市")
         messages.append({"role": "user", "content": "我居住的城市是上海"})
         response4 = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response4, "第4轮响应")
         self.assert_response_success(response4, "Fourth round")
         messages.append(response4["choices"][0]["message"])
 
@@ -209,6 +211,9 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         # temp=0 应该更确定，多次调用结果应该相同
         test_logger.info("验证temp=0的确定性：再次调用相同prompt")
         response0_repeat = api_client.chat_completion(messages, temperature=0.0)
+        TestLogger.log_response(test_logger, response0_repeat, "temp=0第二次响应")
+
+        self.assert_response_success(response0_repeat)
         content0_repeat = self.get_message_content(response0_repeat)
         test_logger.info(f"temp=0 第二次响应: {content0_repeat[:200]}...")
 

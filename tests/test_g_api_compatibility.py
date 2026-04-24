@@ -8,7 +8,10 @@ G. API 兼容性测试
 - G4: Usage 统计 - usage 字段准确性
 - G5: 错误码规范 - 400/401/404/429/500 错误码
 - G6: 客户端 SDK 兼容 - Python openai / JS @openai/sdk
+- G7: 响应格式变体 - response_format 参数测试
+- G8: Stream参数 - stream 参数测试
 """
+
 import pytest
 from typing import Dict, Any
 
@@ -32,7 +35,7 @@ class TestAPICompatibility(BaseTest):
 
         messages = [
             {"role": "system", "content": "你是一个助手"},
-            {"role": "user", "content": "你好"}
+            {"role": "user", "content": "你好"},
         ]
         TestLogger.log_request(test_logger, messages)
 
@@ -51,7 +54,9 @@ class TestAPICompatibility(BaseTest):
 
         # 验证usage
         usage = response.get("usage", {})
-        assert "prompt_tokens" in usage or "completion_tokens" in usage, "Should have usage"
+        assert "prompt_tokens" in usage or "completion_tokens" in usage, (
+            "Should have usage"
+        )
 
         test_logger.info(f"Chat Completions API: OK, usage={usage}")
 
@@ -123,12 +128,15 @@ class TestAPICompatibility(BaseTest):
 
         # 验证token计算正确
         if total_tokens > 0:
-            assert total_tokens == prompt_tokens + completion_tokens, \
+            assert total_tokens == prompt_tokens + completion_tokens, (
                 f"total_tokens should equal sum: {total_tokens} != {prompt_tokens} + {completion_tokens}"
+            )
 
         assert completion_tokens > 0, "Should have completion tokens"
 
-        test_logger.info(f"Usage: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+        test_logger.info(
+            f"Usage: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
+        )
 
     @pytest.mark.g_api
     @pytest.mark.p1
@@ -142,20 +150,25 @@ class TestAPICompatibility(BaseTest):
         try:
             # 使用无效的session来模拟认证失败
             from base.api_client import ModelAPIClient
+
             invalid_client = ModelAPIClient(
                 base_url=api_client.base_url,
                 api_key="invalid_key_12345",
-                model_name=api_client.model_name
+                model_name=api_client.model_name,
             )
             response = invalid_client.chat_completion(messages)
             if response.get("error"):
                 error = response["error"]
                 test_logger.info(f"401 错误响应: {error}")
                 # 验证错误格式符合 OpenAI 规范
-                assert "code" in error or "type" in error, "Error should have code or type"
-                assert error.get("code") in ["invalid_api_key", "authentication_failed"] or \
-                       error.get("type") == "authentication_error" or \
-                       "401" in str(error), "Should be authentication error"
+                assert "code" in error or "type" in error, (
+                    "Error should have code or type"
+                )
+                assert (
+                    error.get("code") in ["invalid_api_key", "authentication_failed"]
+                    or error.get("type") == "authentication_error"
+                    or "401" in str(error)
+                ), "Should be authentication error"
         except Exception as e:
             test_logger.info(f"401 错误（异常）: {e}")
 
@@ -185,16 +198,14 @@ class TestAPICompatibility(BaseTest):
             # 创建客户端（使用兼容的base_url）
             client = OpenAI(
                 api_key=api_client.api_key or "dummy",
-                base_url=f"{api_client.base_url}/v1"
+                base_url=f"{api_client.base_url}/v1",
             )
 
             messages = [{"role": "user", "content": "测试SDK兼容性"}]
 
             # 调用 chat.completions.create
             response = client.chat.completions.create(
-                model=api_client.model_name,
-                messages=messages,
-                max_tokens=50
+                model=api_client.model_name, messages=messages, max_tokens=50
             )
 
             test_logger.info(f"SDK 响应: {response}")
@@ -203,7 +214,9 @@ class TestAPICompatibility(BaseTest):
             # 验证响应格式
             assert response.id is not None, "Should have response id"
             assert len(response.choices) > 0, "Should have choices"
-            assert response.choices[0].message.content is not None, "Should have content"
+            assert response.choices[0].message.content is not None, (
+                "Should have content"
+            )
 
             test_logger.info("客户端 SDK 兼容性测试通过")
         except ImportError:

@@ -11,6 +11,7 @@ C. 多模态能力测试
 - C7: 多模态工具调用 - 基于图片内容触发工具调用
 - C8: 图片格式兼容性 - PNG/JPEG/WebP/GIF/Base64编码
 """
+
 import pytest
 import base64
 from typing import List
@@ -24,7 +25,10 @@ from base.logger import TestLogger
 # 测试用图片路径
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 IMAGES_DIR = FIXTURES_DIR / "images"
-MULTI_IMAGES_DIR = FIXTURES_DIR / "images"/ "multi"
+MULTI_IMAGES_DIR = FIXTURES_DIR / "images" / "multi"
+VIDEO_DIR = FIXTURES_DIR / "videos"
+TOOL_DIR = FIXTURES_DIR / "tool"
+CODE_DIR = FIXTURES_DIR / "code"
 
 
 class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
@@ -45,10 +49,10 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         from PIL import Image
 
         # 生成红色图片
-        img = Image.new('RGB', (100, 100), color='red')
+        img = Image.new("RGB", (100, 100), color="red")
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
-        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+        img.save(img_byte_arr, format="PNG")
+        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
         messages = [
             {
@@ -57,11 +61,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     {"type": "text", "text": "这张图片的主要颜色是什么？"},
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_b64}"
-                        }
-                    }
-                ]
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                    },
+                ],
             }
         ]
         test_logger.info("请求: 单图理解")
@@ -78,13 +80,13 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         # ========== 测试实际图片 ==========
         test_logger.info("=== 测试实际图片: sea_animals.png ===")
-        real_image_path = Path("fixtures/images/single/sea_animals.png")
+        real_image_path = IMAGES_DIR / "single" / "sea_animals.png"
 
         if not real_image_path.exists():
             test_logger.warning(f"实际图片不存在: {real_image_path}")
         else:
             with open(real_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode('utf-8')
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
             messages = [
                 {
@@ -93,11 +95,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                         {"type": "text", "text": "请描述这张图片的内容"},
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{img_b64}"
-                            }
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        },
+                    ],
                 }
             ]
             test_logger.info("请求: 实际图片理解")
@@ -108,7 +108,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             self.assert_response_success(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, "Should have response content for real image"
+            assert content and len(content) > 0, (
+                "Should have response content for real image"
+            )
 
             # 验证模型能识别图片内容（非空且有实际文本输出）
             content_lower = content.lower()
@@ -119,7 +121,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
-    @pytest.mark.skipif(not MULTI_IMAGES_DIR.exists(), reason="Images directory not found")
+    @pytest.mark.skipif(
+        not MULTI_IMAGES_DIR.exists(), reason="Images directory not found"
+    )
     def test_multi_image_comparison(self, api_client: ModelAPIClient, test_logger):
         """C2: 多图对比 - 输入多张图片，验证跨图比较"""
         test_logger.info("=== 测试开始: 多图对比 ===")
@@ -133,11 +137,13 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         content_parts = []
         for img_path in image_files:
             with open(img_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode('utf-8')
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-            })
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
+            content_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                }
+            )
 
         # 插入问题
         content_parts.insert(0, {"type": "text", "text": "这两张图片有什么区别？"})
@@ -161,10 +167,10 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         import io
         from PIL import Image
 
-        img = Image.new('RGB', (3840, 2160), color=(100, 150, 200))
+        img = Image.new("RGB", (3840, 2160), color=(100, 150, 200))
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
-        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+        img.save(img_byte_arr, format="PNG")
+        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
         messages = [
             {
@@ -173,9 +179,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     {"type": "text", "text": "这张图片是什么分辨率？请描述图片内容"},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                    }
-                ]
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                    },
+                ],
             }
         ]
         test_logger.info("请求: 4K高分辨率图片")
@@ -190,13 +196,13 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         # ========== 测试真实高清图片 ==========
         test_logger.info("=== 测试真实高清图片: sun_raise.jpg ===")
-        real_image_path = Path("./fixtures/images/high/sun_raise.jpg")
+        real_image_path = IMAGES_DIR / "high" / "sun_raise.jpg"
 
         if not real_image_path.exists():
             test_logger.warning(f"真实图片不存在: {real_image_path}")
         else:
             with open(real_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode('utf-8')
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
             messages = [
                 {
@@ -205,9 +211,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                         {"type": "text", "text": "请详细描述这张图片的内容"},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                        },
+                    ],
                 }
             ]
             test_logger.info("请求: 真实高清图片理解")
@@ -215,12 +221,16 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             response = api_client.chat_completion(messages)
 
             if response.get("error"):
-                pytest.skip(f"Model does not support real high-res images: {response['error']}")
+                pytest.skip(
+                    f"Model does not support real high-res images: {response['error']}"
+                )
 
             self.assert_response_success(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, "Should have response content for real high-res image"
+            assert content and len(content) > 0, (
+                "Should have response content for real high-res image"
+            )
             assert len(content) > 20, "Response should be detailed for high-res image"
 
             test_logger.info(f"Real high-res image response: {content[:200]}...")
@@ -236,14 +246,14 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         import io
         from PIL import Image, ImageDraw, ImageFont
 
-        img = Image.new('RGB', (400, 200), color='white')
+        img = Image.new("RGB", (400, 200), color="white")
         draw = ImageDraw.Draw(img)
-        draw.text((50, 80), "Test 123", fill='black')
-        draw.text((50, 120), "Hello World", fill='black')
+        draw.text((50, 80), "Test 123", fill="black")
+        draw.text((50, 120), "Hello World", fill="black")
 
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
-        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+        img.save(img_byte_arr, format="PNG")
+        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
         messages = [
             {
@@ -252,9 +262,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     {"type": "text", "text": "请读取图片中的文字"},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                    }
-                ]
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                    },
+                ],
             }
         ]
         test_logger.info("请求: OCR识别")
@@ -269,24 +279,27 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         # ========== 测试真实表格截图 ==========
         test_logger.info("=== 测试真实表格截图: bench_metrics.png ===")
-        real_image_path = Path("./fixtures/images/table/bench_metrics.png")
+        real_image_path = IMAGES_DIR / "table" / "bench_metrics.png"
 
         if not real_image_path.exists():
             test_logger.warning(f"真实表格图片不存在: {real_image_path}")
         else:
             with open(real_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode('utf-8')
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "请读取并分析这张表格图片中的所有数据内容"},
+                        {
+                            "type": "text",
+                            "text": "请读取并分析这张表格图片中的所有数据内容",
+                        },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        },
+                    ],
                 }
             ]
             test_logger.info("请求: 真实表格OCR识别")
@@ -294,12 +307,16 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             response = api_client.chat_completion(messages)
 
             if response.get("error"):
-                pytest.skip(f"Model does not support real table OCR: {response.get('error')}")
+                pytest.skip(
+                    f"Model does not support real table OCR: {response.get('error')}"
+                )
 
             self.assert_response_success(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, "Should have OCR result for real table image"
+            assert content and len(content) > 0, (
+                "Should have OCR result for real table image"
+            )
 
             # 表格OCR应该返回较详细的内容
             test_logger.info(f"Real table OCR result: {content[:200]}...")
@@ -311,13 +328,13 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         """C5: 视频理解 - 输入视频文件"""
         test_logger.info("=== 测试开始: 视频理解 ===")
 
-        video_path = Path("./fixtures/videos/water.mp4")
+        video_path = VIDEO_DIR / "water.mp4"
 
         if not video_path.exists():
             pytest.skip(f"Video file not found: {video_path}")
 
         with open(video_path, "rb") as f:
-            video_b64 = base64.b64encode(f.read()).decode('utf-8')
+            video_b64 = base64.b64encode(f.read()).decode("utf-8")
 
         messages = [
             {
@@ -326,9 +343,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     {"type": "text", "text": "请描述这个视频的内容"},
                     {
                         "type": "video_url",
-                        "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}
-                    }
-                ]
+                        "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
+                    },
+                ],
             }
         ]
         test_logger.info("请求: 视频理解")
@@ -336,7 +353,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         response = api_client.chat_completion(messages)
 
         if response.get("error"):
-            pytest.skip(f"Model does not support video understanding: {response.get('error')}")
+            pytest.skip(
+                f"Model does not support video understanding: {response.get('error')}"
+            )
 
         self.assert_response_success(response)
 
@@ -354,24 +373,27 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         # ========== 测试1: 识别Flask代码截图 ==========
         test_logger.info("=== 测试1: 识别Flask代码截图 ===")
-        flask_image_path = Path("./fixtures/code/flask_app.png")
+        flask_image_path = CODE_DIR / "flask_app.png"
 
         if not flask_image_path.exists():
             test_logger.warning(f"Flask代码截图不存在: {flask_image_path}")
         else:
             with open(flask_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode('utf-8')
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "请识别图片中的代码，并直接输出代码内容，不要有额外的解释"},
+                        {
+                            "type": "text",
+                            "text": "请识别图片中的代码，并直接输出代码内容，不要有额外的解释",
+                        },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        },
+                    ],
                 }
             ]
             test_logger.info("请求: 识别Flask代码截图")
@@ -379,7 +401,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             response = api_client.chat_completion(messages)
 
             if response.get("error"):
-                pytest.skip(f"Model does not support screenshot to code: {response.get('error')}")
+                pytest.skip(
+                    f"Model does not support screenshot to code: {response.get('error')}"
+                )
 
             self.assert_response_success(response)
 
@@ -391,24 +415,27 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         # ========== 测试2: UI设计图生成登录代码 ==========
         test_logger.info("=== 测试2: UI设计图生成登录代码 ===")
-        login_image_path = Path("./fixtures/code/login_ui.png")
+        login_image_path = CODE_DIR / "login_ui.png"
 
         if not login_image_path.exists():
             test_logger.warning(f"登录UI设计图不存在: {login_image_path}")
         else:
             with open(login_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode('utf-8')
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "请根据这个UI设计图，生成一个简单的Python登录页面实现代码，直接输出代码不要有额外解释"},
+                        {
+                            "type": "text",
+                            "text": "请根据这个UI设计图，生成一个简单的Python登录页面实现代码，直接输出代码不要有额外解释, 代码不需要保存到磁盘",
+                        },
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        },
+                    ],
                 }
             ]
             test_logger.info("请求: UI设计图生成登录代码")
@@ -416,7 +443,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             response = api_client.chat_completion(messages)
 
             if response.get("error"):
-                pytest.skip(f"Model does not support UI to code: {response.get('error')}")
+                pytest.skip(
+                    f"Model does not support UI to code: {response.get('error')}"
+                )
 
             self.assert_response_success(response)
 
@@ -444,14 +473,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "city": {
-                                "type": "string",
-                                "description": "城市名称"
-                            }
+                            "city": {"type": "string", "description": "城市名称"}
                         },
-                        "required": ["city"]
-                    }
-                }
+                        "required": ["city"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -461,14 +487,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "country": {
-                                "type": "string",
-                                "description": "国家名称"
-                            }
+                            "country": {"type": "string", "description": "国家名称"}
                         },
-                        "required": ["country"]
-                    }
-                }
+                        "required": ["country"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -479,11 +502,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                         "type": "object",
                         "properties": {
                             "keyword": {"type": "string", "description": "搜索关键词"},
-                            "limit": {"type": "integer", "description": "返回新闻数量"}
+                            "limit": {"type": "integer", "description": "返回新闻数量"},
                         },
-                        "required": ["keyword"]
-                    }
-                }
+                        "required": ["keyword"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -494,21 +517,24 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                         "type": "object",
                         "properties": {
                             "text": {"type": "string", "description": "要翻译的文本"},
-                            "target_lang": {"type": "string", "description": "目标语言，如 en、zh、ja"}
+                            "target_lang": {
+                                "type": "string",
+                                "description": "目标语言，如 en、zh、ja",
+                            },
                         },
-                        "required": ["text", "target_lang"]
-                    }
-                }
-            }
+                        "required": ["text", "target_lang"],
+                    },
+                },
+            },
         ]
 
         # 加载北京图片
-        image_path = Path("./fixtures/tool/beijing.png")
+        image_path = TOOL_DIR / "beijing.png"
         if not image_path.exists():
             pytest.skip(f"Test image not found: {image_path}")
 
         with open(image_path, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode('utf-8')
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
         # 图片内容是几个独立问题，翻译“大语言模型”为英文？北京天气如何？搜索关于“智算”的新闻
         messages = [
@@ -518,21 +544,19 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     {"type": "text", "text": "请回答图片中的问题并调用适当的工具"},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-                    }
-                ]
+                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                    },
+                ],
             }
         ]
         test_logger.info("请求: 多模态工具调用")
 
-        response = api_client.chat_completion(
-            messages,
-            tools=tools,
-            tool_choice="auto"
-        )
+        response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
 
         if response.get("error"):
-            pytest.skip(f"Model does not support multimodal tool call: {response.get('error')}")
+            pytest.skip(
+                f"Model does not support multimodal tool call: {response.get('error')}"
+            )
 
         self.assert_response_success(response)
 
@@ -557,11 +581,12 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call.get("function", {}).get("name")
                 arguments = tool_call.get("function", {}).get("arguments", "{}")
-                test_logger.info(f"工具调用 {i+1}: {tool_name}({arguments})")
+                test_logger.info(f"工具调用 {i + 1}: {tool_name}({arguments})")
 
                 # 验证工具名称是预期的
-                assert tool_name in expected_tools, \
+                assert tool_name in expected_tools, (
                     f"Expected tool in {expected_tools}, got '{tool_name}'"
+                )
 
             # 验证工具调用数量（图片中有3个问题）
             test_logger.info(f"共触发 {len(tool_calls)} 个工具调用")
@@ -571,17 +596,19 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
     @pytest.mark.c_multimodal
     @pytest.mark.p1
     @pytest.mark.parametrize("format", ["png", "jpeg", "webp"])
-    def test_image_format_compatibility(self, api_client: ModelAPIClient, format: str, test_logger):
+    def test_image_format_compatibility(
+        self, api_client: ModelAPIClient, format: str, test_logger
+    ):
         """C8: 图片格式兼容性 - PNG/JPEG/WebP"""
         test_logger.info(f"=== 测试开始: 图片格式兼容性 ({format}) ===")
 
         import io
         from PIL import Image
 
-        img = Image.new('RGB', (100, 100), color='blue')
+        img = Image.new("RGB", (100, 100), color="blue")
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format=format.upper())
-        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+        img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
         messages = [
             {
@@ -590,9 +617,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     {"type": "text", "text": f"这张{format}格式的图片是什么颜色？"},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/{format};base64,{img_b64}"}
-                    }
-                ]
+                        "image_url": {"url": f"data:image/{format};base64,{img_b64}"},
+                    },
+                ],
             }
         ]
         test_logger.info(f"请求: {format}格式图片")

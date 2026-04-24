@@ -15,7 +15,7 @@ models:
     display_name: Qwen 3.5
     api_key: ${QWEN_API_KEY}
     base_url: http://127.0.0.1:8080/v1
-    enabled: true
+    enabled: false
 
   kimi_k25:
     name: kimi-k25
@@ -41,9 +41,9 @@ models:
   minimax25:
     name: minimax-m2.5
     display_name: Minimax 2.5
-    api_key: ${MINIMAX_API_KEY}
-    base_url: http://127.0.0.1:8080/v1
-    enabled: false
+    api_key: abc123
+    base_url: http://10.130.70.2:8000/v1
+    enabled: true
 
 # 默认测试模型
 default_model: minimax25
