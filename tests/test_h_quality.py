@@ -42,7 +42,7 @@ class TestQuality(BaseTest):
             messages = [{"role": "user", "content": prompt}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=100)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, f"质量测试响应")
 
             self.assert_response_success(response)
@@ -78,7 +78,7 @@ class TestQuality(BaseTest):
             )
             content = self.get_message_content(response)
             responses.append(content)
-            test_logger.info(f"第{i + 1}次响应: {content[:50]}...")
+            test_logger.info(f"第{i + 1}次响应: {content[:2000]}...")
 
         # 对于确定性请求（temperature=0），输出应该一致
         # 但由于模型可能返回略有不同的措辞，我们只验证非空
@@ -105,7 +105,7 @@ class TestQuality(BaseTest):
             messages = [{"role": "user", "content": question}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=50)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "幻觉检测响应")
 
             self.assert_response_success(response)
@@ -137,7 +137,7 @@ class TestQuality(BaseTest):
         ]
         TestLogger.log_request(test_logger, messages)
 
-        response = api_client.chat_completion(messages, max_tokens=200)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "指令遵循响应")
 
         self.assert_response_success(response)
@@ -175,7 +175,7 @@ class TestQuality(BaseTest):
             messages = [{"role": "user", "content": prompt}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=100)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "相关性响应")
 
             self.assert_response_success(response)

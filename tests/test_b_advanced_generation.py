@@ -387,57 +387,69 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         """模拟工具执行"""
         if tool_name == "get_weather":
             city = arguments.get("city", "")
-            try:
-                url = f"https://wttr.in/{city}?format=j1"
-                with urllib.request.urlopen(url, timeout=5) as response:
-                    data = json_lib.loads(response.read().decode())
-                    current = data.get("current_condition", [{}])[0]
-                    return {
-                        "city": city,
-                        "temperature": current.get("temp_C", "N/A"),
-                        "humidity": current.get("humidity", "N/A"),
-                        "condition": current.get("weatherDesc", [{}])[0].get(
-                            "value", "Unknown"
-                        ),
-                    }
-            except Exception:
+            fallback_data = {
+                "北京": {"temperature": 22, "humidity": 45, "condition": "晴朗"},
+                "上海": {"temperature": 25, "humidity": 60, "condition": "多云"},
+                "广州": {"temperature": 28, "humidity": 75, "condition": "雷阵雨"},
+                "深圳": {"temperature": 27, "humidity": 80, "condition": "大雨"},
+                "成都": {"temperature": 20, "humidity": 70, "condition": "阴天"},
+                "杭州": {"temperature": 23, "humidity": 65, "condition": "晴朗"},
+            }
+            if city in fallback_data:
+                data = fallback_data[city]
                 return {
                     "city": city,
-                    "temperature": 25,
-                    "humidity": 60,
-                    "condition": "晴朗",
+                    "temperature": data["temperature"],
+                    "humidity": data["humidity"],
+                    "condition": data["condition"],
                 }
+            return {
+                "city": city,
+                "temperature": 25,
+                "humidity": 60,
+                "condition": "晴朗",
+            }
         elif tool_name == "get_stock_price":
             symbol = arguments.get("symbol", "").upper()
-            try:
-                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-                with urllib.request.urlopen(url, timeout=5) as response:
-                    data = json_lib.loads(response.read().decode())
-                    result = data.get("chart", {}).get("result", [{}])
-                    if result:
-                        price = result[0].get("meta", {}).get("regularMarketPrice", 0)
-                        return {"symbol": symbol, "price": price, "currency": "USD"}
-            except Exception:
-                return {"symbol": symbol, "price": 150.25, "currency": "USD"}
+            fallback_prices = {
+                "AAPL": {"price": 175.50, "currency": "USD"},
+                "GOOGL": {"price": 140.25, "currency": "USD"},
+                "MSFT": {"price": 380.00, "currency": "USD"},
+                "TSLA": {"price": 245.30, "currency": "USD"},
+                "SH600519": {"price": 1850.00, "currency": "CNY"},
+                "SZ000001": {"price": 12.50, "currency": "CNY"},
+                "SZ399001": {"price": 10500.00, "currency": "CNY"},
+            }
+            if symbol in fallback_prices:
+                data = fallback_prices[symbol]
+                return {
+                    "symbol": symbol,
+                    "price": data["price"],
+                    "currency": data["currency"],
+                }
+            return {"symbol": symbol, "price": 100.00, "currency": "USD"}
         elif tool_name == "search_news":
             keyword = arguments.get("keyword", "")
-            try:
-                url = f"https://newsapi.org/v2/everything?q={keyword}&pageSize=5&apiKey=demo"
-                with urllib.request.urlopen(url, timeout=5) as response:
-                    data = json_lib.loads(response.read().decode())
-                    articles = data.get("articles", [])
-                    results = [a.get("title", "") for a in articles[:5]]
-                    return {
-                        "keyword": keyword,
-                        "results": results
-                        if results
-                        else ["AI领域最新突破", "大模型发展迅速"],
-                    }
-            except Exception:
-                return {
-                    "keyword": keyword,
-                    "results": ["AI领域最新突破", "大模型发展迅速"],
-                }
+            fallback_news = {
+                "AI": [
+                    "AI领域最新突破：大模型技术持续演进",
+                    "ChatGPT用户突破10亿",
+                    "国产大模型取得新进展",
+                ],
+                "科技": [
+                    "科技创新推动产业升级",
+                    "数字经济蓬勃发展",
+                    "新技术应用改变生活",
+                ],
+                "经济": ["经济增长稳中向好", "消费市场持续回暖", "投资增速保持稳定"],
+                "default": [
+                    "今日要闻：多方面取得新进展",
+                    "行业动态：技术创新引领发展",
+                    "社会热点：民生关注度上升",
+                ],
+            }
+            results = fallback_news.get(keyword, fallback_news["default"])
+            return {"keyword": keyword, "results": results}
         elif tool_name == "calculate":
             try:
                 result = eval(arguments.get("expression", "0"))
@@ -447,34 +459,35 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         elif tool_name == "translate":
             text = arguments.get("text", "")
             target_lang = arguments.get("target_lang", "zh")
-            try:
-                url = "https://api.mymemory.translated.net/get"
-                full_url = (
-                    f"{url}?q={urllib.parse.quote(text)}&langpair=en|{target_lang}"
-                )
-                with urllib.request.urlopen(full_url, timeout=5) as response:
-                    data = json_lib.loads(response.read().decode())
-                    return {
-                        "text": text,
-                        "target_lang": target_lang,
-                        "result": data.get("responseData", {}).get(
-                            "translatedText", "你好"
-                        ),
-                    }
-            except Exception:
-                return {"text": text, "target_lang": target_lang, "result": "你好"}
+            translations = {
+                ("hello", "zh"): "你好",
+                ("world", "zh"): "世界",
+                ("good morning", "zh"): "早上好",
+                ("artificial intelligence", "zh"): "人工智能",
+                ("你好", "en"): "hello",
+                ("世界", "en"): "world",
+                ("天气", "en"): "weather",
+                ("时间", "en"): "time",
+            }
+            key = (text.lower().strip(), target_lang)
+            result = translations.get(key, f"[翻译结果: {text} -> {target_lang}]")
+            return {"text": text, "target_lang": target_lang, "result": result}
         elif tool_name == "get_time":
+            from datetime import datetime, timezone, timedelta
+
             tz = arguments.get("timezone", "Asia/Shanghai")
-            try:
-                url = f"http://worldtimeapi.org/api/timezone/{tz}"
-                with urllib.request.urlopen(url, timeout=5) as response:
-                    data = json_lib.loads(response.read().decode())
-                    return {"timezone": tz, "time": data.get("datetime", "")}
-            except Exception:
-                return {
-                    "timezone": tz,
-                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
+            tz_map = {
+                "Asia/Shanghai": 8,
+                "Asia/Tokyo": 9,
+                "America/New_York": -4,
+                "America/Los_Angeles": -7,
+                "Europe/London": 1,
+                "Europe/Paris": 2,
+            }
+            offset_hours = tz_map.get(tz, 8)
+            tz_obj = timezone(timedelta(hours=offset_hours))
+            current_time = datetime.now(tz_obj).strftime("%Y-%m-%d %H:%M:%S")
+            return {"timezone": tz, "time": current_time}
         elif tool_name == "get_seed_word":
             return {"word": "hello"}
         elif tool_name == "uppercase_word":
@@ -905,7 +918,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         messages = [
             {
                 "role": "user",
-                "content": "请获取上海的当前时间，然后查询明天的天气，最后将天气信息翻译成英文",
+                "content": "请获取上海的当前时间，然后查询当前的天气，最后将天气信息翻译成英文",
             }
         ]
         TestLogger.log_request(
@@ -947,8 +960,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             }
         )
 
-        # 第2步: 调用get_weather获取明天天气
-        test_logger.info("第2步: 调用get_weather获取上海明天天气")
+        # 第2步: 调用get_weather获取当前天气
+        test_logger.info("第2步: 调用get_weather获取上海当前天气")
         response2 = api_client.chat_completion(
             messages, tools=tools, tool_choice="auto"
         )
@@ -976,7 +989,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert "temperature" in tool_result2, "Expected 'temperature' in tool result"
         assert "condition" in tool_result2, "Expected 'condition' in tool result"
 
-        weather_info = f"{tool_result2.get('city')}明天天气: {tool_result2.get('condition')}, 温度: {tool_result2.get('temperature')}度"
+        weather_info = f"{tool_result2.get('city')}当前天气: {tool_result2.get('condition')}, 温度: {tool_result2.get('temperature')}度"
         test_logger.info(f"天气信息: {weather_info}")
 
         messages.append(response2["choices"][0]["message"])

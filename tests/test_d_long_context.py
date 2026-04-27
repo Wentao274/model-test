@@ -44,9 +44,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         prompt = "请简短介绍一下人工智能的发展历史" + "。" * 100
 
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-        response = api_client.chat_completion(messages, max_tokens=100)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "短上下文响应")
 
         self.assert_response_success(response)
@@ -65,9 +65,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         prompt = "请分析以下内容：" + "这是一个测试段落。 " * 1000
 
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-        response = api_client.chat_completion(messages, max_tokens=500)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "中等上下文响应")
 
         self.assert_response_success(response)
@@ -84,9 +84,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         prompt = "以下是一篇长文章：" + "这是第" + "测试段落。 " * 4000
 
         messages = [{"role": "user", "content": prompt + "\n\n请总结这篇文章的主要内容。"}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-        response = api_client.chat_completion(messages, max_tokens=500)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "长上下文响应")
 
         self.assert_response_success(response)
@@ -108,7 +108,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages)
 
         try:
-            response = api_client.chat_completion(messages, max_tokens=1000)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "超长上下文响应")
             self.assert_response_success(response)
             test_logger.info("Long context test passed, input tokens estimated: 32000+")
@@ -131,9 +131,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         prompt = needle_text + "\n\n请问文章中的特殊标记是什么？"
 
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-        response = api_client.chat_completion(messages, max_tokens=100)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "大海捞针响应")
 
         self.assert_response_success(response)
@@ -141,8 +141,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         # 验证模型能召回插入的信息
         assert "42" in content or "答案" in content, \
-            f"Model should recall the needle info, got: {content[:100]}"
-        test_logger.info(f"NIAH test passed, response: {content[:100]}")
+            f"Model should recall the needle info, got: {content[:2000]}"
+        test_logger.info(f"NIAH test passed, response: {content[:2000]}")
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -160,9 +160,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             prompt = "测试内容 " * (estimated_tokens // 4)
 
             messages = [{"role": "user", "content": prompt}]
-            TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-            response = api_client.chat_completion(messages, max_tokens=100)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "边界响应")
 
             # 应该能正常处理
@@ -178,13 +178,13 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 上下文截断 ===")
 
         # 生成超长文本
-        prompt = "这是一段很长的测试文本， " * 10000
+        prompt = "这是一段很长的测试文本， " * 20000
 
         messages = [{"role": "user", "content": prompt}]
         TestLogger.log_request(test_logger, messages)
 
         try:
-            response = api_client.chat_completion(messages, max_tokens=100)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "截断响应")
             # 应该被处理（截断或拒绝）
             finish_reason = response.get('choices', [{}])[0].get('finish_reason')
