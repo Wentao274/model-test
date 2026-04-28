@@ -71,7 +71,7 @@ class TestAPICompatibility(BaseTest):
         test_logger.info(f"Prompt: {prompt}")
 
         try:
-            response = api_client.completion(prompt=prompt, max_tokens=50)
+            response = api_client.completion(prompt=prompt, max_tokens=100)
 
             # 验证响应
             assert response.get("choices") is not None, "Should have choices"
@@ -80,7 +80,7 @@ class TestAPICompatibility(BaseTest):
             text = response["choices"][0].get("text", "")
             assert len(text) > 0, "Should have text content"
 
-            test_logger.info(f"Completions API: OK, text={text[:50]}")
+            test_logger.info(f"Completions API: OK, text={text[:100]}")
         except Exception as e:
             pytest.skip(f"Completions API not supported: {e}")
 
@@ -205,7 +205,7 @@ class TestAPICompatibility(BaseTest):
 
             # 调用 chat.completions.create
             response = client.chat.completions.create(
-                model=api_client.model_name, messages=messages, max_tokens=50
+                model=api_client.model_name, messages=messages, max_tokens=100
             )
 
             test_logger.info(f"SDK 响应: {response}")
@@ -234,13 +234,13 @@ class TestAPICompatibility(BaseTest):
         messages = [{"role": "user", "content": "测试"}]
 
         # 测试不同参数组合
-        response1 = api_client.chat_completion(messages, temperature=0.7, max_tokens=50)
+        response1 = api_client.chat_completion(messages, temperature=0.7, max_tokens=100)
         self.assert_response_success(response1)
 
-        response2 = api_client.chat_completion(messages, temperature=0, max_tokens=50)
+        response2 = api_client.chat_completion(messages, temperature=0, max_tokens=100)
         self.assert_response_success(response2)
 
-        response3 = api_client.chat_completion(messages, temperature=1.0, max_tokens=50)
+        response3 = api_client.chat_completion(messages, temperature=1.0, max_tokens=100)
         self.assert_response_success(response3)
 
         test_logger.info("Response format variants: OK")
@@ -255,7 +255,7 @@ class TestAPICompatibility(BaseTest):
         TestLogger.log_request(test_logger, messages)
 
         # 流式请求
-        response_iter = api_client.chat_completion_stream(messages, max_tokens=50)
+        response_iter = api_client.chat_completion_stream(messages, max_tokens=100)
         chunks = list(response_iter)
 
         test_logger.info(f"Stream parameter: {len(chunks)} chunks")

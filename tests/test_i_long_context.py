@@ -35,10 +35,10 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
         messages = [
             {"role": "user", "content": long_prompt + "\n\n请总结这篇文章的主要内容。"}
         ]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 1000})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         try:
-            response = api_client.chat_completion(messages, max_tokens=1000)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "超长上下文响应")
 
             # 验证响应成功
@@ -81,7 +81,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages)
 
         try:
-            response_iter = api_client.chat_completion_stream(messages, max_tokens=500)
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
             result = self.collect_stream_chunks(response_iter)
 
             test_logger.info(
@@ -116,7 +116,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
                 high = max_len
                 successful_len = 0
                 failed_len = max_len
-                max_iterations = 10  # 最多迭代10次
+                max_iterations = 20  # 最多迭代10次
 
                 test_logger.info(f"开始二分法测试，范围: [{low}, {high}]")
 
@@ -152,7 +152,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
                     )
 
                     try:
-                        response = api_client.chat_completion(messages, max_tokens=100)
+                        response = api_client.chat_completion(messages, max_tokens=2000)
                         if response.get("error"):
                             # 超出了边界
                             test_logger.warning(
@@ -227,7 +227,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
         response = api_client.chat_completion(
             messages,
             extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-            max_tokens=500,
+            max_tokens=2000,
         )
         TestLogger.log_response(test_logger, response, "长上下文+思考响应")
 

@@ -47,7 +47,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         content = self.get_message_content(response)
         assert len(content) > 0, "Response should contain text"
-        test_logger.info(f"Response: {content[:200]}...")
+        test_logger.info(f"Response: {content[:2000]}...")
 
     @pytest.mark.a_basic
     @pytest.mark.p0
@@ -79,7 +79,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response2, "Second round")
         content2 = self.get_message_content(response2)
-        test_logger.info(f"第2轮回答: {content2[:100]}...")
+        test_logger.info(f"第2轮回答: {content2[:2000]}...")
 
         # 验证模型记得之前的对话
         assert "蓝色" in content2 or "blue" in content2.lower(), \
@@ -110,7 +110,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response5, "Fifth round")
         content5 = self.get_message_content(response5)
-        test_logger.info(f"第5轮总结: {content5[:200]}...")
+        test_logger.info(f"第5轮总结: {content5[:2000]}...")
 
         test_logger.info("5轮对话测试完成")
 
@@ -136,7 +136,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        test_logger.info(f"响应内容: {content[:200]}...")
+        test_logger.info(f"响应内容: {content[:2000]}...")
 
         # 验证回答与Python/编程相关
         assert any(keyword in content.lower() for keyword in ["python", "装饰器", "decorator", "函数", "wrapper"]), \
@@ -156,7 +156,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         result = self.collect_stream_chunks(response_iterator)
 
         test_logger.info(f"接收到 {len(result['chunks'])} 个chunks，内容长度: {len(result['content'])}")
-        test_logger.info(f"流式内容: {result['content'][:200]}...")
+        test_logger.info(f"流式内容: {result['content'][:2000]}...")
 
         assert len(result["chunks"]) > 0, "Should receive streaming chunks"
         assert len(result["content"]) > 0, "Should receive content in streaming"
@@ -197,7 +197,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response0)
         content0 = self.get_message_content(response0)
-        test_logger.info(f"temp=0 第一次响应: {content0[:200]}...")
+        test_logger.info(f"temp=0 第一次响应: {content0[:2000]}...")
 
         # temp=1.0 多样性第一次输出
         test_logger.info("temp=1.0: 多样性第一次输出")
@@ -206,7 +206,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response1)
         content1 = self.get_message_content(response1)
-        test_logger.info(f"temp=1.0 响应: {content1[:200]}...")
+        test_logger.info(f"temp=1.0 响应: {content1[:2000]}...")
 
         # temp=0 应该更确定，多次调用结果应该相同
         test_logger.info("验证temp=0的确定性：再次调用相同prompt")
@@ -215,7 +215,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response0_repeat)
         content0_repeat = self.get_message_content(response0_repeat)
-        test_logger.info(f"temp=0 第二次响应: {content0_repeat[:200]}...")
+        test_logger.info(f"temp=0 第二次响应: {content0_repeat[:2000]}...")
 
         # temp=0 时输出应该一致或非常相似
 
@@ -226,7 +226,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response1_repeat)
         content1_repeat = self.get_message_content(response1_repeat)
-        test_logger.info(f"temp=1.0 第二次响应: {content1_repeat[:200]}...")
+        test_logger.info(f"temp=1.0 第二次响应: {content1_repeat[:2000]}...")
         # temp=1 时输出不确定
         test_logger.info("Temperature控制测试完成")
 
@@ -258,7 +258,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
-        test_logger.info(f"{param_type}={param_value} 响应: {content[:200]}...")
+        test_logger.info(f"{param_type}={param_value} 响应: {content[:2000]}...")
 
     @pytest.mark.a_basic
     @pytest.mark.p0
@@ -366,7 +366,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        test_logger.info(f"Language {lang} 响应: {content[:500]}...")
+        test_logger.info(f"Language {lang} 响应: {content[:2000]}...")
 
         # 简单验证有实际输出
         assert len(content) > 10, f"Response too short for {lang}"

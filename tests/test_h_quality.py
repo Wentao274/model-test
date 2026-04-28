@@ -74,7 +74,7 @@ class TestQuality(BaseTest):
         for i in range(3):
             test_logger.info(f"第{i + 1}次请求")
             response = api_client.chat_completion(
-                messages, max_tokens=50, temperature=0
+                messages, max_tokens=2000, temperature=0
             )
             content = self.get_message_content(response)
             responses.append(content)

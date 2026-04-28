@@ -39,14 +39,14 @@ class TestPerformance(BaseTest):
         test_logger.info("=== 测试开始: TTFT ===")
 
         messages = [{"role": "user", "content": "请给我讲一个长故事"}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         # 预热
         api_client.chat_completion(messages[:1], max_tokens=10)
 
         # 正式测试
         start = time.time()
-        response_iter = api_client.chat_completion_stream(messages, max_tokens=100)
+        response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
 
         ttft = None
         for chunk in response_iter:
@@ -66,9 +66,9 @@ class TestPerformance(BaseTest):
         test_logger.info("=== 测试开始: TPOT ===")
 
         messages = [{"role": "user", "content": "请写一首诗"}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 50})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-        response_iter = api_client.chat_completion_stream(messages, max_tokens=50)
+        response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
 
         metrics = StreamingMetrics()
         metrics.start()
@@ -103,7 +103,7 @@ class TestPerformance(BaseTest):
         latencies = []
         for _ in range(10):
             start = time.time()
-            response_iter = api_client.chat_completion_stream(messages, max_tokens=30)
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
             for chunk in response_iter:
                 if chunk.get("choices") and chunk["choices"][0].get("delta"):
                     delta = chunk["choices"][0]["delta"]
@@ -124,10 +124,10 @@ class TestPerformance(BaseTest):
         test_logger.info("=== 测试开始: 端到端延迟 ===")
 
         messages = [{"role": "user", "content": "请回答：什么是人工智能？"}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         start = time.time()
-        response = api_client.chat_completion(messages, max_tokens=100)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         latency = time.time() - start
 
         TestLogger.log_response(test_logger, response, "端到端响应")
@@ -142,10 +142,10 @@ class TestPerformance(BaseTest):
         test_logger.info("=== 测试开始: Token吞吐量 ===")
 
         messages = [{"role": "user", "content": "请写一首诗，越长越好"}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         start = time.time()
-        response_iter = api_client.chat_completion_stream(messages, max_tokens=100)
+        response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
 
         token_count = 0
         for chunk in response_iter:
@@ -171,7 +171,7 @@ class TestPerformance(BaseTest):
         start = time.time()
         count = 0
         for _ in range(5):
-            response = api_client.chat_completion(messages, max_tokens=20)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             if response.get("choices"):
                 count += 1
 
@@ -191,7 +191,7 @@ class TestPerformance(BaseTest):
 
         def make_request():
             start = time.time()
-            response = api_client.chat_completion(messages, max_tokens=50)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             return time.time() - start, response.get("choices") is not None
 
         # 10并发
@@ -231,12 +231,12 @@ class TestPerformance(BaseTest):
 
         # 首次请求
         start = time.time()
-        api_client.chat_completion(messages, max_tokens=10)
+        api_client.chat_completion(messages, max_tokens=2000)
         first_latency = time.time() - start
 
         # 预热后请求
         start = time.time()
-        api_client.chat_completion(messages, max_tokens=10)
+        api_client.chat_completion(messages, max_tokens=2000)
         warm_latency = time.time() - start
 
         test_logger.info(f"First request: {first_latency*1000:.2f}ms, Warm request: {warm_latency*1000:.2f}ms")
@@ -257,7 +257,7 @@ class TestPerformance(BaseTest):
         for name, prompt in test_cases:
             messages = [{"role": "user", "content": prompt}]
             start = time.time()
-            response = api_client.chat_completion(messages, max_tokens=10)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             latency = time.time() - start
             test_logger.info(f"Prefill ({name}): {latency*1000:.2f}ms")
 
@@ -280,7 +280,7 @@ class TestPerformance(BaseTest):
 
         # 正常请求
         start = time.time()
-        response = api_client.chat_completion(messages, max_tokens=50)
+        response = api_client.chat_completion(messages, max_tokens=2000)
         recovery_latency = time.time() - start
 
         test_logger.info(f"Recovery latency: {recovery_latency*1000:.2f}ms")

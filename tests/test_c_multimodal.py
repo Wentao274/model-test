@@ -135,7 +135,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             pytest.fail(
                 f"Model failed to recognize image. Response contains: '{failed_keyword}'"
             )
-        test_logger.info(f"Image understanding response: {content[:100]}...")
+        test_logger.info(f"Image understanding response: {content[:2000]}...")
 
         # ========== 测试实际图片 ==========
         test_logger.info("=== 测试实际图片: sea_animals.png ===")
@@ -177,7 +177,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 )
 
             assert len(content) > 10, "Response should be descriptive"
-            test_logger.info(f"Real image understanding response: {content[:200]}...")
+            test_logger.info(f"Real image understanding response: {content[:2000]}...")
             test_logger.info("实际图片理解测试通过")
 
     @pytest.mark.c_multimodal
@@ -313,7 +313,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             )
             assert len(content) > 20, "Response should be detailed for high-res image"
 
-            test_logger.info(f"Real high-res image response: {content[:200]}...")
+            test_logger.info(f"Real high-res image response: {content[:2000]}...")
             test_logger.info("真实高清图片测试通过")
 
     @pytest.mark.c_multimodal
@@ -361,7 +361,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             pytest.fail(
                 f"Model failed to recognize OCR image. Response contains: '{failed_keyword}'"
             )
-        test_logger.info(f"OCR result: {content[:100] if content else 'empty'}")
+        test_logger.info(f"OCR result: {content[:2000] if content else 'empty'}")
 
         # ========== 测试真实表格截图 ==========
         test_logger.info("=== 测试真实表格截图: bench_metrics.png ===")
@@ -410,7 +410,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 f"Model failed to recognize table image. Response contains: '{failed_keyword}'"
             )
 
-        test_logger.info(f"Real table OCR result: {content[:200]}...")
+        test_logger.info(f"Real table OCR result: {content[:2000]}...")
         test_logger.info("真实表格OCR测试通过")
 
     @pytest.mark.c_multimodal
@@ -458,7 +458,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 f"Model failed to recognize video. Response contains: '{failed_keyword}'"
             )
 
-        test_logger.info(f"Video understanding result: {content[:200]}...")
+        test_logger.info(f"Video understanding result: {content[:2000]}...")
         test_logger.info("视频理解测试通过")
 
     @pytest.mark.c_multimodal

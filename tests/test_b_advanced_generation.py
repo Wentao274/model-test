@@ -256,13 +256,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 test_logger.info("检测到 MiniMax M2 格式（仅有 </think> 结束标签）")
 
         test_logger.info(
-            f"reasoning 字段: {reasoning[:100] if reasoning else 'None'}..."
+            f"reasoning 字段: {reasoning[:2000] if reasoning else 'None'}..."
         )
         test_logger.info(
             f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
         )
         if thinking_content:
-            test_logger.info(f"思考内容: {thinking_content[:100]}...")
+            test_logger.info(f"思考内容: {thinking_content[:2000]}...")
 
         assert has_reasoning_field or has_thinking_tags, (
             "Thinking mode should return reasoning content (reasoning field or </think> tags)"
@@ -314,7 +314,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                     block = block.strip()
                     # 允许空思考或只有空白字符
                     assert not block.strip(), (
-                        f"Thinking disabled but found thinking content: {block[:50]}..."
+                        f"Thinking disabled but found thinking content: {block[:2000]}..."
                     )
 
             elif "</think>" in content and "<think>" not in content:
@@ -322,7 +322,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 end = content.find("</think>")
                 potential_thinking = content[:end].strip()
                 assert not potential_thinking.strip(), (
-                    f"Thinking disabled but found thinking content before </think> 标签: {potential_thinking[:50]}..."
+                    f"Thinking disabled but found thinking content before </think> 标签: {potential_thinking[:2000]}..."
                 )
         test_logger.info("非思考模式测试通过，无thinking泄漏")
 
@@ -349,7 +349,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.assert_response_success(response1)
         reasoning1 = self.get_reasoning_content(response1)
         test_logger.info(
-            f"开启thinking后的reasoning: {reasoning1[:100] if reasoning1 else 'None'}..."
+            f"开启thinking后的reasoning: {reasoning1[:2000] if reasoning1 else 'None'}..."
         )
         content1 = self.get_message_content(response1)
         # 验证开启thinking时有思考内容
@@ -1064,7 +1064,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         # 有些模型会把思考内容 append 到 JSON 前面，实际 JSON 在 </think> 之后
         if content and "</think>" in content:
             content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted JSON after </think>: {content[:200]}...")
+            test_logger.info(f"Extracted JSON after </think>: {content[:2000]}...")
 
         if content:
             try:
@@ -1119,7 +1119,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         # 处理 content 中包含 </think> 思考内容的情况
         if content and "</think>" in content:
             content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted JSON after </think>: {content[:200]}...")
+            test_logger.info(f"Extracted JSON after </think>: {content[:2000]}...")
 
         # 优先从 content 提取 JSON
         if content and content.strip():
@@ -1128,7 +1128,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 source = "content"
             except ValueError:
                 test_logger.warning(
-                    f"Failed to extract JSON from content: {content[:200]}..."
+                    f"Failed to extract JSON from content: {content[:2000]}..."
                 )
 
         # 如果 content 没有 JSON，尝试从 reasoning 提取
@@ -1138,7 +1138,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 source = "reasoning"
             except ValueError:
                 test_logger.warning(
-                    f"Failed to extract JSON from reasoning: {reasoning[:200]}..."
+                    f"Failed to extract JSON from reasoning: {reasoning[:2000]}..."
                 )
 
         if json_data is None:
@@ -1174,14 +1174,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         # 处理 content 中包含 </think> 思考内容的情况
         if content and "</think>" in content:
             content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted content after </think>: {content[:100]}...")
+            test_logger.info(f"Extracted content after </think>: {content[:2000]}...")
 
-        test_logger.info(f"Prefix 约束响应: {content[:100]}...")
+        test_logger.info(f"Prefix 约束响应: {content[:2000]}...")
 
         # 验证前缀是否被正确遵循（如果API支持）
         if content and not content.startswith("答案是："):
             pytest.fail(
-                f"Prefix约束未遵循，期望以'答案是：'开头，实际回复: {content[:50]}..."
+                f"Prefix约束未遵循，期望以'答案是：'开头，实际回复: {content[:2000]}..."
             )
 
         # ========== 测试 suffix 约束 ==========
@@ -1199,14 +1199,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         # 处理 content 中包含 </think> 思考内容的情况
         if content and "</think>" in content:
             content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted content after </think>: {content[:100]}...")
+            test_logger.info(f"Extracted content after </think>: {content[:2000]}...")
 
-        test_logger.info(f"Suffix 约束响应: {content[:100]}...")
+        test_logger.info(f"Suffix 约束响应: {content[:2000]}...")
 
         # 验证后缀是否被正确遵循
         if content and not content.endswith("完毕。"):
             pytest.fail(
-                f"Suffix约束未遵循，期望以'完毕。'结尾，实际回复: {content[:50]}..."
+                f"Suffix约束未遵循，期望以'完毕。'结尾，实际回复: {content[:2000]}..."
             )
 
         test_logger.info("Prefix/Suffix 约束测试完成")
