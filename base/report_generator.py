@@ -81,7 +81,13 @@ class TestReportGenerator:
             tests = category["tests"]
 
             # 初始化分类统计
-            category_stats[category_name] = {"passed": 0, "failed": 0, "skipped": 0, "partial": 0, "total": 0}
+            category_stats[category_name] = {
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "partial": 0,
+                "total": 0,
+            }
 
             lines.append(f"## {category_name}")
             lines.append("")
@@ -183,16 +189,27 @@ class TestReportGenerator:
         # 各测试分类统计
         lines.append("## 分类统计")
         lines.append("")
-        lines.append("| 测试分类           | 总数 | 通过 | 失败 | 跳过 | 通过率 |")
-        lines.append("|-------------------|-----|-----|-----|-----|-------|")
+        lines.append(
+            "| 测试分类           | 总数 | 通过 | 未通过 | 部分通过 | 未测试 | 通过率 |"
+        )
+        lines.append(
+            "|-------------------|-----|-----|-------|---------|-------|-------|"
+        )
 
         for category_name, stats in category_stats.items():
             total = stats["total"]
             passed = stats["passed"]
             failed = stats["failed"]
+            partial = stats.get("partial", 0)
             skipped = stats["skipped"]
-            cat_pass_rate = f"{passed * 100 // max(passed + failed, 1)}%" if (passed + failed) > 0 else "N/A"
-            lines.append(f"| {category_name:17s} | {total:3d} | {passed:3d} | {failed:3d} | {skipped:3d} | {cat_pass_rate:5s} |")
+            cat_pass_rate = (
+                f"{passed * 100 // max(passed + failed, 1)}%"
+                if (passed + failed) > 0
+                else "N/A"
+            )
+            lines.append(
+                f"| {category_name:17s} | {total:3d} | {passed:3d} | {failed:4d} | {partial:5d} | {skipped:5d} | {cat_pass_rate:5s} |"
+            )
 
         lines.append("")
 
