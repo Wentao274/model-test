@@ -221,12 +221,13 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
         test_logger.info(f"输入长度: {len(long_prompt)} 字符")
 
         messages = [{"role": "user", "content": long_prompt}]
-        TestLogger.log_request(test_logger, messages, {"enable_thinking": True})
+        thinking_params = api_client.get_thinking_params(True)
+        TestLogger.log_request(test_logger, messages, thinking_params)
 
         # 开启thinking
         response = api_client.chat_completion(
             messages,
-            extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+            extra_body=thinking_params,
             max_tokens=2000,
         )
         TestLogger.log_response(test_logger, response, "长上下文+思考响应")

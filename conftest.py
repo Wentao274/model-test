@@ -74,6 +74,7 @@ def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPICli
         base_url=model_config["base_url"],
         model_name=model_config["name"],
         timeout=config["global"]["timeout"],
+        config=model_config,
     )
 
 
@@ -106,6 +107,7 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
         base_url=model_config["base_url"],
         model_name=model_config["name"],
         timeout=config["global"]["timeout"],
+        config=model_config,
     )
 
 
@@ -113,7 +115,7 @@ _last_test_name = {}
 
 
 @pytest.fixture(scope="function")
-def test_logger(request):
+def test_logger(request, config):
     """
     为每个测试类创建独立的日志器
 
@@ -129,7 +131,33 @@ def test_logger(request):
     else:
         logger_name = request.node.module.__name__.split(".")[-1]
 
-    logger = TestLogger.get_logger(logger_name)
+    # 获取当前使用的模型名称
+    model_name = None
+    try:
+        enabled_models = config.get("models", {})
+        for name, model_cfg in enabled_models.items():
+            if model_cfg.get("enabled", False):
+                model_name = name
+                break
+        if not model_name:
+            model_name = config.get("default_model")
+    except:
+        pass
+
+    # 获取当前使用的芯片平台名称
+    chip_name = None
+    try:
+        chips = config.get("chips", {})
+        for name, is_active in chips.items():
+            if is_active:
+                chip_name = name
+                break
+    except:
+        pass
+
+    logger = TestLogger.get_logger(
+        logger_name, model_name=model_name, chip_name=chip_name
+    )
 
     test_name = request.node.name
 
@@ -267,8 +295,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """测试结束后自动生成报告"""
     global _test_results
 
-    # 获取启用的模型
+    # 获取启用的模型和配置
     model = None
+    cfg = None
     try:
         cfg = load_config()
         for name, model_cfg in cfg.get("models", {}).items():
@@ -289,7 +318,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     test_date = datetime.now().strftime("%Y-%m-%d")
     test_time = datetime.now().strftime("%H:%M:%S")
 
-    generator = TestReportGenerator("test_reports")
+    generator = TestReportGenerator("test_reports", config=cfg)
     filepath = generator.generate(model, _test_results, test_date, test_time)
 
     # 获取pytest实际统计

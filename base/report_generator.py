@@ -12,10 +12,21 @@ from typing import Dict, Any, List, Optional
 from base.test_definitions import TEST_CATEGORIES
 
 
+def get_active_chip(config: Dict[str, Any]) -> str:
+    """获取当前激活的芯片平台名称"""
+    chips = config.get("chips", {})
+    for chip_name, is_active in chips.items():
+        if is_active:
+            return chip_name
+    return "default"
+
+
 class TestReportGenerator:
     """测试报告生成器"""
 
-    def __init__(self, output_dir: str = "test_reports"):
+    def __init__(self, output_dir: str = "test_reports", config: Dict[str, Any] = None):
+        self.config = config or {}
+        self.chip_name = get_active_chip(self.config)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -36,7 +47,13 @@ class TestReportGenerator:
 
         content = self._build_report_content(model, test_results, test_date, test_time)
 
-        output_subdir = self.output_dir / f"{model['name']}_{test_datetime}"
+        chip_dir = self.output_dir / self.chip_name
+        chip_dir.mkdir(parents=True, exist_ok=True)
+
+        model_dir = chip_dir / model["name"]
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        output_subdir = model_dir / f"{model['name']}_{test_datetime}"
         output_subdir.mkdir(parents=True, exist_ok=True)
 
         filename = f"test_report_{model['name']}_{test_datetime}.md"

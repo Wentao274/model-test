@@ -1,6 +1,7 @@
 """
 模型API客户端封装
 """
+
 import json
 import time
 from typing import Dict, Any, List, Optional, Iterator, Union
@@ -15,17 +16,38 @@ class ModelAPIClient:
         api_key: str,
         base_url: str,
         model_name: str,
-        timeout: int = 120
+        timeout: int = 120,
+        config: Dict[str, Any] = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model_name = model_name
         self.timeout = timeout
+        self.config = config or {}
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        })
+        self.session.headers.update(
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        )
+
+    def get_thinking_params(self, enabled: bool = None) -> Dict[str, Any]:
+        """根据模型配置生成思考模式参数
+
+        Args:
+            enabled: 是否启用思考模式，默认使用模型的 thinking_mode 配置
+        """
+        if enabled is None:
+            enabled = self.config.get("thinking_mode", False)
+
+        if not enabled:
+            return {}
+
+        use_chat_template = self.config.get("thinking_via_chat_template", False)
+        thinking_key = self.config.get("thinking_key", "enable_thinking")
+
+        if use_chat_template:
+            return {"chat_template_kwargs": {thinking_key: enabled}}
+        else:
+            return {thinking_key: enabled}
 
     def chat_completion(
         self,
@@ -34,7 +56,7 @@ class ModelAPIClient:
         temperature: float = 0.7,
         max_tokens: int = 2048,
         stream: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Union[Dict[str, Any], Iterator[Dict[str, Any]]]:
         """
         发送聊天完成请求
@@ -52,7 +74,9 @@ class ModelAPIClient:
             流式: SSE事件迭代器
         """
         if stream:
-            return self.chat_completion_stream(messages, model, temperature, max_tokens, **kwargs)
+            return self.chat_completion_stream(
+                messages, model, temperature, max_tokens, **kwargs
+            )
 
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -61,23 +85,29 @@ class ModelAPIClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
-            **kwargs
+            **kwargs,
         }
 
         response = self.session.post(url, json=payload, timeout=self.timeout)
 
         # 检查响应状态
         if response.status_code != 200:
-            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+            raise Exception(
+                f"API request failed with status {response.status_code}: {response.text}"
+            )
 
         # 检查响应内容
         if not response.text or response.text.strip() == "":
-            raise Exception(f"API returned empty response. Status: {response.status_code}")
+            raise Exception(
+                f"API returned empty response. Status: {response.status_code}"
+            )
 
         try:
             return response.json()
         except json.JSONDecodeError as e:
-            raise Exception(f"Failed to parse JSON response: {e}. Response text: {response.text[:500]}")
+            raise Exception(
+                f"Failed to parse JSON response: {e}. Response text: {response.text[:500]}"
+            )
 
     def chat_completion_stream(
         self,
@@ -85,7 +115,7 @@ class ModelAPIClient:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
-        **kwargs
+        **kwargs,
     ) -> Iterator[Dict[str, Any]]:
         """发送聊天完成请求（流式）"""
         url = f"{self.base_url}/chat/completions"
@@ -95,21 +125,25 @@ class ModelAPIClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
-            **kwargs
+            **kwargs,
         }
 
-        response = self.session.post(url, json=payload, timeout=self.timeout, stream=True)
+        response = self.session.post(
+            url, json=payload, timeout=self.timeout, stream=True
+        )
 
         # 检查响应状态
         if response.status_code != 200:
-            raise Exception(f"API request failed with status {response.status_code}: {response.text[:500]}")
+            raise Exception(
+                f"API request failed with status {response.status_code}: {response.text[:500]}"
+            )
 
         for line in response.iter_lines():
             if line:
-                line = line.decode('utf-8')
-                if line.startswith('data: '):
+                line = line.decode("utf-8")
+                if line.startswith("data: "):
                     data = line[6:]
-                    if data == '[DONE]':
+                    if data == "[DONE]":
                         break
                     yield json.loads(data)
 
@@ -121,18 +155,11 @@ class ModelAPIClient:
         return response.json()
 
     def completion(
-        self,
-        prompt: str,
-        model: Optional[str] = None,
-        **kwargs
+        self, prompt: str, model: Optional[str] = None, **kwargs
     ) -> Dict[str, Any]:
         """传统Completion API"""
         url = f"{self.base_url}/completions"
-        payload = {
-            "model": model or self.model_name,
-            "prompt": prompt,
-            **kwargs
-        }
+        payload = {"model": model or self.model_name, "prompt": prompt, **kwargs}
         response = self.session.post(url, json=payload, timeout=self.timeout)
         response.raise_for_status()
         return response.json()
@@ -188,7 +215,7 @@ class StreamingMetrics:
         if len(self.token_times) < 2:
             return 0
         total_time = sum(
-            self.token_times[i] - self.token_times[i-1]
+            self.token_times[i] - self.token_times[i - 1]
             for i in range(1, len(self.token_times))
         )
         return total_time / (len(self.token_times) - 1)

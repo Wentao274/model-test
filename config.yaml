@@ -8,6 +8,11 @@ global:
   log_level: DEBUG                 # 日志级别
   output_dir: ./test_results      # 测试结果输出目录
 
+chips:
+  MetaX-C550: true
+  NVIDIA-H100: false
+  Hygon-BW1000: false
+
 # 模型配置 - 支持多模型测试
 models:
   qwen35:
@@ -16,13 +21,19 @@ models:
     api_key: ${QWEN_API_KEY}
     base_url: http://127.0.0.1:8080/v1
     enabled: false
+    thinking_mode: true
+    thinking_key: "enable_thinking"
+    thinking_via_chat_template: false
 
   kimi_k25:
     name: kimi-k25
     display_name: Kimi K2.5
-    api_key: ${KIMI_API_KEY}
-    base_url: http://127.0.0.1:8080/v1
-    enabled: false
+    api_key: abc123
+    base_url: http://10.130.70.1:8000/v1
+    enabled: true
+    thinking_mode: true
+    thinking_key: "thinking"
+    thinking_via_chat_template: false
 
   glm5:
     name: glm-5
@@ -30,6 +41,9 @@ models:
     api_key: ${GLM_API_KEY}
     base_url: http://127.0.0.1:8080/v1
     enabled: false
+    thinking_mode: true
+    thinking_key: "enable_thinking"
+    thinking_via_chat_template: false
 
   minimax21:
     name: minimax-m21
@@ -37,13 +51,17 @@ models:
     api_key: ${MINIMAX_API_KEY}
     base_url: http://127.0.0.1:8080/v1
     enabled: false
+    thinking_mode: false
 
   minimax25:
     name: minimax-m2.5
     display_name: Minimax 2.5
     api_key: abc123
     base_url: http://10.130.70.2:8000/v1
-    enabled: true
+    enabled: false
+    thinking_mode: true
+    thinking_key: "enable_thinking"
+    thinking_via_chat_template: false
 
 # 默认测试模型
 default_model: minimax25

@@ -207,14 +207,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 思考模式 ===")
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
-        TestLogger.log_request(
-            test_logger, messages, {"chat_template_kwargs": {"enable_thinking": True}}
-        )
+        thinking_params = api_client.get_thinking_params(True)
+        TestLogger.log_request(test_logger, messages, thinking_params)
 
-        # 使用chat_template_kwargs开启thinking
-        response = api_client.chat_completion(
-            messages, extra_body={"chat_template_kwargs": {"enable_thinking": True}}
-        )
+        # 使用模型配置的thinking参数
+        response = api_client.chat_completion(messages, extra_body=thinking_params)
         TestLogger.log_response(test_logger, response, "思考模式响应")
 
         self.assert_response_success(response)
@@ -278,13 +275,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 非思考模式 ===")
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
-        TestLogger.log_request(
-            test_logger, messages, {"chat_template_kwargs": {"enable_thinking": False}}
-        )
 
-        response = api_client.chat_completion(
-            messages, extra_body={"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        thinking_params = api_client.get_thinking_params(False)
+        TestLogger.log_request(test_logger, messages, thinking_params)
+
+        response = api_client.chat_completion(messages, extra_body=thinking_params)
         TestLogger.log_response(test_logger, response, "非思考模式响应")
 
         self.assert_response_success(response)
@@ -337,13 +332,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         # 开启thinking
         test_logger.info("第1轮: 开启thinking模式")
-        TestLogger.log_request(
-            test_logger, messages, {"chat_template_kwargs": {"enable_thinking": True}}
-        )
+        thinking_params_on = api_client.get_thinking_params(True)
+        thinking_params_off = api_client.get_thinking_params(False)
 
-        response1 = api_client.chat_completion(
-            messages, extra_body={"chat_template_kwargs": {"enable_thinking": True}}
-        )
+        TestLogger.log_request(test_logger, messages, thinking_params_on)
+
+        response1 = api_client.chat_completion(messages, extra_body=thinking_params_on)
         TestLogger.log_response(test_logger, response1, "开启thinking响应")
 
         self.assert_response_success(response1)
@@ -370,13 +364,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         # 关闭thinking
         test_logger.info("第2轮: 关闭thinking模式")
-        TestLogger.log_request(
-            test_logger, messages, {"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        # )
 
-        response2 = api_client.chat_completion(
-            messages, extra_body={"chat_template_kwargs": {"enable_thinking": False}}
-        )
+        TestLogger.log_request(test_logger, messages, thinking_params_off)
+
+        response2 = api_client.chat_completion(messages, extra_body=thinking_params_off)
         TestLogger.log_response(test_logger, response2, "关闭thinking响应")
 
         self.assert_response_success(response2)
