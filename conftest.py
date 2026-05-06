@@ -59,9 +59,31 @@ def default_model(config: Dict[str, Any]) -> str:
     return config.get("default_model", "qwen35")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_loggers():
+    """测试会话开始时清理旧的日志记录器"""
+    from base.logger import TestLogger
+
+    TestLogger._loggers.clear()
+    yield
+    TestLogger._loggers.clear()
+
+
 @pytest.fixture(scope="function")
 def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPIClient:
     """为每个测试创建API客户端（使用第一个启用的模型）"""
+    # 获取激活的芯片平台
+    chip_name = None
+    chip_config = None
+    for name, cfg in config.get("chips", {}).items():
+        if cfg.get("enabled", False):
+            chip_name = name
+            chip_config = cfg
+            break
+
+    if not chip_name or not chip_config:
+        raise ValueError("No enabled chip found in config")
+
     # 使用第一个启用的模型，如果没有启用的则使用 default_model
     if enabled_models:
         model_name = enabled_models[0]
@@ -71,7 +93,7 @@ def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPICli
     model_config = config["models"][model_name]
     return ModelAPIClient(
         api_key=model_config["api_key"],
-        base_url=model_config["base_url"],
+        base_url=chip_config["base_url"],
         model_name=model_config["name"],
         timeout=config["global"]["timeout"],
         config=model_config,
@@ -92,6 +114,18 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
         def test_something():
             ...
     """
+    # 获取激活的芯片平台
+    chip_name = None
+    chip_config = None
+    for name, cfg in config.get("chips", {}).items():
+        if cfg.get("enabled", False):
+            chip_name = name
+            chip_config = cfg
+            break
+
+    if not chip_name or not chip_config:
+        raise ValueError("No enabled chip found in config")
+
     # 优先从命令行参数获取模型
     model_name = request.config.getoption("--model", default=None)
     if not model_name:
@@ -104,7 +138,7 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
 
     return ModelAPIClient(
         api_key=model_config["api_key"],
-        base_url=model_config["base_url"],
+        base_url=chip_config["base_url"],
         model_name=model_config["name"],
         timeout=config["global"]["timeout"],
         config=model_config,
@@ -148,8 +182,11 @@ def test_logger(request, config):
     chip_name = None
     try:
         chips = config.get("chips", {})
-        for name, is_active in chips.items():
-            if is_active:
+        for name, chip_cfg in chips.items():
+            if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
+                chip_name = name
+                break
+            elif chip_cfg is True:  # 兼容旧格式
                 chip_name = name
                 break
     except:

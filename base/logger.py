@@ -12,8 +12,10 @@ from typing import Optional, Dict, Any
 def get_active_chip(config: Dict[str, Any]) -> str:
     """获取当前激活的芯片平台名称"""
     chips = config.get("chips", {})
-    for chip_name, is_active in chips.items():
-        if is_active:
+    for chip_name, chip_cfg in chips.items():
+        if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
+            return chip_name
+        elif chip_cfg is True:  # 兼容旧格式：chips: { "chip_name": true }
             return chip_name
     return "default"
 
@@ -39,6 +41,10 @@ class TestLogger:
             model_name: 模型名称，用于创建模型子目录
             chip_name: 芯片平台名称
         """
+        # 如果已存在该测试类的 logger，直接返回（每个测试类一个日志文件）
+        if test_class_name in cls._loggers:
+            return cls._loggers[test_class_name]
+
         # 构建目录路径: logs/chip_name/model_name/test_class_name
         if chip_name:
             log_path = Path(log_dir) / chip_name

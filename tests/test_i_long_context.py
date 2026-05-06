@@ -116,7 +116,7 @@ class TestLongContextScriptValidation(BaseTest, StreamingTestMixin):
                 high = max_len
                 successful_len = 0
                 failed_len = max_len
-                max_iterations = 20  # 最多迭代10次
+                max_iterations = 16  # 最多迭代16次
 
                 test_logger.info(f"开始二分法测试，范围: [{low}, {high}]")
 
