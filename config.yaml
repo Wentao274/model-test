@@ -18,6 +18,9 @@ chips:
   Hygon-BW1000:
     enabled: true
     base_url: http://10.212.16.21:8080/v1
+  Kunlun-P800:
+    enabled: false
+    base_url: http://127.0.0.1:8080/v1
 
 # 模型配置 - 支持多模型测试
 models:

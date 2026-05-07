@@ -76,9 +76,13 @@ def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPICli
     chip_name = None
     chip_config = None
     for name, cfg in config.get("chips", {}).items():
-        if cfg.get("enabled", False):
+        if isinstance(cfg, dict) and cfg.get("enabled", False):
             chip_name = name
             chip_config = cfg
+            break
+        elif cfg is True:  # 兼容旧格式
+            chip_name = name
+            chip_config = {"base_url": ""}
             break
 
     if not chip_name or not chip_config:
@@ -118,9 +122,13 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
     chip_name = None
     chip_config = None
     for name, cfg in config.get("chips", {}).items():
-        if cfg.get("enabled", False):
+        if isinstance(cfg, dict) and cfg.get("enabled", False):
             chip_name = name
             chip_config = cfg
+            break
+        elif cfg is True:  # 兼容旧格式
+            chip_name = name
+            chip_config = {"base_url": ""}
             break
 
     if not chip_name or not chip_config:
