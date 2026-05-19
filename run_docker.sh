@@ -1,12 +1,19 @@
 #!/bin/bash
 # =============================================================================
 # Docker 构建与运行脚本
+# 
+# Volume 映射: /data/lwt/maas -> /maas
+# 工作目录: /maas/model-test
 # =============================================================================
 
 set -e
 
 IMAGE_NAME="model-test"
 CONTAINER_NAME="model-test-runner"
+
+# Volume 映射配置
+HOST_MAAS_DIR="/data/lwt/maas"
+CONTAINER_MAAS_DIR="/maas"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -31,6 +38,9 @@ show_help() {
     echo "  --api-key KEY            API 密钥"
     echo "  --model-name NAME        模型名称"
     echo "  --thinking-mode          启用思考模式"
+    echo ""
+    echo "Volume 映射:"
+    echo "  ${HOST_MAAS_DIR} -> ${CONTAINER_MAAS_DIR}"
     echo ""
     echo "示例:"
     echo "  $0 build"
@@ -80,7 +90,10 @@ run() {
     # 检查是否有 Docker 参数
     if [[ -z "$docker_args" ]]; then
         echo -e "${YELLOW}注意: 未指定 Docker 参数，使用 config.yaml${NC}"
-        docker run --rm -it --name ${CONTAINER_NAME} ${IMAGE_NAME} ${pytest_args:-"-v"}
+        docker run --rm -it \
+            -v ${HOST_MAAS_DIR}:${CONTAINER_MAAS_DIR} \
+            --name ${CONTAINER_NAME} \
+            ${IMAGE_NAME} ${pytest_args:-"-v"}
         return
     fi
     
@@ -113,10 +126,12 @@ run() {
     [[ -n "$api_key" ]] && echo "  api_key: ***"
     [[ -n "$model_name" ]] && echo "  model_name: $model_name"
     [[ "$thinking_mode" == "true" ]] && echo "  thinking_mode: true"
+    echo "  volume: ${HOST_MAAS_DIR} -> ${CONTAINER_MAAS_DIR}"
     echo ""
     
     # 构建命令
     local cmd="docker run --rm -it"
+    cmd="$cmd -v ${HOST_MAAS_DIR}:${CONTAINER_MAAS_DIR}"
     [[ -n "$chip" ]] && cmd="$cmd -e DOCKER_CHIP=$chip"
     [[ -n "$base_url" ]] && cmd="$cmd -e DOCKER_BASE_URL=$base_url"
     [[ -n "$api_key" ]] && cmd="$cmd -e DOCKER_API_KEY=$api_key"
@@ -137,7 +152,10 @@ run() {
 
 shell() {
     echo -e "${GREEN}启动交互式 Shell${NC}"
-    docker run --rm -it --entrypoint /bin/bash ${IMAGE_NAME}
+    docker run --rm -it \
+        -v ${HOST_MAAS_DIR}:${CONTAINER_MAAS_DIR} \
+        --entrypoint /bin/bash \
+        ${IMAGE_NAME}
 }
 
 case "${1:-help}" in

@@ -27,7 +27,7 @@ ENV PATH="/root/.local/bin:$PATH"
 # =============================================================================
 # 2. 设置工作目录
 # =============================================================================
-WORKDIR /app
+WORKDIR /maas/model-test
 
 # =============================================================================
 # 3. 复制项目文件 (排除 logs 和 test_reports)
@@ -52,21 +52,21 @@ COPY fixtures/ ./fixtures/
 # 4. 使用 uv 安装 Python 依赖
 # =============================================================================
 # 创建虚拟环境
-RUN uv venv /app/.venv
+RUN uv venv /maas/model-test/.venv
 
 # 激活虚拟环境并安装依赖
-RUN . /app/.venv/bin/activate && \
+RUN . /maas/model-test/.venv/bin/activate && \
     uv pip install --no-cache -r requirements.txt
 
 # =============================================================================
 # 5. 设置环境变量
 # =============================================================================
 # 激活虚拟环境
-ENV VIRTUAL_ENV=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV=/maas/model-test/.venv
+ENV PATH="/maas/model-test/.venv/bin:$PATH"
 
 # Python 环境变量
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/maas/model-test
 ENV PYTHONUNBUFFERED=1
 
 # =============================================================================
@@ -80,5 +80,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # =============================================================================
 # 默认运行 pytest -v
 # 可以通过 docker run 覆盖命令，如: docker run model-test pytest -m p0 -v
-ENTRYPOINT ["/app/.venv/bin/python", "-m", "pytest"]
+ENTRYPOINT ["/maas/model-test/.venv/bin/python", "-m", "pytest"]
 CMD ["-v"]
