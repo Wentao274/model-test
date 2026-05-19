@@ -48,6 +48,7 @@ test_reports/
 .DS_Store
 *.log
 reports_readme.png
+主流模型推理功能测试点矩阵.md
 
 # Claude 配置
 .claude/

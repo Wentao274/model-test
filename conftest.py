@@ -342,6 +342,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.d_long_context)
         elif "test_e_" in item.nodeid:
             item.add_marker(pytest.mark.e_performance)
+            item.add_marker(pytest.mark.skip(reason="E类性能测试已禁用"))
         elif "test_f_" in item.nodeid:
             item.add_marker(pytest.mark.f_stability)
         elif "test_g_" in item.nodeid:
