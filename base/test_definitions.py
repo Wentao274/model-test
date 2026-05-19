@@ -247,6 +247,49 @@ TEST_CATEGORIES = {
             ),
         ],
     },
+    "j_quality": {
+        "name": "J. 回答质量与相关性",
+        "tests": [
+            (
+                "J1-1",
+                "编程领域相关性",
+                "验证编程问题的回答相关性",
+                "response_relevance_programming",
+            ),
+            (
+                "J1-2",
+                "数学领域相关性",
+                "验证数学问题的回答相关性",
+                "response_relevance_math",
+            ),
+            (
+                "J1-3",
+                "科学领域相关性",
+                "验证科学问题的回答相关性",
+                "response_relevance_science",
+            ),
+            (
+                "J2",
+                "乱码检测",
+                "检测输出是否为乱码或无效字符",
+                "garbled_text_detection",
+            ),
+            (
+                "J3",
+                "无意义回答检测",
+                "检测回答是否与问题完全不相关",
+                "nonsensical_response_detection",
+            ),
+            ("J4", "跨领域相关性", "天气/烹饪等领域相关性", "cross_domain_relevance"),
+            (
+                "J5",
+                "上下文一致性",
+                "多轮对话中验证上下文一致性",
+                "conversation_context_consistency",
+            ),
+            ("J6", "回答具体性", "确保回答不是泛泛而谈", "response_specificity_check"),
+        ],
+    },
 }
 
 

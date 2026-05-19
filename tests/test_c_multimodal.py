@@ -528,7 +528,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                     "content": [
                         {
                             "type": "text",
-                            "text": "请根据这个UI设计图，生成一个简单的Python登录页面实现代码，直接输出代码不要有额外解释, 代码不需要保存到磁盘",
+                            "text": "请根据这个UI设计图，生成一个简单的Python实现代码，直接输出代码不要有额外解释, 代码不需要保存到磁盘",
                         },
                         {
                             "type": "image_url",

@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 75 个测试点。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 83 个测试点。
 
 ## 快速开始
 
@@ -95,6 +95,7 @@ pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
 pytest -m h_quality -v      # 质量评估
 pytest -m i_long_context -v # 超长上下文验证
+pytest -m j_quality -v      # 回答质量与相关性
 
 # 运行多个分类（使用 -m 可以组合多个标记）
 pytest -m "a_basic or b_advanced" -v    # 基础 + 高级
@@ -119,8 +120,9 @@ pytest --model=qwen35 -v
 | G. API兼容性  | 8    | test_g_api_compatibility.py   | OpenAI Chat/Completions接口、模型列表、Usage统计                                                       |
 | H. 质量评估    | 5    | test_h_quality.py             | 生成质量、生成一致性、幻觉率、指令遵循度                                                                         |
 | I. 超长上下文验证 | 4    | test_i_long_context.py        | 超长上下文脚本验证                                                                                    |
+| J. 回答质量与相关性 | 8    | test_j_response_quality.py    | 回答相关性（编程/数学/科学领域）、乱码检测、无意义回答检测、跨领域相关性、上下文一致性、回答具体性                                |
 
-> 总计：75 个测试点
+> 总计：83 个测试点
 
 ## 配置文件说明
 
@@ -212,7 +214,8 @@ model-test/
 │   ├── test_f_stability.py             # F类测试：稳定性与边界
 │   ├── test_g_api_compatibility.py     # G类测试：API兼容性
 │   ├── test_h_quality.py               # H类测试：质量评估
-│   └── test_i_long_context.py          # I类测试：超长上下文验证
+│   ├── test_i_long_context.py          # I类测试：超长上下文验证
+│   └── test_j_response_quality.py      # J类测试：回答质量与相关性
 ├── logs/                # 日志目录（运行后生成，按芯片/模型/测试类组织）
 │   └── {chip_name}/
 │       └── {model_name}/
@@ -318,6 +321,7 @@ logs/
 - [G类测试说明](docs/test_g_api_compatibility.md)
 - [H类测试说明](docs/test_h_quality.md)
 - [I类测试说明](docs/test_i_long_context.md)
+- [J类测试说明](docs/test_j_response_quality.md)
 
 ## 注意事项
 

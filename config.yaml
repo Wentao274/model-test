@@ -17,7 +17,7 @@ chips:
     base_url: http://127.0.0.1:8080/v1
   Hygon-BW1000:
     enabled: true
-    base_url: http://10.212.16.21:8080/v1
+    base_url: http://10.212.16.23:8080/v1
   Kunlun-P800:
     enabled: false
     base_url: http://127.0.0.1:8080/v1
@@ -43,10 +43,10 @@ models:
     thinking_via_chat_template: false
 
   glm5:
-    name: glm-5
+    name: glm5
     display_name: GLM-5
-    api_key: ${GLM_API_KEY}
-    enabled: false
+    api_key: abc123
+    enabled: true
     thinking_mode: true
     thinking_key: "enable_thinking"
     thinking_via_chat_template: false
@@ -62,7 +62,7 @@ models:
     name: minimax-m2.5
     display_name: Minimax 2.5
     api_key: abc123
-    enabled: true
+    enabled: false
     thinking_mode: true
     thinking_key: "enable_thinking"
     thinking_via_chat_template: false
