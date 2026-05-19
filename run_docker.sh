@@ -4,6 +4,7 @@
 # 
 # Volume 映射: /data/lwt/maas -> /maas
 # 工作目录: /maas/model-test
+# 特性: 镜像不包含代码，依赖 volume 挂载运行最新代码
 # =============================================================================
 
 set -e
@@ -41,6 +42,7 @@ show_help() {
     echo ""
     echo "Volume 映射:"
     echo "  ${HOST_MAAS_DIR} -> ${CONTAINER_MAAS_DIR}"
+    echo "  (宿主机目录需包含 model-test/ 子目录)"
     echo ""
     echo "示例:"
     echo "  $0 build"
@@ -90,7 +92,7 @@ run() {
     # 检查是否有 Docker 参数
     if [[ -z "$docker_args" ]]; then
         echo -e "${YELLOW}注意: 未指定 Docker 参数，使用 config.yaml${NC}"
-        docker run --rm -it \
+        docker run -it \
             -v ${HOST_MAAS_DIR}:${CONTAINER_MAAS_DIR} \
             --name ${CONTAINER_NAME} \
             ${IMAGE_NAME} ${pytest_args:-"-v"}
@@ -130,7 +132,7 @@ run() {
     echo ""
     
     # 构建命令
-    local cmd="docker run --rm -it"
+    local cmd="docker run -it"
     cmd="$cmd -v ${HOST_MAAS_DIR}:${CONTAINER_MAAS_DIR}"
     [[ -n "$chip" ]] && cmd="$cmd -e DOCKER_CHIP=$chip"
     [[ -n "$base_url" ]] && cmd="$cmd -e DOCKER_BASE_URL=$base_url"
@@ -152,7 +154,7 @@ run() {
 
 shell() {
     echo -e "${GREEN}启动交互式 Shell${NC}"
-    docker run --rm -it \
+    docker run -it \
         -v ${HOST_MAAS_DIR}:${CONTAINER_MAAS_DIR} \
         --entrypoint /bin/bash \
         ${IMAGE_NAME}
