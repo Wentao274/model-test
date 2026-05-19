@@ -70,9 +70,76 @@ def cleanup_loggers():
 
 
 @pytest.fixture(scope="function")
-def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPIClient:
-    """为每个测试创建API客户端（使用第一个启用的模型）"""
-    # 获取激活的芯片平台
+def api_client(
+    config: Dict[str, Any], enabled_models: List[str], request
+) -> ModelAPIClient:
+    """
+    为每个测试创建API客户端
+
+    优先级：
+    1. 环境变量 (Docker模式: DOCKER_BASE_URL, DOCKER_API_KEY, DOCKER_MODEL_NAME)
+    2. 命令行参数 (--chip, --base-url, --model-name, --api-key, --thinking-mode)
+    3. config.yaml 中的配置
+    """
+    # 检查环境变量 (Docker模式)
+    env_base_url = os.environ.get("DOCKER_BASE_URL")
+    env_api_key = os.environ.get("DOCKER_API_KEY")
+    env_model_name = os.environ.get("DOCKER_MODEL_NAME")
+    env_thinking_mode = os.environ.get("DOCKER_THINKING_MODE", "").lower() == "true"
+
+    # 优先使用环境变量（Docker模式）
+    if env_base_url:
+        chip_name = os.environ.get("DOCKER_CHIP", "docker-container")
+        api_key = env_api_key or "docker-api-key"
+        model_name = env_model_name or config.get("default_model", "qwen35")
+
+        model_config = {
+            "name": model_name,
+            "api_key": api_key,
+            "thinking_mode": env_thinking_mode,
+            "thinking_key": "enable_thinking",
+        }
+
+        return ModelAPIClient(
+            api_key=api_key,
+            base_url=env_base_url,
+            model_name=model_name,
+            timeout=config["global"]["timeout"],
+            config=model_config,
+        )
+
+    # 检查命令行参数
+    cmd_chip = request.config.getoption("--chip", default=None)
+    cmd_base_url = request.config.getoption("--base-url", default=None)
+    cmd_api_key = request.config.getoption("--api-key", default=None)
+    cmd_model_name = request.config.getoption("--model-name", default=None)
+    cmd_thinking_mode = request.config.getoption("--thinking-mode", default=False)
+    cmd_model_key = request.config.getoption("--model", default=None)
+
+    # 如果有命令行参数，使用命令行参数
+    if cmd_base_url:
+        chip_name = cmd_chip or "docker-container"
+        api_key = cmd_api_key or "docker-api-key"
+        model_name = (
+            cmd_model_name or cmd_model_key or config.get("default_model", "qwen35")
+        )
+
+        model_config = {
+            "name": model_name,
+            "api_key": api_key,
+            "thinking_mode": cmd_thinking_mode,
+            "thinking_key": "enable_thinking",
+        }
+
+        return ModelAPIClient(
+            api_key=api_key,
+            base_url=cmd_base_url,
+            model_name=model_name,
+            timeout=config["global"]["timeout"],
+            config=model_config,
+        )
+
+    # 回退到 config.yaml 配置
     chip_name = None
     chip_config = None
     for name, cfg in config.get("chips", {}).items():
@@ -80,7 +147,7 @@ def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPICli
             chip_name = name
             chip_config = cfg
             break
-        elif cfg is True:  # 兼容旧格式
+        elif cfg is True:
             chip_name = name
             chip_config = {"base_url": ""}
             break
@@ -88,7 +155,6 @@ def api_client(config: Dict[str, Any], enabled_models: List[str]) -> ModelAPICli
     if not chip_name or not chip_config:
         raise ValueError("No enabled chip found in config")
 
-    # 使用第一个启用的模型，如果没有启用的则使用 default_model
     if enabled_models:
         model_name = enabled_models[0]
     else:
@@ -230,6 +296,36 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="Run tests on all enabled models",
+    )
+    parser.addoption(
+        "--chip",
+        action="store",
+        default=None,
+        help="Chip platform name (e.g., NVIDIA-H100, Hygon-BW1000)",
+    )
+    parser.addoption(
+        "--base-url",
+        action="store",
+        default=None,
+        help="API base URL (e.g., http://127.0.0.1:8080/v1)",
+    )
+    parser.addoption(
+        "--api-key",
+        action="store",
+        default=None,
+        help="API key for authentication",
+    )
+    parser.addoption(
+        "--model-name",
+        action="store",
+        default=None,
+        help="Model name in the API (e.g., qwen35, glm5, minimax-m2.5)",
+    )
+    parser.addoption(
+        "--thinking-mode",
+        action="store_true",
+        default=False,
+        help="Enable thinking mode",
     )
 
 

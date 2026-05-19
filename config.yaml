@@ -51,6 +51,15 @@ models:
     thinking_key: "enable_thinking"
     thinking_via_chat_template: false
 
+  glm51:
+    name: glm51
+    display_name: GLM-5.1
+    api_key: abc123
+    enabled: false
+    thinking_mode: true
+    thinking_key: "enable_thinking"
+    thinking_via_chat_template: false
+
   minimax21:
     name: minimax-m21
     display_name: Minimax 2.1
