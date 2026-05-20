@@ -353,6 +353,12 @@ def pytest_addoption(parser):
         default=None,
         help="Enable thinking mode (if not specified, use config.yaml setting)",
     )
+    parser.addoption(
+        "--summary-report-dir",
+        action="store",
+        default=None,
+        help="Directory for summary report output (default: allure-report)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -434,9 +440,15 @@ def pytest_configure(config):
     except:
         pass
 
-    # 设置 allure-results 目录为芯片/模型子目录
-    allure_results_dir = f"allure-results/{chip_name}/{model_name}"
-    clean_allure_results(allure_results_dir)
+    # 设置 allure-results 目录
+    # 优先级：命令行 --alluredir > 自动生成时间戳目录
+    if config.option.alluredir:
+        # 已通过 --alluredir 指定，直接使用
+        allure_results_dir = config.option.alluredir
+    else:
+        # 自动生成时间戳目录
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        allure_results_dir = f"allure-results/{chip_name}/{model_name}/{timestamp}"
 
     # 更新 pytest 的 alluredir 选项
     config.option.alluredir = allure_results_dir
@@ -458,19 +470,35 @@ def _attach_test_log_to_allure(report):
         else:
             logger_name = report.node.module.__name__.split(".")[-1]
 
+        # 从日志目录查找对应测试类的日志文件
         log_dir = Path("logs")
         if log_dir.exists():
+            found_log = False
             for log_file in log_dir.rglob(f"{logger_name}*.log"):
                 if log_file.exists():
                     with open(log_file, "r", encoding="utf-8") as f:
                         log_content = f.read()
+                    # 只附加最后 5000 字符，避免报告过大
+                    if len(log_content) > 5000:
+                        log_content = "...\n" + log_content[-5000:]
                     allure.attach(
                         log_content,
                         name=f"测试日志: {logger_name}",
                         attachment_type=AttachmentType.TEXT,
                     )
+                    found_log = True
                     break
 
+            if not found_log:
+                # 如果没找到日志文件，尝试记录测试函数名
+                test_name = report.node.name
+                allure.attach(
+                    f"未找到日志文件: {logger_name}",
+                    name="日志状态",
+                    attachment_type=AttachmentType.TEXT,
+                )
+
+        # 附加失败详情
         if hasattr(report, "longrepr") and report.longrepr:
             allure.attach(
                 str(report.longrepr),
@@ -479,8 +507,9 @@ def _attach_test_log_to_allure(report):
             )
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        # 记录错误但不中断测试
+        print(f"Allure 日志附加失败: {e}")
 
 
 def pytest_runtest_logreport(report):
@@ -591,8 +620,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # 生成 Allure 汇总报告
     allure_summary_path = None
     try:
+        summary_report_dir = (
+            config.getoption("--summary-report-dir", default=None) or "allure-report"
+        )
         allure_summary_path = generate_allure_summary_report(
-            _test_results, "allure-report", model.get("name", "unknown"), cfg
+            _test_results, summary_report_dir, model.get("name", "unknown"), cfg
         )
     except Exception as e:
         terminalreporter.write_line(f"Allure 汇总报告生成失败: {e}")
@@ -603,9 +635,15 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     actual_failed = len(stats.get("failed", []))
     actual_skipped = len(stats.get("skipped", []))
 
-    # 获取 allure-results 目录
-    allure_results_dir = f"allure-results/{chip_name}/{model.get('name', 'unknown')}"
-    allure_report_dir = f"allure-report/{chip_name}/{model.get('name', 'unknown')}"
+    # 获取 allure-results 目录（从 pytest 配置获取实际路径）
+    allure_results_dir = (
+        config.option.alluredir
+        or f"allure-results/{chip_name}/{model.get('name', 'unknown')}"
+    )
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    allure_report_dir = (
+        f"allure-report/{chip_name}/{model.get('name', 'unknown')}/{timestamp}"
+    )
 
     terminalreporter.write_sep("=", "测试报告已生成")
     terminalreporter.write_line(f"Markdown 报告路径: {filepath}")
