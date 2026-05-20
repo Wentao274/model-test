@@ -312,7 +312,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
     ):
         """记录相关性检查结果"""
         test_logger.info(f"问题: {question}")
-        test_logger.info(f"回答: {answer[:500]}...")
+        test_logger.info(f"回答: {answer[:2000]}...")
         test_logger.info(
             f"相关性得分: {result['score']:.2f}, 相关: {result['relevant']}"
         )
@@ -354,17 +354,17 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             messages = [{"role": "user", "content": case["question"]}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=500)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
 
             self.assert_response_success(response)
             content = self.get_message_content(response)
-            test_logger.info(f"回答: {content[:500]}...")
+            test_logger.info(f"回答: {content[:2000]}...")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
                 content
             )
-            assert not is_garbled, f"检测到乱码: {garbled_type}, 内容: {content[:200]}"
+            assert not is_garbled, f"检测到乱码: {garbled_type}, 内容: {content[:2000]}"
 
             result = ResponseRelevanceChecker.check_domain_relevance(
                 case["question"], content, case["domain"]
@@ -414,12 +414,12 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             messages = [{"role": "user", "content": case["question"]}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=500)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
 
             self.assert_response_success(response)
             content = self.get_message_content(response)
-            test_logger.info(f"回答: {content[:500]}...")
+            test_logger.info(f"回答: {content[:2000]}...")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
                 content
@@ -472,7 +472,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         passed_count = 0
         for case in test_cases:
             messages = [{"role": "user", "content": case["question"]}]
-            response = api_client.chat_completion(messages, max_tokens=500)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             self.assert_response_success(response)
             content = self.get_message_content(response)
 
@@ -511,7 +511,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             messages = [{"role": "user", "content": prompt}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=500)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
 
             self.assert_response_success(response)
@@ -525,7 +525,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             if is_garbled:
                 garbled_count += 1
                 test_logger.error(f"✗ 检测到乱码: {garbled_type}")
-                test_logger.error(f"乱码内容: {content[:500]}...")
+                test_logger.error(f"乱码内容: {content[:2000]}...")
             else:
                 test_logger.info(f"✓ 内容正常，无乱码")
 
@@ -555,12 +555,12 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             messages = [{"role": "user", "content": question}]
             TestLogger.log_request(test_logger, messages)
 
-            response = api_client.chat_completion(messages, max_tokens=500)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
 
             self.assert_response_success(response)
             content = self.get_message_content(response)
-            test_logger.info(f"回答: {content[:300]}...")
+            test_logger.info(f"回答: {content[:2000]}...")
 
             is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(
                 question, content
@@ -609,11 +609,11 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         for question in questions:
             test_logger.info(f"\n问题: {question}")
             messages = [{"role": "user", "content": question}]
-            response = api_client.chat_completion(messages, max_tokens=500)
+            response = api_client.chat_completion(messages, max_tokens=2000)
             self.assert_response_success(response)
 
             content = self.get_message_content(response)
-            test_logger.info(f"回答: {content[:200]}...")
+            test_logger.info(f"回答: {content[:2000]}...")
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
             assert not is_garbled, f"检测到乱码"
@@ -648,7 +648,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         self.assert_response_success(r1)
         c1 = self.get_message_content(r1)
         messages.append({"role": "assistant", "content": c1})
-        test_logger.info(f"第1轮回答: {c1[:200]}...")
+        test_logger.info(f"第1轮回答: {c1[:2000]}...")
 
         q2 = "我刚才说我喜欢吃什么水果？"
         test_logger.info(f"第2轮: {q2}")
@@ -656,10 +656,10 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         r2 = api_client.chat_completion(messages)
         self.assert_response_success(r2)
         c2 = self.get_message_content(r2)
-        test_logger.info(f"第2轮回答: {c2[:200]}...")
+        test_logger.info(f"第2轮回答: {c2[:2000]}...")
 
         assert "苹果" in c2 or "apple" in c2.lower(), (
-            f"模型应该记住上下文，但回答为: {c2[:200]}"
+            f"模型应该记住上下文，但回答为: {c2[:2000]}"
         )
 
         q3 = "除了苹果，我还喜欢香蕉，请记住这个"
@@ -676,12 +676,12 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         r4 = api_client.chat_completion(messages)
         self.assert_response_success(r4)
         c4 = self.get_message_content(r4)
-        test_logger.info(f"第4轮回答: {c4[:200]}...")
+        test_logger.info(f"第4轮回答: {c4[:2000]}...")
 
         has_apple = "苹果" in c4 or "apple" in c4.lower()
         has_banana = "香蕉" in c4 or "banana" in c4.lower()
 
-        assert has_apple and has_banana, f"模型应该记住两种水果，但回答为: {c4[:200]}"
+        assert has_apple and has_banana, f"模型应该记住两种水果，但回答为: {c4[:2000]}"
 
         is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(c4)
         assert not is_garbled, "检测到乱码"
@@ -737,9 +737,9 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
 
             if length_ok and details_ok:
                 passed_count += 1
-                test_logger.info(f"✓ {case['question'][:30]}... - 回答具体")
+                test_logger.info(f"✓ {case['question'][:800]}... - 回答具体")
             else:
-                test_logger.warning(f"✗ {case['question'][:30]}... - 回答不够具体")
+                test_logger.warning(f"✗ {case['question'][:800]}... - 回答不够具体")
                 test_logger.warning(
                     f"  长度: {len(content)}/{case['min_length']}, 详细程度: {details_ok}"
                 )

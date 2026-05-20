@@ -79,13 +79,13 @@ class AllureReporter:
 
 
 def get_active_chip(config: Dict[str, Any]) -> str:
-    """获取当前激活的芯片平台名称"""
+    """获取当前激活的芯片平台名称（小写）"""
     chips = config.get("chips", {})
     for chip_name, chip_cfg in chips.items():
         if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
-            return chip_name
+            return chip_name.lower()
         elif chip_cfg is True:
-            return chip_name
+            return chip_name.lower()
     return "default"
 
 
@@ -116,7 +116,8 @@ def get_test_category_info(test_nodeid: str) -> Optional[tuple]:
 
 def generate_allure_summary_report(
     test_results: Dict[str, str],
-    output_path: str = "allure-report/summary.md",
+    output_dir: str = "allure-report",
+    model_name: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
@@ -124,7 +125,8 @@ def generate_allure_summary_report(
 
     Args:
         test_results: 测试结果字典 {test_key: status}
-        output_path: 输出路径
+        output_dir: 输出目录
+        model_name: 模型名称
         config: 配置
 
     Returns:
@@ -132,6 +134,7 @@ def generate_allure_summary_report(
     """
     config = config or {}
     chip_name = get_active_chip(config)
+    model_name = model_name or "unknown"
 
     total_tests = 0
     passed_tests = 0
@@ -146,6 +149,7 @@ def generate_allure_summary_report(
     lines.append("")
     lines.append(f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"> 芯片平台：{chip_name}")
+    lines.append(f"> 模型：{model_name}")
     lines.append("")
 
     # 按分类统计
@@ -270,9 +274,15 @@ def generate_allure_summary_report(
     lines.append("")
     lines.append("*报告由 Allure 测试框架自动生成*")
 
-    # 写入文件
-    output_file = Path(output_path)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
+    # 写入文件 - 按照 test_reports 的目录结构
+    test_datetime = datetime.now().strftime("%Y%m%d%H%M%S")
+    output_base = Path(output_dir)
+    chip_dir = output_base / chip_name
+    model_dir = chip_dir / model_name
+    report_subdir = model_dir / f"{model_name}_{test_datetime}"
+    report_subdir.mkdir(parents=True, exist_ok=True)
+
+    output_file = report_subdir / f"test_report_{model_name}_{test_datetime}.md"
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 

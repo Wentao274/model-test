@@ -7,8 +7,12 @@ pytest-json-report>=1.5.0
 requests>=2.31.0
 pyyaml>=6.0.1
 
-# Allure report
+# Allure report (生成 JSON 数据)
 allure-pytest>=2.13.0
+# 注意: 生成 HTML 报告需要安装 allure 命令行工具:
+#   Ubuntu/Debian: sudo apt-add-repository ppa:qameta/allure && sudo apt-get update && sudo apt-get install allure
+#   macOS: brew install allure
+#   或从 https://github.com/allure-framework/allure2/releases 下载
 
 # Optional dependencies for enhanced features
 pytest-xdist>=3.5.0  # Parallel test execution

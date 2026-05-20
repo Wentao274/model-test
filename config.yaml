@@ -9,16 +9,16 @@ global:
   output_dir: ./test_results      # 测试结果输出目录
 
 chips:
-  MetaX-C550:
+  metax-c550:
     enabled: false
     base_url: http://10.130.70.1:8000/v1
-  NVIDIA-H100:
+  nvidia-h100:
     enabled: false
     base_url: http://127.0.0.1:8080/v1
-  Hygon-BW1000:
+  hygon-bw1000:
     enabled: true
     base_url: http://10.212.16.23:8080/v1
-  Kunlun-P800:
+  kunlun-p800:
     enabled: false
     base_url: http://127.0.0.1:8080/v1
 

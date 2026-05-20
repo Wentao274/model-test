@@ -16,6 +16,16 @@ uv pip install allure-pytest
 
 ## 安装 Allure 命令行工具
 
+### 自动安装（推荐）
+
+```bash
+# 运行安装脚本
+chmod +x scripts/install_allure.sh
+./scripts/install_allure.sh
+```
+
+### 手动安装
+
 ### Linux/macOS
 ```bash
 # macOS
@@ -91,17 +101,40 @@ allure serve allure-results
 
 ## 报告结构
 
+每次测试会根据芯片和模型名称创建独立的目录，多次测试不会互相覆盖：
+
 ```
-allure-results/              # Allure 原始数据
-├── *.json                   # 测试结果 JSON 文件
+allure-results/                     # Allure 原始数据（按芯片/模型分离）
+├── hygon-bw1000/
+│   ├── minimax-m2.5/
+│   │   └── *.json
+│   └── glm5/
+│       └── *.json
+├── nvidia-h100/
+│   └── qwen35/
+│       └── *.json
 └── ...
 
-allure-report/               # 生成的 HTML 报告
-├── index.html               # 报告首页
-├── data/                    # 报告数据
-├── widgets/                 # 报告组件
-└── summary.md               # Markdown 汇总报告
+allure-report/                      # 生成的报告（按芯片/模型分离）
+├── hygon-bw1000/
+│   ├── minimax-m2.5/
+│   │   ├── index.html             # HTML 报告
+│   │   ├── data/
+│   │   ├── widgets/
+│   │   └── minimax-m2.5_20260520120000/
+│   │       └── test_report_minimax-m2.5_20260520120000.md  # Markdown 汇总
+│   └── glm5/
+│       └── ...
+├── nvidia-h100/
+│   └── qwen35/
+│       └── ...
+└── ...
 ```
+
+**优势：**
+- 不同芯片/模型的测试结果完全隔离
+- 多次测试不会覆盖之前的结果
+- 每个芯片/模型有独立的 HTML 报告
 
 ## 配置选项
 
@@ -124,17 +157,32 @@ addopts = --alluredir=allure-results
 ### 完整流程
 
 ```bash
-# 1. 运行测试
+# 1. 运行测试（指定所有参数）
 pytest -v -m p0 \
   --base-url http://127.0.0.1:8080/v1 \
   --api-key abc123 \
   --model-name minimax-m2.5 \
-  --chip Hygon-BW1000
+  --chip hygon-bw1000 \
+  --thinking-mode
 
 # 2. 生成报告
 allure generate allure-results -o allure-report --clean
 
 # 3. 打开报告
+allure open allure-report
+```
+
+### 一行命令（推荐）
+
+```bash
+# 运行测试并生成 Allure 报告
+pytest -v -m p0 \
+  --base-url http://127.0.0.1:8080/v1 \
+  --api-key abc123 \
+  --model-name minimax-m2.5 \
+  --chip hygon-bw1000 \
+  --alluredir=allure-results && \
+allure generate allure-results -o allure-report --clean && \
 allure open allure-report
 ```
 

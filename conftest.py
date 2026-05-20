@@ -99,16 +99,27 @@ def api_client(
 
     # 如果有命令行参数，使用命令行参数
     if cmd_base_url:
-        chip_name = cmd_chip or "cli"
+        chip_name = (cmd_chip or "cli").lower()
         api_key = cmd_api_key or "cli-api-key"
         model_name = (
             cmd_model_name or cmd_model_key or config.get("default_model", "qwen35")
         )
 
+        # thinking_mode 优先级：命令行 > 环境变量 > config.yaml
+        thinking_mode = cmd_thinking_mode
+        if thinking_mode is None:
+            thinking_mode = os.environ.get("THINKING_MODE", "").lower() == "true"
+        if thinking_mode is None:
+            # 从 config.yaml 获取该模型的 thinking_mode 配置
+            model_cfg = config.get("models", {}).get(
+                cmd_model_key or cmd_model_name, {}
+            )
+            thinking_mode = model_cfg.get("thinking_mode", False)
+
         model_config = {
             "name": model_name,
             "api_key": api_key,
-            "thinking_mode": cmd_thinking_mode,
+            "thinking_mode": thinking_mode or False,
             "thinking_key": "enable_thinking",
         }
 
@@ -129,14 +140,20 @@ def api_client(
 
     # 使用环境变量
     if env_base_url:
-        chip_name = env_chip or "env"
+        chip_name = (env_chip or "env").lower()
         api_key = env_api_key or "env-api-key"
         model_name = env_model_name or config.get("default_model", "qwen35")
+
+        # thinking_mode 优先级：环境变量 > config.yaml
+        thinking_mode = env_thinking_mode
+        if thinking_mode is None:
+            model_cfg = config.get("models", {}).get(model_name, {})
+            thinking_mode = model_cfg.get("thinking_mode", False)
 
         model_config = {
             "name": model_name,
             "api_key": api_key,
-            "thinking_mode": env_thinking_mode,
+            "thinking_mode": thinking_mode or False,
             "thinking_key": "enable_thinking",
         }
 
@@ -153,11 +170,11 @@ def api_client(
     chip_config = None
     for name, cfg in config.get("chips", {}).items():
         if isinstance(cfg, dict) and cfg.get("enabled", False):
-            chip_name = name
+            chip_name = name.lower()
             chip_config = cfg
             break
         elif cfg is True:
-            chip_name = name
+            chip_name = name.lower()
             chip_config = {"base_url": ""}
             break
 
@@ -310,7 +327,7 @@ def pytest_addoption(parser):
         "--chip",
         action="store",
         default=None,
-        help="Chip platform name (e.g., NVIDIA-H100, Hygon-BW1000)",
+        help="Chip platform name (e.g., nvidia-h100, hygon-bw1000, metax-c550, kunlun-p800)",
     )
     parser.addoption(
         "--base-url",
@@ -333,8 +350,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--thinking-mode",
         action="store_true",
-        default=False,
-        help="Enable thinking mode",
+        default=None,
+        help="Enable thinking mode (if not specified, use config.yaml setting)",
     )
 
 
@@ -382,8 +399,47 @@ def pytest_configure(config):
     # 注册报告生成hook
     config.addinivalue_line("markers", "report: 测试完成后自动生成报告 (默认开启)")
 
-    # 清理 Allure 结果目录
-    clean_allure_results("allure-results")
+    # 获取当前芯片和模型，创建对应的 allure-results 目录
+    chip_name = "default"
+    model_name = "default"
+    try:
+        cfg = load_config()
+        # 从命令行获取
+        cmd_chip = config.getoption("--chip", default=None)
+        cmd_model = config.getoption("--model-name", default=None) or config.getoption(
+            "--model", default=None
+        )
+
+        # 从环境变量获取
+        env_chip = os.environ.get("CHIP")
+        env_model = os.environ.get("MODEL_NAME")
+
+        # 优先级：命令行 > 环境变量 > config.yaml
+        if cmd_chip:
+            chip_name = cmd_chip.lower()
+        elif env_chip:
+            chip_name = env_chip.lower()
+        else:
+            for name, chip_cfg in cfg.get("chips", {}).items():
+                if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
+                    chip_name = name.lower()
+                    break
+
+        if cmd_model:
+            model_name = cmd_model
+        elif env_model:
+            model_name = env_model
+        else:
+            model_name = cfg.get("default_model", "default")
+    except:
+        pass
+
+    # 设置 allure-results 目录为芯片/模型子目录
+    allure_results_dir = f"allure-results/{chip_name}/{model_name}"
+    clean_allure_results(allure_results_dir)
+
+    # 更新 pytest 的 alluredir 选项
+    config.option.alluredir = allure_results_dir
 
 
 _last_test_file = None
@@ -495,18 +551,32 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # 获取启用的模型和配置
     model = None
     cfg = None
+    chip_name = "default"
     try:
         cfg = load_config()
         for name, model_cfg in cfg.get("models", {}).items():
             if model_cfg.get("enabled", False):
                 model = {
-                    "name": name,
+                    "name": model_cfg.get("name", name),
                     "display_name": model_cfg.get("display_name", name),
                     "model_name": model_cfg.get("name", name),
                 }
                 break
     except:
         pass
+
+    # 获取当前芯片名称
+    cmd_chip = config.getoption("--chip", default=None)
+    env_chip = os.environ.get("CHIP")
+    if cmd_chip:
+        chip_name = cmd_chip.lower()
+    elif env_chip:
+        chip_name = env_chip.lower()
+    elif cfg:
+        for name, chip_cfg in cfg.get("chips", {}).items():
+            if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
+                chip_name = name.lower()
+                break
 
     if not model:
         return
@@ -519,9 +589,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     filepath = generator.generate(model, _test_results, test_date, test_time)
 
     # 生成 Allure 汇总报告
+    allure_summary_path = None
     try:
         allure_summary_path = generate_allure_summary_report(
-            _test_results, "allure-report/summary.md", cfg
+            _test_results, "allure-report", model.get("name", "unknown"), cfg
         )
     except Exception as e:
         terminalreporter.write_line(f"Allure 汇总报告生成失败: {e}")
@@ -532,17 +603,19 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     actual_failed = len(stats.get("failed", []))
     actual_skipped = len(stats.get("skipped", []))
 
+    # 获取 allure-results 目录
+    allure_results_dir = f"allure-results/{chip_name}/{model.get('name', 'unknown')}"
+    allure_report_dir = f"allure-report/{chip_name}/{model.get('name', 'unknown')}"
+
     terminalreporter.write_sep("=", "测试报告已生成")
     terminalreporter.write_line(f"Markdown 报告路径: {filepath}")
-    try:
+    if allure_summary_path:
         terminalreporter.write_line(f"Allure 汇总报告: {allure_summary_path}")
-    except:
-        pass
     terminalreporter.write_line(
         f"pytest函数级: 通过 {actual_passed}, 失败 {actual_failed}, 跳过 {actual_skipped}"
     )
     terminalreporter.write_line("")
     terminalreporter.write_line(
-        "生成 Allure HTML 报告: allure generate allure-results -o allure-report --clean"
+        f"生成 Allure HTML 报告: allure generate {allure_results_dir} -o {allure_report_dir} --clean"
     )
-    terminalreporter.write_line("打开 Allure 报告: allure open allure-report")
+    terminalreporter.write_line(f"打开 Allure 报告: allure open {allure_report_dir}")

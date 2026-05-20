@@ -10,13 +10,13 @@ from typing import Optional, Dict, Any
 
 
 def get_active_chip(config: Dict[str, Any]) -> str:
-    """获取当前激活的芯片平台名称"""
+    """获取当前激活的芯片平台名称（小写）"""
     chips = config.get("chips", {})
     for chip_name, chip_cfg in chips.items():
         if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
-            return chip_name
+            return chip_name.lower()
         elif chip_cfg is True:  # 兼容旧格式：chips: { "chip_name": true }
-            return chip_name
+            return chip_name.lower()
     return "default"
 
 

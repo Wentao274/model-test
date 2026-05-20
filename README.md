@@ -58,13 +58,13 @@ $env:MINIMAX_API_KEY="your-minimax-api-key"
 ```yaml
 # 芯片平台配置（base_url 在这里配置）
 chips:
-  MetaX-C550:
+  metax-c550:
     enabled: false
     base_url: http://10.130.70.1:8000/v1
-  NVIDIA-H100:
+  nvidia-h100:
     enabled: true
     base_url: http://127.0.0.1:8080/v1
-  Hygon-BW1000:
+  hygon-bw1000:
     enabled: false
     base_url: http://10.212.16.21:8080/v1
 
@@ -119,7 +119,7 @@ pytest -v \
   --base-url http://127.0.0.1:8080/v1 \
   --api-key abc123 \
   --model-name minimax-m2.5 \
-  --chip Hygon-BW1000
+  --chip hygon-bw1000
 
 # 启用思考模式
 pytest -v \
@@ -127,6 +127,21 @@ pytest -v \
   --api-key abc123 \
   --model-name minimax-m2.5 \
   --thinking-mode
+
+# 完整示例：指定所有参数并生成 Allure 报告
+pytest -v -m p0 \
+  --base-url http://127.0.0.1:8080/v1 \
+  --api-key abc123 \
+  --model-name minimax-m2.5 \
+  --chip hygon-bw1000 \
+  --thinking-mode
+
+# 生成 Allure HTML 报告（自动按芯片/模型分目录）
+# 报告位置: allure-report/hygon-bw1000/minimax-m2.5/
+allure generate allure-results/hygon-bw1000/minimax-m2.5 -o allure-report/hygon-bw1000/minimax-m2.5 --clean
+
+# 打开报告
+allure open allure-report/hygon-bw1000/minimax-m2.5
 
 # 运行特定测试
 pytest -v tests/test_a_basic_reasoning.py -m p0 \
@@ -142,7 +157,7 @@ pytest -v tests/test_a_basic_reasoning.py -m p0 \
 export BASE_URL=http://127.0.0.1:8080/v1
 export API_KEY=abc123
 export MODEL_NAME=minimax-m2.5
-export CHIP=Hygon-BW1000
+export CHIP=hygon-bw1000
 export THINKING_MODE=true
 
 # 运行测试
@@ -156,9 +171,11 @@ pytest -v
 | `--base-url` | `BASE_URL` | API 基础地址 |
 | `--api-key` | `API_KEY` | API 密钥 |
 | `--model-name` | `MODEL_NAME` | 模型名称 |
-| `--chip` | `CHIP` | 芯片平台名称（用于日志目录） |
-| `--thinking-mode` | `THINKING_MODE` | 启用思考模式 (true/false) |
+| `--chip` | `CHIP` | 芯片平台名称（用于日志目录，自动转小写） |
+| `--thinking-mode` | `THINKING_MODE` | 启用思考模式（不指定则使用 config.yaml 配置） |
 | `--model` | - | 指定 config.yaml 中的模型配置名 |
+
+**thinking_mode 优先级**：命令行参数 > 环境变量 > config.yaml
 
 ## 测试分类概览
 
@@ -377,7 +394,7 @@ logs/
 示例：
 ```
 logs/
-└── NVIDIA-H100/
+└── nvidia-h100/
     └── minimax25/
         ├── TestBasicReasoning/
         │   └── TestBasicReasoning_20260504112030.log
@@ -475,7 +492,7 @@ test_reports/
 示例：
 ```
 test_reports/
-└── NVIDIA-H100/
+└── nvidia-h100/
     └── minimax25/
         └── minimax25_20260504172556/
             └── test_report_minimax25_20260504172556.md
