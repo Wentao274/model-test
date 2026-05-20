@@ -81,6 +81,8 @@ models:
 
 ### 5. 运行测试
 
+#### 方式一：使用 config.yaml 配置
+
 ```bash
 # 运行所有测试
 pytest
@@ -97,15 +99,66 @@ pytest -m h_quality -v      # 质量评估
 pytest -m i_long_context -v # 超长上下文验证
 pytest -m j_quality -v      # 回答质量与相关性
 
-# 运行多个分类（使用 -m 可以组合多个标记）
-pytest -m "a_basic or b_advanced" -v    # 基础 + 高级
-pytest -m "a_basic or b_advanced or c_multimodal" -v  # 基础 + 高级 + 多模态
-pytest -m "p0" -v                        # 只运行P0优先级测试
-pytest -m "p0 or p1" -v                  # P0 + P1优先级
+# 运行多个分类
+pytest -m "a_basic or b_advanced" -v
+
+# 运行 P0 优先级测试
+pytest -m p0 -v
 
 # 指定模型运行
 pytest --model=qwen35 -v
 ```
+
+#### 方式二：使用命令行参数
+
+优先级：命令行参数 > 环境变量 > config.yaml
+
+```bash
+# 指定 API 地址、密钥、模型、芯片
+pytest -v \
+  --base-url http://127.0.0.1:8080/v1 \
+  --api-key abc123 \
+  --model-name minimax-m2.5 \
+  --chip Hygon-BW1000
+
+# 启用思考模式
+pytest -v \
+  --base-url http://127.0.0.1:8080/v1 \
+  --api-key abc123 \
+  --model-name minimax-m2.5 \
+  --thinking-mode
+
+# 运行特定测试
+pytest -v tests/test_a_basic_reasoning.py -m p0 \
+  --base-url http://127.0.0.1:8080/v1 \
+  --api-key abc123 \
+  --model-name minimax-m2.5
+```
+
+#### 方式三：使用环境变量
+
+```bash
+# 设置环境变量
+export BASE_URL=http://127.0.0.1:8080/v1
+export API_KEY=abc123
+export MODEL_NAME=minimax-m2.5
+export CHIP=Hygon-BW1000
+export THINKING_MODE=true
+
+# 运行测试
+pytest -v
+```
+
+#### 参数说明
+
+| 参数 | 环境变量 | 说明 |
+|------|---------|------|
+| `--base-url` | `BASE_URL` | API 基础地址 |
+| `--api-key` | `API_KEY` | API 密钥 |
+| `--model-name` | `MODEL_NAME` | 模型名称 |
+| `--chip` | `CHIP` | 芯片平台名称（用于日志目录） |
+| `--thinking-mode` | `THINKING_MODE` | 启用思考模式 (true/false) |
+| `--model` | - | 指定 config.yaml 中的模型配置名 |
 
 ## 测试分类概览
 
@@ -271,8 +324,41 @@ pytest -m "not slow" -v
 
 ### 生成报告
 
+#### Markdown 报告（自动生成）
+
 ```bash
+# 运行测试后自动生成 Markdown 报告
+pytest -v
+
+# 报告位置: test_reports/{chip}/{model}/{model}_{timestamp}/test_report_{model}_{timestamp}.md
+```
+
+#### Allure 报告
+
+```bash
+# 运行测试并生成 Allure 数据
+pytest -v --alluredir=allure-results
+
+# 生成 HTML 报告
+allure generate allure-results -o allure-report --clean
+
+# 打开报告
+allure open allure-report
+```
+
+Allure 报告特性：
+- 每个测试用例的详细结果
+- 测试日志自动附加到报告中
+- 失败详情自动记录
+- 汇总报告 (allure-report/summary.md)
+
+#### 其他格式
+
+```bash
+# HTML 报告
 pytest --html=report.html
+
+# JUnit XML
 pytest --junit-xml=report.xml
 ```
 

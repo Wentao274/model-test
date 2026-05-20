@@ -7,6 +7,9 @@ pytest-json-report>=1.5.0
 requests>=2.31.0
 pyyaml>=6.0.1
 
+# Allure report
+allure-pytest>=2.13.0
+
 # Optional dependencies for enhanced features
 pytest-xdist>=3.5.0  # Parallel test execution
 pytest-timeout>=2.2.0  # Test timeout handling

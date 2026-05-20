@@ -17,6 +17,12 @@
 | [test_i_long_context.md](test_i_long_context.md) | I. 单项超长上下文验证 | 4 |
 | [test_j_response_quality.md](test_j_response_quality.md) | J. 回答质量与相关性 | 8 |
 
+## 报告文档
+
+| 文档 | 说明 |
+|------|------|
+| [allure_report.md](allure_report.md) | Allure 报告使用指南 |
+
 ## 快速运行
 
 ```bash

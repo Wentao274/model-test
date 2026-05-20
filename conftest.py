@@ -14,6 +14,14 @@ from base.api_client import ModelAPIClient
 from base.logger import TestLogger
 from base.test_definitions import TEST_CATEGORIES
 from base.report_generator import TestReportGenerator
+from base.allure_reporter import (
+    get_test_category_info,
+    generate_allure_summary_report,
+    clean_allure_results,
+)
+
+import allure
+from allure_commons.types import AttachmentType
 
 
 # 测试结果收集器
@@ -77,37 +85,10 @@ def api_client(
     为每个测试创建API客户端
 
     优先级：
-    1. 环境变量 (Docker模式: DOCKER_BASE_URL, DOCKER_API_KEY, DOCKER_MODEL_NAME)
-    2. 命令行参数 (--chip, --base-url, --model-name, --api-key, --thinking-mode)
+    1. 命令行参数 (--chip, --base-url, --model-name, --api-key, --thinking-mode)
+    2. 环境变量 (BASE_URL, API_KEY, MODEL_NAME, CHIP, THINKING_MODE)
     3. config.yaml 中的配置
     """
-    # 检查环境变量 (Docker模式)
-    env_base_url = os.environ.get("DOCKER_BASE_URL")
-    env_api_key = os.environ.get("DOCKER_API_KEY")
-    env_model_name = os.environ.get("DOCKER_MODEL_NAME")
-    env_thinking_mode = os.environ.get("DOCKER_THINKING_MODE", "").lower() == "true"
-
-    # 优先使用环境变量（Docker模式）
-    if env_base_url:
-        chip_name = os.environ.get("DOCKER_CHIP", "docker-container")
-        api_key = env_api_key or "docker-api-key"
-        model_name = env_model_name or config.get("default_model", "qwen35")
-
-        model_config = {
-            "name": model_name,
-            "api_key": api_key,
-            "thinking_mode": env_thinking_mode,
-            "thinking_key": "enable_thinking",
-        }
-
-        return ModelAPIClient(
-            api_key=api_key,
-            base_url=env_base_url,
-            model_name=model_name,
-            timeout=config["global"]["timeout"],
-            config=model_config,
-        )
-
     # 检查命令行参数
     cmd_chip = request.config.getoption("--chip", default=None)
     cmd_base_url = request.config.getoption("--base-url", default=None)
@@ -118,8 +99,8 @@ def api_client(
 
     # 如果有命令行参数，使用命令行参数
     if cmd_base_url:
-        chip_name = cmd_chip or "docker-container"
-        api_key = cmd_api_key or "docker-api-key"
+        chip_name = cmd_chip or "cli"
+        api_key = cmd_api_key or "cli-api-key"
         model_name = (
             cmd_model_name or cmd_model_key or config.get("default_model", "qwen35")
         )
@@ -134,6 +115,34 @@ def api_client(
         return ModelAPIClient(
             api_key=api_key,
             base_url=cmd_base_url,
+            model_name=model_name,
+            timeout=config["global"]["timeout"],
+            config=model_config,
+        )
+
+    # 检查环境变量
+    env_base_url = os.environ.get("BASE_URL")
+    env_api_key = os.environ.get("API_KEY")
+    env_model_name = os.environ.get("MODEL_NAME")
+    env_chip = os.environ.get("CHIP")
+    env_thinking_mode = os.environ.get("THINKING_MODE", "").lower() == "true"
+
+    # 使用环境变量
+    if env_base_url:
+        chip_name = env_chip or "env"
+        api_key = env_api_key or "env-api-key"
+        model_name = env_model_name or config.get("default_model", "qwen35")
+
+        model_config = {
+            "name": model_name,
+            "api_key": api_key,
+            "thinking_mode": env_thinking_mode,
+            "thinking_key": "enable_thinking",
+        }
+
+        return ModelAPIClient(
+            api_key=api_key,
+            base_url=env_base_url,
             model_name=model_name,
             timeout=config["global"]["timeout"],
             config=model_config,
@@ -373,13 +382,53 @@ def pytest_configure(config):
     # 注册报告生成hook
     config.addinivalue_line("markers", "report: 测试完成后自动生成报告 (默认开启)")
 
+    # 清理 Allure 结果目录
+    clean_allure_results("allure-results")
+
 
 _last_test_file = None
 _last_test_func = None
 
 
+def _attach_test_log_to_allure(report):
+    """将测试日志附加到 Allure 报告"""
+    try:
+        import allure
+        from allure_commons.types import AttachmentType
+
+        test_class = report.node.cls
+        if test_class:
+            logger_name = test_class.__name__
+        else:
+            logger_name = report.node.module.__name__.split(".")[-1]
+
+        log_dir = Path("logs")
+        if log_dir.exists():
+            for log_file in log_dir.rglob(f"{logger_name}*.log"):
+                if log_file.exists():
+                    with open(log_file, "r", encoding="utf-8") as f:
+                        log_content = f.read()
+                    allure.attach(
+                        log_content,
+                        name=f"测试日志: {logger_name}",
+                        attachment_type=AttachmentType.TEXT,
+                    )
+                    break
+
+        if hasattr(report, "longrepr") and report.longrepr:
+            allure.attach(
+                str(report.longrepr),
+                name="失败详情",
+                attachment_type=AttachmentType.TEXT,
+            )
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+
 def pytest_runtest_logreport(report):
-    """收集测试结果并输出分隔线"""
+    """收集测试结果并输出分隔线，同时记录到 Allure"""
     global _test_results, _last_test_file, _last_test_func
 
     if report.when == "call":
@@ -415,6 +464,9 @@ def pytest_runtest_logreport(report):
                         else:
                             _test_results[key] = "SKIPPED"
                         break
+
+        # 添加 Allure 附件：测试日志
+        _attach_test_log_to_allure(report)
 
 
 def pytest_runtest_setup(item):
@@ -459,12 +511,20 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if not model:
         return
 
-    # 使用公共报告生成器
+    # 使用公共报告生成器 (保留原有的 Markdown 报告)
     test_date = datetime.now().strftime("%Y-%m-%d")
     test_time = datetime.now().strftime("%H:%M:%S")
 
     generator = TestReportGenerator("test_reports", config=cfg)
     filepath = generator.generate(model, _test_results, test_date, test_time)
+
+    # 生成 Allure 汇总报告
+    try:
+        allure_summary_path = generate_allure_summary_report(
+            _test_results, "allure-report/summary.md", cfg
+        )
+    except Exception as e:
+        terminalreporter.write_line(f"Allure 汇总报告生成失败: {e}")
 
     # 获取pytest实际统计
     stats = terminalreporter.stats
@@ -473,7 +533,16 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     actual_skipped = len(stats.get("skipped", []))
 
     terminalreporter.write_sep("=", "测试报告已生成")
-    terminalreporter.write_line(f"报告路径: {filepath}")
+    terminalreporter.write_line(f"Markdown 报告路径: {filepath}")
+    try:
+        terminalreporter.write_line(f"Allure 汇总报告: {allure_summary_path}")
+    except:
+        pass
     terminalreporter.write_line(
         f"pytest函数级: 通过 {actual_passed}, 失败 {actual_failed}, 跳过 {actual_skipped}"
     )
+    terminalreporter.write_line("")
+    terminalreporter.write_line(
+        "生成 Allure HTML 报告: allure generate allure-results -o allure-report --clean"
+    )
+    terminalreporter.write_line("打开 Allure 报告: allure open allure-report")
