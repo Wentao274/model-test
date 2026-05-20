@@ -442,9 +442,10 @@ def pytest_configure(config):
 
     # 设置 allure-results 目录
     # 优先级：命令行 --alluredir > 自动生成时间戳目录
-    if config.option.alluredir:
+    alluredir = getattr(config.option, "alluredir", None)
+    if alluredir:
         # 已通过 --alluredir 指定，直接使用
-        allure_results_dir = config.option.alluredir
+        allure_results_dir = alluredir
     else:
         # 自动生成时间戳目录
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
