@@ -321,7 +321,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             test_logger.warning(f"发现不相关关键词: {result['negative_keywords']}")
         test_logger.info(f"原因: {result['reason']}")
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_response_relevance_programming(
@@ -383,7 +383,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
         )
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_response_relevance_math(self, api_client: ModelAPIClient, test_logger):
@@ -445,7 +445,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
         )
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p1
     def test_response_relevance_science(self, api_client: ModelAPIClient, test_logger):
         """J1-3: 科学领域回答相关性验证"""
@@ -490,7 +490,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"科学领域相关性通过率: {relevance_rate * 100:.0f}%")
         assert relevance_rate >= 0.67, f"科学领域相关性过低"
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_garbled_text_detection(self, api_client: ModelAPIClient, test_logger):
@@ -533,7 +533,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"\n乱码率: {garbled_rate * 100:.0f}%")
         assert garbled_rate < 0.2, f"乱码率过高: {garbled_rate * 100:.0f}%"
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p1
     def test_nonsensical_response_detection(
         self, api_client: ModelAPIClient, test_logger
@@ -578,7 +578,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             f"无意义回答率过高: {nonsensical_rate * 100:.0f}%"
         )
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p1
     @pytest.mark.parametrize(
         "domain,questions",
@@ -631,7 +631,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
         rate = passed_count / len(questions)
         assert rate >= 0.5, f"{domain}领域相关性过低: {rate * 100:.0f}%"
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p0
     def test_conversation_context_consistency(
         self, api_client: ModelAPIClient, test_logger
@@ -688,7 +688,7 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
 
         test_logger.info("✓ 多轮对话上下文一致性验证通过")
 
-    @pytest.mark.j_quality
+    @pytest.mark.j_response_quality
     @pytest.mark.p2
     def test_response_specificity_check(self, api_client: ModelAPIClient, test_logger):
         """J6: 回答具体性检查 - 确保回答不是泛泛而谈"""

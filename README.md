@@ -95,7 +95,7 @@ pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
 pytest -m h_quality -v      # 质量评估
 pytest -m i_long_context -v # 超长上下文验证
-pytest -m j_quality -v      # 回答质量与相关性
+pytest -m j_response_quality -v  # 回答质量与相关性
 pytest -m p0 -v             # P0 优先级测试
 pytest -m smoke -v          # 冒烟测试
 ```

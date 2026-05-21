@@ -266,9 +266,11 @@ def test_logger(request, config):
         logger_name = request.node.module.__name__.split(".")[-1]
 
     # 获取当前使用的模型名称（优先级：命令行 > 环境变量 > config.yaml）
-    cmd_model = request.config.getoption("--model-name", default=None) or request.config.getoption("--model", default=None)
+    cmd_model = request.config.getoption(
+        "--model-name", default=None
+    ) or request.config.getoption("--model", default=None)
     env_model = os.environ.get("MODEL_NAME")
-    
+
     if cmd_model:
         model_name = cmd_model
     elif env_model:
@@ -289,7 +291,7 @@ def test_logger(request, config):
     # 获取当前使用的芯片平台名称（优先级：命令行 > 环境变量 > config.yaml）
     cmd_chip = request.config.getoption("--chip", default=None)
     env_chip = os.environ.get("CHIP")
-    
+
     if cmd_chip:
         chip_name = cmd_chip
     elif env_chip:
@@ -400,7 +402,7 @@ def pytest_collection_modifyitems(config, items):
         elif "test_i_" in item.nodeid:
             item.add_marker(pytest.mark.i_long_context)
         elif "test_j_" in item.nodeid:
-            item.add_marker(pytest.mark.j_quality)
+            item.add_marker(pytest.mark.j_response_quality)
 
 
 def pytest_configure(config):
@@ -414,7 +416,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "g_api: G类测试 - API兼容性")
     config.addinivalue_line("markers", "h_quality: H类测试 - 质量评估")
     config.addinivalue_line("markers", "i_long_context: I类测试 - 单项超长上下文验证")
-    config.addinivalue_line("markers", "j_quality: J类测试 - 回答质量与相关性")
+    config.addinivalue_line("markers", "j_response_quality: J类测试 - 回答质量与相关性")
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
 
@@ -548,7 +550,11 @@ def pytest_runtest_logreport(report):
         _last_test_func = test_func
 
         # 提取测试函数名（去掉 test_ 前缀）
-        test_func_base = test_func.replace("test_", "") if test_func.startswith("test_") else test_func
+        test_func_base = (
+            test_func.replace("test_", "")
+            if test_func.startswith("test_")
+            else test_func
+        )
 
         # 遍历所有测试分类，匹配测试函数名
         matched = False
@@ -605,7 +611,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     cfg = None
     chip_name = "default"
     model_name = "unknown"
-    
+
     try:
         cfg = load_config()
     except:
@@ -614,7 +620,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # 获取芯片名称（优先级：命令行 > 环境变量 > config.yaml）
     cmd_chip = config.getoption("--chip", default=None)
     env_chip = os.environ.get("CHIP")
-    
+
     if cmd_chip:
         chip_name = cmd_chip.lower()
     elif env_chip:
@@ -626,9 +632,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 break
 
     # 获取模型名称（优先级：命令行 > 环境变量 > config.yaml）
-    cmd_model = config.getoption("--model-name", default=None) or config.getoption("--model", default=None)
+    cmd_model = config.getoption("--model-name", default=None) or config.getoption(
+        "--model", default=None
+    )
     env_model = os.environ.get("MODEL_NAME")
-    
+
     if cmd_model:
         model_name = cmd_model
     elif env_model:
@@ -640,7 +648,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 break
         if not model_name or model_name == "unknown":
             model_name = cfg.get("default_model", "unknown")
-    
+
     model = {
         "name": model_name,
         "display_name": model_name,

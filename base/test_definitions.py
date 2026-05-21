@@ -247,7 +247,7 @@ TEST_CATEGORIES = {
             ),
         ],
     },
-    "j_quality": {
+    "j_response_quality": {
         "name": "J. 回答质量与相关性",
         "tests": [
             (
