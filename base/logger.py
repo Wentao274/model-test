@@ -38,6 +38,12 @@ class AllureLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
         """收集日志记录到缓冲区"""
         try:
+            # 过滤第三方库的 DEBUG 日志
+            if record.levelno == logging.DEBUG:
+                # 只保留本项目模块的 DEBUG 日志
+                if not record.name.startswith(("tests.", "base.", "__main__")):
+                    return
+
             msg = self.format(record)
             timestamp = datetime.now().strftime("%H:%M:%S")
             self._log_buffer.append(f"[{timestamp}] [{record.levelname}] {msg}")

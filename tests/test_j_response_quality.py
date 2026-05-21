@@ -721,11 +721,17 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
 
         passed_count = 0
         for case in test_cases:
+            test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
+            TestLogger.log_request(test_logger, messages)
+
             response = api_client.chat_completion(messages, max_tokens=800)
+            TestLogger.log_response(test_logger, response, "API 响应")
+
             self.assert_response_success(response)
 
             content = self.get_message_content(response)
+            test_logger.info(f"回答内容: {content}")
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
             assert not is_garbled, f"检测到乱码"
@@ -737,9 +743,9 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
 
             if length_ok and details_ok:
                 passed_count += 1
-                test_logger.info(f"✓ {case['question'][:800]}... - 回答具体")
+                test_logger.info(f"✓ {case['question']}... - 回答具体")
             else:
-                test_logger.warning(f"✗ {case['question'][:800]}... - 回答不够具体")
+                test_logger.warning(f"✗ {case['question']}... - 回答不够具体")
                 test_logger.warning(
                     f"  长度: {len(content)}/{case['min_length']}, 详细程度: {details_ok}"
                 )

@@ -484,65 +484,6 @@ _last_test_file = None
 _last_test_func = None
 
 
-def _attach_test_log_to_allure(report):
-    """将测试日志附加到 Allure 报告"""
-    try:
-        import allure
-        from allure_commons.types import AttachmentType
-
-        nodeid = getattr(report, "nodeid", "") or ""
-        class_part = nodeid.split("::")
-        if len(class_part) >= 2:
-            module_cls = class_part[1]
-            if "." in module_cls:
-                logger_name = module_cls.rsplit(".", 1)[-1]
-            else:
-                logger_name = module_cls
-        else:
-            logger_name = nodeid.split("/")[-1].split(".")[0]
-
-        # 从日志目录查找对应测试类的日志文件
-        log_dir = Path("logs")
-        if log_dir.exists():
-            found_log = False
-            for log_file in log_dir.rglob(f"{logger_name}*.log"):
-                if log_file.exists():
-                    with open(log_file, "r", encoding="utf-8") as f:
-                        log_content = f.read()
-                    # 只附加最后 5000 字符，避免报告过大
-                    if len(log_content) > 5000:
-                        log_content = "...\n" + log_content[-5000:]
-                    allure.attach(
-                        log_content,
-                        name=f"测试日志: {logger_name}",
-                        attachment_type=AttachmentType.TEXT,
-                    )
-                    found_log = True
-                    break
-
-            if not found_log:
-                # 如果没找到日志文件，尝试记录测试函数名
-                test_name = nodeid.split("::")[-1].split("[")[0]
-                allure.attach(
-                    f"未找到日志文件: {logger_name}",
-                    name="日志状态",
-                    attachment_type=AttachmentType.TEXT,
-                )
-
-        # 附加失败详情
-        if hasattr(report, "longrepr") and report.longrepr:
-            allure.attach(
-                str(report.longrepr),
-                name="失败详情",
-                attachment_type=AttachmentType.TEXT,
-            )
-    except ImportError:
-        pass
-    except Exception as e:
-        # 记录错误但不中断测试
-        print(f"Allure 日志附加失败: {e}")
-
-
 def pytest_runtest_logreport(report):
     """收集测试结果并输出分隔线，同时记录到 Allure"""
     global _test_results, _last_test_file, _last_test_func
@@ -591,9 +532,6 @@ def pytest_runtest_logreport(report):
                     break
             if matched:
                 break
-
-        # 添加 Allure 附件：测试日志
-        _attach_test_log_to_allure(report)
 
 
 def pytest_runtest_setup(item):
