@@ -547,6 +547,11 @@ def pytest_runtest_logreport(report):
         _last_test_file = test_file
         _last_test_func = test_func
 
+        # 提取测试函数名（去掉 test_ 前缀）
+        test_func_base = test_func.replace("test_", "") if test_func.startswith("test_") else test_func
+
+        # 遍历所有测试分类，匹配测试函数名
+        matched = False
         for marker, category in TEST_CATEGORIES.items():
             for test_info in category["tests"]:
                 if len(test_info) >= 4:
@@ -555,17 +560,19 @@ def pytest_runtest_logreport(report):
                     test_idx, test_name, test_desc = test_info
                     test_func_name = test_name.replace("-", "_").replace(" ", "_")
 
-                if f"test_{marker}" in test_id:
-                    test_func_name_check = test_id.split("::")[-1].split("[")[0]
-                    if test_func_name_check == f"test_{test_func_name}":
-                        key = f"{marker}_{test_idx}"
-                        if report.passed:
-                            _test_results[key] = "PASSED"
-                        elif report.failed:
-                            _test_results[key] = "FAILED"
-                        else:
-                            _test_results[key] = "SKIPPED"
-                        break
+                # 匹配测试函数名
+                if test_func_base == test_func_name:
+                    key = f"{marker}_{test_idx}"
+                    if report.passed:
+                        _test_results[key] = "PASSED"
+                    elif report.failed:
+                        _test_results[key] = "FAILED"
+                    else:
+                        _test_results[key] = "SKIPPED"
+                    matched = True
+                    break
+            if matched:
+                break
 
         # 添加 Allure 附件：测试日志
         _attach_test_log_to_allure(report)
@@ -594,26 +601,20 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """测试结束后自动生成报告"""
     global _test_results
 
-    # 获取启用的模型和配置
-    model = None
+    # 获取配置
     cfg = None
     chip_name = "default"
+    model_name = "unknown"
+    
     try:
         cfg = load_config()
-        for name, model_cfg in cfg.get("models", {}).items():
-            if model_cfg.get("enabled", False):
-                model = {
-                    "name": model_cfg.get("name", name),
-                    "display_name": model_cfg.get("display_name", name),
-                    "model_name": model_cfg.get("name", name),
-                }
-                break
     except:
         pass
 
-    # 获取当前芯片名称
+    # 获取芯片名称（优先级：命令行 > 环境变量 > config.yaml）
     cmd_chip = config.getoption("--chip", default=None)
     env_chip = os.environ.get("CHIP")
+    
     if cmd_chip:
         chip_name = cmd_chip.lower()
     elif env_chip:
@@ -623,6 +624,28 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
                 chip_name = name.lower()
                 break
+
+    # 获取模型名称（优先级：命令行 > 环境变量 > config.yaml）
+    cmd_model = config.getoption("--model-name", default=None) or config.getoption("--model", default=None)
+    env_model = os.environ.get("MODEL_NAME")
+    
+    if cmd_model:
+        model_name = cmd_model
+    elif env_model:
+        model_name = env_model
+    elif cfg:
+        for name, model_cfg in cfg.get("models", {}).items():
+            if model_cfg.get("enabled", False):
+                model_name = model_cfg.get("name", name)
+                break
+        if not model_name or model_name == "unknown":
+            model_name = cfg.get("default_model", "unknown")
+    
+    model = {
+        "name": model_name,
+        "display_name": model_name,
+        "model_name": model_name,
+    }
 
     if not model:
         return
