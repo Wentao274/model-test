@@ -471,10 +471,16 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
 
         passed_count = 0
         for case in test_cases:
+            test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
+            TestLogger.log_request(test_logger, messages)
+
             response = api_client.chat_completion(messages, max_tokens=2000)
+            TestLogger.log_response(test_logger, response, "API 响应")
+
             self.assert_response_success(response)
             content = self.get_message_content(response)
+            test_logger.info(f"回答内容: {content}")
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
             assert not is_garbled, f"检测到乱码"
@@ -482,9 +488,13 @@ class TestResponseQuality(BaseTest, StreamingTestMixin):
             result = ResponseRelevanceChecker.check_domain_relevance(
                 case["question"], content, case["domain"]
             )
+            self._log_relevance_result(test_logger, case["question"], content, result)
 
             if result["relevant"] or any(kw in content for kw in case["expected"]):
                 passed_count += 1
+                test_logger.info("✓ 相关性验证通过")
+            else:
+                test_logger.warning("✗ 相关性验证失败")
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"科学领域相关性通过率: {relevance_rate * 100:.0f}%")
