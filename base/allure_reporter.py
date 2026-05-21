@@ -118,6 +118,7 @@ def generate_allure_summary_report(
     test_results: Dict[str, str],
     output_dir: str = "allure-report",
     model_name: Optional[str] = None,
+    chip_name: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
@@ -127,13 +128,14 @@ def generate_allure_summary_report(
         test_results: 测试结果字典 {test_key: status}
         output_dir: 输出目录
         model_name: 模型名称
+        chip_name: 芯片平台名称
         config: 配置
 
     Returns:
         报告文件路径
     """
     config = config or {}
-    chip_name = get_active_chip(config)
+    chip_name = chip_name or get_active_chip(config)
     model_name = model_name or "unknown"
 
     total_tests = 0

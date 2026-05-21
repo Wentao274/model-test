@@ -672,7 +672,11 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             config.getoption("--summary-report-dir", default=None) or "allure-report"
         )
         allure_summary_path = generate_allure_summary_report(
-            _test_results, summary_report_dir, model.get("name", "unknown"), cfg
+            _test_results,
+            summary_report_dir,
+            model.get("name", "unknown"),
+            chip_name,
+            cfg,
         )
     except Exception as e:
         terminalreporter.write_line(f"Allure 汇总报告生成失败: {e}")
