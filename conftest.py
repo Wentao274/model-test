@@ -265,32 +265,48 @@ def test_logger(request, config):
     else:
         logger_name = request.node.module.__name__.split(".")[-1]
 
-    # 获取当前使用的模型名称
-    model_name = None
-    try:
-        enabled_models = config.get("models", {})
-        for name, model_cfg in enabled_models.items():
-            if model_cfg.get("enabled", False):
-                model_name = name
-                break
-        if not model_name:
-            model_name = config.get("default_model")
-    except:
-        pass
+    # 获取当前使用的模型名称（优先级：命令行 > 环境变量 > config.yaml）
+    cmd_model = request.config.getoption("--model-name", default=None) or request.config.getoption("--model", default=None)
+    env_model = os.environ.get("MODEL_NAME")
+    
+    if cmd_model:
+        model_name = cmd_model
+    elif env_model:
+        model_name = env_model
+    else:
+        model_name = None
+        try:
+            enabled_models = config.get("models", {})
+            for name, model_cfg in enabled_models.items():
+                if model_cfg.get("enabled", False):
+                    model_name = name
+                    break
+            if not model_name:
+                model_name = config.get("default_model")
+        except:
+            pass
 
-    # 获取当前使用的芯片平台名称
-    chip_name = None
-    try:
-        chips = config.get("chips", {})
-        for name, chip_cfg in chips.items():
-            if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
-                chip_name = name
-                break
-            elif chip_cfg is True:  # 兼容旧格式
-                chip_name = name
-                break
-    except:
-        pass
+    # 获取当前使用的芯片平台名称（优先级：命令行 > 环境变量 > config.yaml）
+    cmd_chip = request.config.getoption("--chip", default=None)
+    env_chip = os.environ.get("CHIP")
+    
+    if cmd_chip:
+        chip_name = cmd_chip
+    elif env_chip:
+        chip_name = env_chip
+    else:
+        chip_name = None
+        try:
+            chips = config.get("chips", {})
+            for name, chip_cfg in chips.items():
+                if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
+                    chip_name = name
+                    break
+                elif chip_cfg is True:
+                    chip_name = name
+                    break
+        except:
+            pass
 
     logger = TestLogger.get_logger(
         logger_name, model_name=model_name, chip_name=chip_name
