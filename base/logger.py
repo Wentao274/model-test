@@ -1,5 +1,5 @@
 """
-日志模块 - 为每个测试类创建独立的日志文件
+日志模块 - 为每个测试类创建独立的日志文件，并自动附加到 Allure 报告
 """
 
 import logging
@@ -8,6 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+try:
+    import allure
+    from allure_commons.types import AttachmentType
+
+    ALLURE_AVAILABLE = True
+except ImportError:
+    ALLURE_AVAILABLE = False
+
 
 def get_active_chip(config: Dict[str, Any]) -> str:
     """获取当前激活的芯片平台名称（小写）"""
@@ -15,9 +23,45 @@ def get_active_chip(config: Dict[str, Any]) -> str:
     for chip_name, chip_cfg in chips.items():
         if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
             return chip_name.lower()
-        elif chip_cfg is True:  # 兼容旧格式：chips: { "chip_name": true }
+        elif chip_cfg is True:
             return chip_name.lower()
     return "default"
+
+
+class AllureLogHandler(logging.Handler):
+    """自定义日志处理器，将日志自动附加到 Allure 报告"""
+
+    def __init__(self):
+        super().__init__()
+        self._log_buffer = []
+        self._current_test = None
+
+    def emit(self, record: logging.LogRecord):
+        """处理日志记录"""
+        if not ALLURE_AVAILABLE:
+            return
+
+        try:
+            msg = self.format(record)
+            self._log_buffer.append(f"[{record.levelname}] {msg}")
+
+            # 对于重要日志，立即附加到 Allure
+            if record.levelno >= logging.INFO:
+                allure.attach(
+                    msg,
+                    name=f"日志 [{record.levelname}]",
+                    attachment_type=AttachmentType.TEXT,
+                )
+        except Exception:
+            pass
+
+    def get_full_log(self) -> str:
+        """获取完整日志内容"""
+        return "\n".join(self._log_buffer)
+
+    def clear(self):
+        """清空日志缓冲"""
+        self._log_buffer.clear()
 
 
 class TestLogger:
@@ -79,11 +123,18 @@ class TestLogger:
         file_handler.setFormatter(file_format)
         logger.addHandler(file_handler)
 
-        # 控制台 handler（可选，用于调试）
+        # 控制台 handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(file_format)
         logger.addHandler(console_handler)
+
+        # Allure 日志 handler
+        if ALLURE_AVAILABLE:
+            allure_handler = AllureLogHandler()
+            allure_handler.setLevel(logging.DEBUG)
+            allure_handler.setFormatter(file_format)
+            logger.addHandler(allure_handler)
 
         cls._loggers[test_class_name] = logger
 
@@ -96,30 +147,40 @@ class TestLogger:
     def log_response(
         cls, logger: logging.Logger, response: dict, title: str = "API Response"
     ):
-        """格式化记录 API 响应"""
+        """格式化记录 API 响应，并附加到 Allure"""
         import json
 
         logger.info(f"=== {title} ===")
 
-        # 记录基本信息
         if "choices" in response and response["choices"]:
             message = response["choices"][0].get("message", {})
             content = message.get("content", "")
             reasoning = message.get("reasoning")
 
             if content:
-                logger.info(f"Content: {content[:500]}...")  # 限制长度
+                logger.info(f"Content: {content[:500]}...")
             if reasoning:
                 logger.info(f"Reasoning: {reasoning[:500]}...")
 
-        # 记录完整响应（可选）
         logger.debug(
             f"Full Response: {json.dumps(response, ensure_ascii=False, indent=2)}"
         )
 
+        # 附加完整响应到 Allure
+        if ALLURE_AVAILABLE:
+            try:
+                formatted_response = json.dumps(response, ensure_ascii=False, indent=2)
+                allure.attach(
+                    formatted_response,
+                    name=title,
+                    attachment_type=AttachmentType.JSON,
+                )
+            except Exception:
+                pass
+
     @classmethod
     def log_request(cls, logger: logging.Logger, messages: list, params: dict = None):
-        """记录 API 请求"""
+        """记录 API 请求，并附加到 Allure"""
         import json
 
         logger.info("=== API Request ===")
@@ -127,7 +188,6 @@ class TestLogger:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                # 多模态消息
                 content_preview = f"[多模态消息，包含 {len(content)} 个部分]"
             else:
                 content_preview = content[:200] if content else ""
@@ -135,3 +195,18 @@ class TestLogger:
 
         if params:
             logger.info(f"Params: {json.dumps(params, ensure_ascii=False)}")
+
+        # 附加完整请求到 Allure
+        if ALLURE_AVAILABLE:
+            try:
+                request_data = {"messages": messages, "params": params or {}}
+                formatted_request = json.dumps(
+                    request_data, ensure_ascii=False, indent=2
+                )
+                allure.attach(
+                    formatted_request,
+                    name="API Request",
+                    attachment_type=AttachmentType.JSON,
+                )
+            except Exception:
+                pass

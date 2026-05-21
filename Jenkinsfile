@@ -4,7 +4,7 @@ pipeline {
     parameters {
         string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称')
         string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称')
-        string(name: 'BASE_URL', defaultValue: 'http://127.0.0.1:8080/v1', description: 'API 地址')
+        string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080/v1', description: 'API 地址')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         string(name: 'MARKER', defaultValue: 'j_response_quality', description: '测试标记 (p0, p1, smoke 等)')
         string(name: 'WORK_DIR', defaultValue: '/root/liwt/maas-image/model-test', description: '宿主机测试目录')
@@ -94,13 +94,6 @@ ENDSSH'''
 ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << 'ENDSSH'
 set -e
 cd ${params.WORK_DIR}
-# 检查 allure 是否已安装
-if ! command -v allure &> /dev/null; then
-    echo "Allure命令未找到，安装 Allure..."
-    # sudo apt-add-repository ppa:qameta/allure -y
-    # sudo apt-get update
-    # sudo apt-get install allure -y
-fi
 # 生成 Allure HTML 报告
 if [ -d "${BUILD_OUTPUT_DIR}/allure-results" ] && [ "$(ls -A ${BUILD_OUTPUT_DIR}/allure-results 2>/dev/null)" ]; then
     echo "生成 Allure HTML 报告..."
@@ -116,14 +109,26 @@ ENDSSH'''
 
         stage('拉取报告到Jenkins') {
             steps {
-                sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
-                    sh '''
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
+                        sh '''
 mkdir -p reports/${BUILD_NUMBER}
+
 # 拉取 Markdown 汇总报告
 ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "find ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-report -name '*.md' -exec cp {} ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/ \\; 2>/dev/null || true"
 scp -o StrictHostKeyChecking=no \
     ${REMOTE_USER}@${REMOTE_HOST}:${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/*.md \
     ./reports/${BUILD_NUMBER}/ 2>/dev/null || echo "未找到汇总报告"
+
+# 拉取 allure-results（用于 Jenkins Allure 插件）
+if ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "[ -d ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-results ]"; then
+    ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "cd ${params.WORK_DIR}/${BUILD_OUTPUT_DIR} && tar -czvf allure-results.tar.gz allure-results"
+    scp -o StrictHostKeyChecking=no \
+        ${REMOTE_USER}@${REMOTE_HOST}:${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-results.tar.gz \
+        ./reports/${BUILD_NUMBER}/
+    tar -xzf ./reports/${BUILD_NUMBER}/allure-results.tar.gz -C ./reports/${BUILD_NUMBER}/
+fi
+
 # 拉取 Allure HTML 报告
 if ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "[ -d ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-html ]"; then
     ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "cd ${params.WORK_DIR}/${BUILD_OUTPUT_DIR} && tar -czvf allure-html.tar.gz allure-html"
@@ -135,14 +140,16 @@ if ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "[ -d ${params.
     tar -xzf ./reports/${BUILD_NUMBER}/allure-html.tar.gz -C ./reports/${BUILD_NUMBER}/
 fi
 '''
+                    }
                 }
             }
         }
-        
+
         stage('发送邮件') {
             steps {
-                script {
-                    def emailBody = """
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    script {
+                        def emailBody = """
 <html>
 <head>
     <style>
@@ -181,14 +188,15 @@ fi
     </div>
 </body>
 </html>"""
-                    
-                    emailext(
-                        subject: "[测试报告] ${params.CHIP} - ${params.MODEL} - 构建 #${BUILD_NUMBER} - ${currentBuild.currentResult}",
-                        body: emailBody,
-                        to: "${params.RECIPIENTS}",
-                        attachmentsPattern: "reports/${BUILD_NUMBER}/*.md",
-                        mimeType: 'text/html'
-                    )
+                        
+                        emailext(
+                            subject: "[测试报告] ${params.CHIP} - ${params.MODEL} - 构建 #${BUILD_NUMBER} - ${currentBuild.currentResult}",
+                            body: emailBody,
+                            to: "${params.RECIPIENTS}",
+                            attachmentsPattern: "reports/${BUILD_NUMBER}/*.md",
+                            mimeType: 'text/html'
+                        )
+                    }
                 }
             }
         }
@@ -209,13 +217,13 @@ ENDSSH'''
     post {
         always {
             script {
-                archiveArtifacts artifacts: 'reports/**/*', allowEmptyArchive: true, fingerprint: true
+                archiveArtifacts artifacts: "reports/${env.BUILD_NUMBER}/**", allowEmptyArchive: true, fingerprint: true
                 try {
                     allure includeProperties: false,
                            jdk: '',
-                           results: [[path: "reports/${BUILD_NUMBER}/allure-results"]]
+                           results: [[path: "reports/${env.BUILD_NUMBER}/allure-results"]]
                 } catch (Exception e) {
-                    echo "Allure 插件未安装"
+                    echo "Allure 报告生成失败: ${e.message}"
                 }
             }
         }
