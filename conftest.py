@@ -325,7 +325,13 @@ def test_logger(request, config):
 
     logger.info(f"\n>>> 测试: {test_name}")
 
-    return logger
+    # 清空日志缓冲区，确保每个测试独立
+    TestLogger.clear_allure_log(logger_name)
+
+    yield logger
+
+    # 测试结束后将日志刷新到 Allure
+    TestLogger.flush_to_allure(logger_name, f"测试日志: {test_name}")
 
 
 def pytest_addoption(parser):

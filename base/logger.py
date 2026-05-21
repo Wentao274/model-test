@@ -29,29 +29,18 @@ def get_active_chip(config: Dict[str, Any]) -> str:
 
 
 class AllureLogHandler(logging.Handler):
-    """自定义日志处理器，将日志自动附加到 Allure 报告"""
+    """自定义日志处理器，收集日志并在测试结束时一次性附加到 Allure"""
 
     def __init__(self):
         super().__init__()
         self._log_buffer = []
-        self._current_test = None
 
     def emit(self, record: logging.LogRecord):
-        """处理日志记录"""
-        if not ALLURE_AVAILABLE:
-            return
-
+        """收集日志记录到缓冲区"""
         try:
             msg = self.format(record)
-            self._log_buffer.append(f"[{record.levelname}] {msg}")
-
-            # 对于重要日志，立即附加到 Allure
-            if record.levelno >= logging.INFO:
-                allure.attach(
-                    msg,
-                    name=f"日志 [{record.levelname}]",
-                    attachment_type=AttachmentType.TEXT,
-                )
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self._log_buffer.append(f"[{timestamp}] [{record.levelname}] {msg}")
         except Exception:
             pass
 
@@ -63,11 +52,28 @@ class AllureLogHandler(logging.Handler):
         """清空日志缓冲"""
         self._log_buffer.clear()
 
+    def flush_to_allure(self, test_name: str = "测试日志"):
+        """将日志一次性附加到 Allure"""
+        if not ALLURE_AVAILABLE:
+            return
+
+        if self._log_buffer:
+            try:
+                full_log = self.get_full_log()
+                allure.attach(
+                    full_log,
+                    name=test_name,
+                    attachment_type=AttachmentType.TEXT,
+                )
+            except Exception:
+                pass
+
 
 class TestLogger:
     """测试日志管理器"""
 
     _loggers = {}
+    _allure_handlers = {}  # 存储 allure handler
 
     @classmethod
     def get_logger(
@@ -135,6 +141,7 @@ class TestLogger:
             allure_handler.setLevel(logging.DEBUG)
             allure_handler.setFormatter(file_format)
             logger.addHandler(allure_handler)
+            cls._allure_handlers[test_class_name] = allure_handler
 
         cls._loggers[test_class_name] = logger
 
@@ -142,6 +149,19 @@ class TestLogger:
         logger.info(f"日志文件: {log_file}")
 
         return logger
+
+    @classmethod
+    def flush_to_allure(cls, test_class_name: str, test_name: str = "测试日志"):
+        """将指定测试类的日志刷新到 Allure"""
+        if test_class_name in cls._allure_handlers:
+            handler = cls._allure_handlers[test_class_name]
+            handler.flush_to_allure(test_name)
+
+    @classmethod
+    def clear_allure_log(cls, test_class_name: str):
+        """清空指定测试类的日志缓冲"""
+        if test_class_name in cls._allure_handlers:
+            cls._allure_handlers[test_class_name].clear()
 
     @classmethod
     def log_response(
