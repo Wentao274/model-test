@@ -94,7 +94,7 @@ def api_client(
     cmd_base_url = request.config.getoption("--base-url", default=None)
     cmd_api_key = request.config.getoption("--api-key", default=None)
     cmd_model_name = request.config.getoption("--model-name", default=None)
-    cmd_thinking_mode = request.config.getoption("--thinking-mode", default=False)
+    cmd_thinking_mode = request.config.getoption("--thinking-mode", default=None)
     cmd_model_key = request.config.getoption("--model", default=None)
 
     # 如果有命令行参数，使用命令行参数
@@ -105,21 +105,20 @@ def api_client(
             cmd_model_name or cmd_model_key or config.get("default_model", "qwen35")
         )
 
-        # thinking_mode 优先级：命令行 > 环境变量 > config.yaml
+        # thinking_mode 优先级：命令行 > 环境变量 > config.yaml（默认启用）
         thinking_mode = cmd_thinking_mode
         if thinking_mode is None:
             thinking_mode = os.environ.get("THINKING_MODE", "").lower() == "true"
         if thinking_mode is None:
-            # 从 config.yaml 获取该模型的 thinking_mode 配置
             model_cfg = config.get("models", {}).get(
                 cmd_model_key or cmd_model_name, {}
             )
-            thinking_mode = model_cfg.get("thinking_mode", False)
+            thinking_mode = model_cfg.get("thinking_mode", True)
 
         model_config = {
             "name": model_name,
             "api_key": api_key,
-            "thinking_mode": thinking_mode or False,
+            "thinking_mode": bool(thinking_mode),
             "thinking_key": "enable_thinking",
         }
 
@@ -148,12 +147,12 @@ def api_client(
         thinking_mode = env_thinking_mode
         if thinking_mode is None:
             model_cfg = config.get("models", {}).get(model_name, {})
-            thinking_mode = model_cfg.get("thinking_mode", False)
+            thinking_mode = model_cfg.get("thinking_mode", True)
 
         model_config = {
             "name": model_name,
             "api_key": api_key,
-            "thinking_mode": thinking_mode or False,
+            "thinking_mode": bool(thinking_mode),
             "thinking_key": "enable_thinking",
         }
 
@@ -187,6 +186,8 @@ def api_client(
         model_name = config.get("default_model", "qwen35")
 
     model_config = config["models"][model_name]
+    if model_config.get("thinking_mode") is None:
+        model_config["thinking_mode"] = True
     return ModelAPIClient(
         api_key=model_config["api_key"],
         base_url=chip_config["base_url"],
@@ -483,11 +484,16 @@ def _attach_test_log_to_allure(report):
         import allure
         from allure_commons.types import AttachmentType
 
-        test_class = report.node.cls
-        if test_class:
-            logger_name = test_class.__name__
+        nodeid = getattr(report, "nodeid", "") or ""
+        class_part = nodeid.split("::")
+        if len(class_part) >= 2:
+            module_cls = class_part[1]
+            if "." in module_cls:
+                logger_name = module_cls.rsplit(".", 1)[-1]
+            else:
+                logger_name = module_cls
         else:
-            logger_name = report.node.module.__name__.split(".")[-1]
+            logger_name = nodeid.split("/")[-1].split(".")[0]
 
         # 从日志目录查找对应测试类的日志文件
         log_dir = Path("logs")
@@ -510,7 +516,7 @@ def _attach_test_log_to_allure(report):
 
             if not found_log:
                 # 如果没找到日志文件，尝试记录测试函数名
-                test_name = report.node.name
+                test_name = nodeid.split("::")[-1].split("[")[0]
                 allure.attach(
                     f"未找到日志文件: {logger_name}",
                     name="日志状态",
