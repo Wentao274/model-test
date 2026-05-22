@@ -66,19 +66,56 @@ set -e
 cd ${params.WORK_DIR}
 source .venv/bin/activate
 mkdir -p ${BUILD_OUTPUT_DIR}
-THINKING_ARG=""
-if [ "${params.THINKING_MODE}" = "true" ]; then
-    THINKING_ARG="--thinking-mode"
-fi
 
-pytest tests/test_j_response_quality.py::TestResponseQuality::test_response_specificity_check -v \
-    --base-url "${params.BASE_URL}" \
-    --api-key "${API_KEY}" \
-    --model-name "${params.MODEL}" \
-    --chip "${params.CHIP}" \
-    --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
-    --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
-    $THINKING_ARG
+# 打印参数值
+echo "=== 参数信息 ==="
+echo "BASE_URL: ${params.BASE_URL}"
+echo "MODEL: ${params.MODEL}"
+echo "CHIP: ${params.CHIP}"
+echo "THINKING_MODE: ${params.THINKING_MODE}"
+echo "MARKER: ${params.MARKER}"
+
+if [ "${params.THINKING_MODE}" = "true" ]; then
+    if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
+        pytest -v \
+            --base-url "${params.BASE_URL}" \
+            --api-key "${API_KEY}" \
+            --model-name "${params.MODEL}" \
+            --chip "${params.CHIP}" \
+            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
+            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
+            --thinking-mode
+    else
+        pytest -v -m "${params.MARKER}" \
+            --base-url "${params.BASE_URL}" \
+            --api-key "${API_KEY}" \
+            --model-name "${params.MODEL}" \
+            --chip "${params.CHIP}" \
+            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
+            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
+            --thinking-mode
+    fi
+else
+    if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
+        pytest -v \
+            --base-url "${params.BASE_URL}" \
+            --api-key "${API_KEY}" \
+            --model-name "${params.MODEL}" \
+            --chip "${params.CHIP}" \
+            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
+            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
+            --no-thinking-mode
+    else
+        pytest -v -m "${params.MARKER}" \
+            --base-url "${params.BASE_URL}" \
+            --api-key "${API_KEY}" \
+            --model-name "${params.MODEL}" \
+            --chip "${params.CHIP}" \
+            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
+            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
+            --no-thinking-mode
+    fi
+fi
 ENDSSH'''
                             }
                         }
@@ -149,17 +186,69 @@ fi
             steps {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     script {
+                        // Markdown 转 HTML 辅助函数
+                        def convertMarkdownTableToHtml = { String mdContent ->
+                            def html = '<table>'
+                            def lines = mdContent.strip().split('\n')
+                            def isHeader = true
+                            for (line in lines) {
+                                line = line.trim()
+                                if (!line || line == '|' || line.startsWith('|--')) continue
+                                if (line.startsWith('|')) {
+                                    line = line.replaceAll(/^\||\|$/, '')
+                                    def cells = line.split('\\|').collect { it.trim() }
+                                    if (isHeader) {
+                                        html += '<thead><tr>'
+                                        cells.each { html += "<th>${it}</th>" }
+                                        html += '</tr></thead><tbody>'
+                                        isHeader = false
+                                    } else {
+                                        html += '<tr>'
+                                        cells.each { html += "<td>${it}</td>" }
+                                        html += '</tr>'
+                                    }
+                                }
+                            }
+                            html += '</tbody></table>'
+                            return html
+                        }
+                        
+                        // 读取 Markdown 报告，提取统计信息
+                        def reportFile = sh(script: "ls reports/${BUILD_NUMBER}/*.md 2>/dev/null | head -1", returnStdout: true).trim()
+                        def summaryHtml = ""
+                        def categoryHtml = ""
+                        
+                        if (reportFile && fileExists(reportFile)) {
+                            def content = readFile(reportFile)
+                            
+                            // 提取统计汇总 section
+                            def summaryMatch = content =~ /(?s)## 统计汇总\n(.*?)(?=\n##|\Z)/
+                            if (summaryMatch) {
+                                def summaryMd = summaryMatch.group(1).trim()
+                                summaryHtml = convertMarkdownTableToHtml(summaryMd)
+                            }
+                            
+                            // 提取分类统计 section
+                            def categoryMatch = content =~ /(?s)## 分类统计\n(.*?)(?=\n---|\Z)/
+                            if (categoryMatch) {
+                                def categoryMd = categoryMatch.group(1).trim()
+                                categoryHtml = convertMarkdownTableToHtml(categoryMd)
+                            }
+                        }
+                        
                         def emailBody = """
 <html>
 <head>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
-        .container { max-width: 800px; margin: 0 auto; background-color: #fff; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .container { max-width: 900px; margin: 0 auto; background-color: #fff; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .header { background-color: ${currentBuild.currentResult == 'SUCCESS' ? '#4CAF50' : '#f44336'}; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
         .content { padding: 20px; }
         table { border-collapse: collapse; width: 100%; margin-top: 15px; }
-        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-        th { background-color: #f2f2f2; width: 30%; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .summary-table th { background-color: #e3f2fd; }
+        .category-table th { background-color: #fff3e0; }
         .footer { margin-top: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 0 0 5px 5px; color: #666; font-size: 12px; }
     </style>
 </head>
@@ -178,6 +267,9 @@ fi
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>
             </table>
+            
+            ${summaryHtml ? "<h3>统计汇总</h3>" + summaryHtml : ""}
+            ${categoryHtml ? "<h3>分类统计</h3>" + categoryHtml : ""}
             
             <p style="margin-top: 20px;">详细测试报告请查看附件中的 Markdown 文件。</p>
             <p>Jenkins 构建地址: <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>

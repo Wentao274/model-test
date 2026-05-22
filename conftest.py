@@ -106,10 +106,14 @@ def api_client(
         )
 
         # thinking_mode 优先级：命令行 > 环境变量 > config.yaml（默认启用）
+        cmd_no_thinking = request.config.getoption("--no-thinking-mode", default=None)
+
         thinking_mode = cmd_thinking_mode
-        if thinking_mode is None:
+        if cmd_no_thinking:
+            thinking_mode = False
+        elif thinking_mode is None:
             thinking_mode = os.environ.get("THINKING_MODE", "").lower() == "true"
-        if thinking_mode is None:
+        elif thinking_mode is None:
             model_cfg = config.get("models", {}).get(
                 cmd_model_key or cmd_model_name, {}
             )
@@ -377,6 +381,12 @@ def pytest_addoption(parser):
         action="store_true",
         default=None,
         help="Enable thinking mode (if not specified, use config.yaml setting)",
+    )
+    parser.addoption(
+        "--no-thinking-mode",
+        action="store_true",
+        default=None,
+        help="Disable thinking mode",
     )
     parser.addoption(
         "--summary-report-dir",
