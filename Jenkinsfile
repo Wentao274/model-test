@@ -189,7 +189,7 @@ fi
                         // Markdown 转 HTML 辅助函数
                         def convertMarkdownTableToHtml = { String mdContent ->
                             def html = '<table>'
-                            def lines = mdContent.strip().split('\n')
+                            def lines = mdContent.trim().split('\n')
                             def isHeader = true
                             for (line in lines) {
                                 line = line.trim()
@@ -264,6 +264,7 @@ fi
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
                 <tr><th>模型名称</th><td>${params.MODEL}</td></tr>
                 <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
+                <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>
             </table>
