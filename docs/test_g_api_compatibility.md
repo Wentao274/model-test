@@ -13,6 +13,8 @@
 | G4  | Usage 统计 | 返回中 usage 字段准确 | prompt_tokens + completion_tokens 准确 | P0 |
 | G5  | 错误码规范 | 400/401/404/429/500 错误码 | 符合 OpenAI 错误格式 | P1 |
 | G6  | 客户端 SDK 兼容 | Python openai / JS @openai/sdk | 无需修改代码直接调用 | P0 |
+| G7  | 响应格式变体 | 响应格式变体 | 测试不同参数组合，temperature, max_tokens | P2 |
+| G8  | Stream参数 | Stream参数 | 测试流式请求 | P2 |
 
 ## 运行方式
 
@@ -58,10 +60,10 @@ pytest tests/test_g_api_compatibility.py::TestAPICompatibility::test_chat_comple
 - Python openai 库可以直接调用
 - 无需修改代码即可使用
 
-### test_response_format_variants
+### G7: test_response_format_variants
 测试不同参数组合的响应格式。
 
-### test_stream_parameter
+### G8: test_stream_parameter
 测试stream参数的正确性。
 
 ## 注意事项

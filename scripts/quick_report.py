@@ -66,6 +66,18 @@ def main():
                         marker = "a_basic"
                     elif test_id.startswith("B"):
                         marker = "b_advanced"
+                    elif test_id.startswith("C"):
+                        marker = "c_multimodal"
+                    elif test_id.startswith("D"):
+                        marker = "d_long_context"
+                    elif test_id.startswith("E"):
+                        marker = "e_performance"
+                    elif test_id.startswith("F"):
+                        marker = "f_stability"
+                    elif test_id.startswith("G"):
+                        marker = "g_api"
+                    elif test_id.startswith("H"):
+                        marker = "h_quality"
                     else:
                         marker = "unknown"
 

@@ -226,7 +226,7 @@ class TestAPICompatibility(BaseTest):
             pytest.skip(f"SDK compatibility test failed: {e}")
 
     @pytest.mark.g_api
-    @pytest.mark.p1
+    @pytest.mark.p2
     def test_response_format_variants(self, api_client: ModelAPIClient, test_logger):
         """额外测试：响应格式变体"""
         test_logger.info("=== 测试开始: Response Format Variants ===")
@@ -246,7 +246,7 @@ class TestAPICompatibility(BaseTest):
         test_logger.info("Response format variants: OK")
 
     @pytest.mark.g_api
-    @pytest.mark.p1
+    @pytest.mark.p2
     def test_stream_parameter(self, api_client: ModelAPIClient, test_logger):
         """额外测试：stream参数"""
         test_logger.info("=== 测试开始: Stream Parameter ===")

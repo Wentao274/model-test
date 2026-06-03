@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 83 个测试点。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 8 大类共 83 个测试点。
 
 ## 快速开始
 
@@ -74,13 +74,11 @@ pytest -v
 | A. 基础推理能力 | 12 | 单轮/多轮对话、流式输出、参数控制 |
 | B. 高级生成功能 | 10 | 思考模式、工具调用、JSON Mode |
 | C. 多模态能力 | 8 | 图片/视频理解、OCR |
-| D. 长上下文处理 | 8 | 长文本、大海捞针 |
+| D. 长上下文处理 | 12 | 长文本、大海捞针、超长上下文验证 |
 | E. 性能指标 | 12 | 延迟、吞吐、并发（已禁用） |
 | F. 稳定性与边界 | 8 | 异常输入、OOM恢复 |
 | G. API兼容性 | 8 | OpenAI 接口兼容 |
-| H. 质量评估 | 5 | 生成质量、幻觉率 |
-| I. 超长上下文验证 | 4 | 超长上下文脚本验证 |
-| J. 回答质量与相关性 | 8 | 相关性、乱码检测 |
+| H. 质量评估与回答相关性 | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 
 > 总计：83 个测试点
 
@@ -93,9 +91,7 @@ pytest -m c_multimodal -v   # 多模态能力
 pytest -m d_long_context -v # 长上下文处理
 pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
-pytest -m h_quality -v      # 质量评估
-pytest -m i_long_context -v # 超长上下文验证
-pytest -m j_response_quality -v  # 回答质量与相关性
+pytest -m h_quality -v          # 质量评估与回答相关性
 pytest -m p0 -v             # P0 优先级测试
 pytest -m smoke -v          # 冒烟测试
 ```
@@ -196,7 +192,7 @@ model-test/
 - [Allure 报告使用指南](docs/allure_report.md)
 - [A类测试说明](docs/test_a_basic_reasoning.md)
 - [B类测试说明](docs/test_b_advanced_generation.md)
-- [J类测试说明](docs/test_j_response_quality.md)
+- [H类测试说明](docs/test_h_quality.md)
 
 ## Jenkins Pipeline
 
