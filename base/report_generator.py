@@ -12,6 +12,14 @@ from typing import Dict, Any, List, Optional
 from base.test_definitions import TEST_CATEGORIES
 
 
+def _split_reason(reason: str):
+    """将 '短摘要|详细描述' 格式拆分为两个部分"""
+    if "|" in reason:
+        parts = reason.split("|", 1)
+        return parts[0], parts[1]
+    return reason, reason
+
+
 def get_active_chip(config: Dict[str, Any]) -> str:
     """获取当前激活的芯片平台名称（小写）"""
     chips = config.get("chips", {})
@@ -39,6 +47,7 @@ class TestReportGenerator:
         test_date: Optional[str] = None,
         test_time: Optional[str] = None,
         chip_name: Optional[str] = None,
+        failure_reasons: Optional[Dict[str, str]] = None,
     ) -> Path:
         """生成测试报告"""
         if test_date is None:
@@ -49,7 +58,9 @@ class TestReportGenerator:
         effective_chip = (chip_name or self.chip_name).lower()
         test_datetime = datetime.now().strftime("%Y%m%d%H%M%S")
 
-        content = self._build_report_content(model, test_results, test_date, test_time)
+        content = self._build_report_content(
+            model, test_results, test_date, test_time, failure_reasons or {}
+        )
 
         chip_dir = self.output_dir / effective_chip
         chip_dir.mkdir(parents=True, exist_ok=True)
@@ -74,8 +85,10 @@ class TestReportGenerator:
         test_results: Dict[str, str],
         test_date: str,
         test_time: str,
+        failure_reasons: Dict[str, str] = None,
     ) -> str:
         """构建报告内容"""
+        failure_reasons = failure_reasons or {}
         model_name = model["name"]
         model_display = model["display_name"]
 
@@ -115,9 +128,11 @@ class TestReportGenerator:
             lines.append("> 状态说明：✅ 已通过，⏳ 未测试，❌ 未通过，⚠️ 部分通过")
             lines.append("")
             lines.append(
-                "| #   | 测试点       | 测试内容                        | 状态 |"
+                "| #   | 测试点       | 测试内容                        | 状态 | 备注 |"
             )
-            lines.append("|-----|------------|-----------------------------|------|")
+            lines.append(
+                "|-----|------------|-----------------------------|------|------|"
+            )
 
             issue_notes = []
 
@@ -133,26 +148,36 @@ class TestReportGenerator:
                     status_icon = "✅"
                     passed_tests += 1
                     category_stats[category_name]["passed"] += 1
+                    note_short = ""
+                    note_detail = ""
                 elif status == "FAILED":
                     status_icon = "❌"
                     failed_tests += 1
                     category_stats[category_name]["failed"] += 1
-                    issue_notes.append((test_idx, test_name, "测试未通过"))
+                    reason = failure_reasons.get(key, "测试未通过")
+                    note_short, note_detail = _split_reason(reason)
+                    issue_notes.append((test_idx, test_name, note_detail))
                 elif status == "PARTIAL":
                     status_icon = "⚠️"
                     partial_tests += 1
                     category_stats[category_name]["partial"] += 1
-                    issue_notes.append((test_idx, test_name, "部分用例未通过"))
+                    reason = failure_reasons.get(key, "部分用例未通过")
+                    note_short, note_detail = _split_reason(reason)
+                    issue_notes.append((test_idx, test_name, note_detail))
                 elif status == "SKIPPED":
                     status_icon = "⏳"
                     skipped_tests += 1
                     category_stats[category_name]["skipped"] += 1
-                    issue_notes.append((test_idx, test_name, "未运行此测试"))
+                    reason = failure_reasons.get(key, "未运行此测试")
+                    note_short, note_detail = _split_reason(reason)
+                    issue_notes.append((test_idx, test_name, note_detail))
                 else:
                     status_icon = "⏳"
                     skipped_tests += 1
                     category_stats[category_name]["skipped"] += 1
-                    issue_notes.append((test_idx, test_name, "未运行此测试"))
+                    reason = failure_reasons.get(key, "未运行此测试")
+                    note_short, note_detail = _split_reason(reason)
+                    issue_notes.append((test_idx, test_name, note_detail))
 
                 total_tests += 1
                 category_stats[category_name]["total"] += 1
@@ -161,7 +186,7 @@ class TestReportGenerator:
                     test_desc = test_desc[:23] + "..."
 
                 lines.append(
-                    f"| {test_idx:2s}  | {test_name:10s} | {test_desc:26s} | {status_icon} |"
+                    f"| {test_idx:2s}  | {test_name:10s} | {test_desc:26s} | {status_icon} | {note_short} |"
                 )
 
             if issue_notes:

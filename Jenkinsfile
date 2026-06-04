@@ -281,11 +281,12 @@ fi
             <h3>测试概要</h3>
             <table>
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
+                <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
                 <tr><th>模型名称</th><td>${modelDisplayName}</td></tr>
                 <tr><th>推理框架</th><td>${params.INFRA}</td></tr>
                 <tr><th>PD模式</th><td>${params.PD}</td></tr>
-                <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
+                <tr><th>BASE_URL</th><td>${params.BASE_URL}</td></tr>
                 <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>

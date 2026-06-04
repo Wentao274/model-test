@@ -26,6 +26,7 @@ from allure_commons.types import AttachmentType
 
 # 测试结果收集器
 _test_results = {}
+_failure_reasons = {}
 
 
 def sanitize_model_name(name: str) -> str:
@@ -521,6 +522,69 @@ _last_test_file = None
 _last_test_func = None
 
 
+def _extract_failure_reason(report) -> str:
+    """从失败报告中提取简明的失败原因，格式: 短摘要|详细描述"""
+    if not hasattr(report, "longrepr") or report.longrepr is None:
+        return "未知错误|未知错误"
+    longrepr = report.longrepr
+    if hasattr(longrepr, "reprcrash") and longrepr.reprcrash:
+        message = longrepr.reprcrash.message
+    elif isinstance(longrepr, str):
+        message = longrepr
+    elif hasattr(longrepr, "reprtraceback") and longrepr.reprtraceback:
+        entries = longrepr.reprtraceback.reprentries
+        if entries:
+            message = str(entries[-1].reprfileloc)
+        else:
+            message = str(longrepr)
+    else:
+        message = str(longrepr)
+    short, detail = _summarize_error(message)
+    detail = detail[:150] if len(detail) > 150 else detail
+    return f"{short}|{detail}"
+
+
+def _summarize_error(message: str):
+    """将错误信息总结为(短摘要, 详细描述)"""
+    msg = message.strip()
+    error_rules = [
+        ("IndexError: list index out of range", "索引越界"),
+        ("IndexError", "索引越界"),
+        ("TypeError: object of type 'NoneType' has no len()", "返回值为None"),
+        ("TypeError", "类型错误"),
+        ("ValueError: empty separator", "空分隔符"),
+        ("ValueError", "值错误"),
+        ("NameError", "变量未定义"),
+        ("AssertionError", "断言失败"),
+        ("json_parse_error", "JSON解析错误"),
+        ("missing field `type`", "缺少type字段"),
+        ("missing field", "缺少必填字段"),
+        ("TimeoutError", "请求超时"),
+        ("ConnectionError", "连接错误"),
+        ("API request failed", "API请求失败"),
+    ]
+    for pattern, short in error_rules:
+        if pattern in msg:
+            detail = msg.replace("\n", " ").strip()
+            if len(detail) > 100:
+                detail = detail[:97] + "..."
+            return short, detail
+    last_line = msg.split("\n")[-1].strip() if "\n" in msg else msg
+    short = last_line[:15] + "..." if len(last_line) > 15 else last_line
+    detail = msg.replace("\n", " ").strip()
+    if len(detail) > 100:
+        detail = detail[:97] + "..."
+    return short or "未知错误", detail or "未知错误"
+
+
+def _get_skip_reason(report) -> str:
+    """获取跳过原因"""
+    if hasattr(report, "wasxfail"):
+        detail = report.wasxfail[:100]
+        return f"预期失败|{detail}"
+    return ""
+
+
 def pytest_runtest_logreport(report):
     """收集测试结果并输出分隔线，同时记录到 Allure"""
     global _test_results, _last_test_file, _last_test_func
@@ -563,8 +627,12 @@ def pytest_runtest_logreport(report):
                         _test_results[key] = "PASSED"
                     elif report.failed:
                         _test_results[key] = "FAILED"
+                        _failure_reasons[key] = _extract_failure_reason(report)
                     else:
                         _test_results[key] = "SKIPPED"
+                        skip_reason = _get_skip_reason(report)
+                        if skip_reason:
+                            _failure_reasons[key] = skip_reason
                     matched = True
                     break
             if matched:
@@ -653,7 +721,12 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     generator = TestReportGenerator("test_reports", config=cfg)
     filepath = generator.generate(
-        model, _test_results, test_date, test_time, chip_name=chip_name
+        model,
+        _test_results,
+        test_date,
+        test_time,
+        chip_name=chip_name,
+        failure_reasons=_failure_reasons,
     )
 
     # 生成 Allure 汇总报告
@@ -671,6 +744,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             config.getoption("--pd-mode", default=None),
             config.getoption("--tester", default=None),
             cfg,
+            failure_reasons=_failure_reasons,
         )
     except Exception as e:
         terminalreporter.write_line(f"Allure 汇总报告生成失败: {e}")

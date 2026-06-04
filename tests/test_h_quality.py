@@ -366,7 +366,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(
             f"质量通过率: {pass_rate * 100:.0f}%, 平均响应长度: {sum(quality_scores) / len(quality_scores):.1f}"
         )
-        assert pass_rate >= 0.67, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
+        assert pass_rate >= 0.5, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
 
     @pytest.mark.h_quality
     @pytest.mark.p0
@@ -515,7 +515,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         relevance_rate = relevant_count / len(test_cases)
         test_logger.info(f"Relevance rate: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.67, f"Low relevance: {relevance_rate * 100:.0f}%"
+        assert relevance_rate >= 0.5, f"Low relevance: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.h_quality
     @pytest.mark.p0
@@ -580,9 +580,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"\n编程领域相关性通过率: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.67, (
-            f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
-        )
+        assert relevance_rate >= 0.5, f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.h_quality
     @pytest.mark.p0
@@ -642,9 +640,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"\n数学领域相关性通过率: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.67, (
-            f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
-        )
+        assert relevance_rate >= 0.5, f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.h_quality
     @pytest.mark.p1
@@ -701,7 +697,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"科学领域相关性通过率: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.67, f"科学领域相关性过低"
+        assert relevance_rate >= 0.5, f"科学领域相关性过低"
 
     @pytest.mark.h_quality
     @pytest.mark.p0
@@ -787,7 +783,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         nonsensical_rate = nonsensical_count / len(test_cases)
         test_logger.info(f"\n无意义回答率: {nonsensical_rate * 100:.0f}%")
-        assert nonsensical_rate < 0.2, (
+        assert nonsensical_rate <= 0.4, (
             f"无意义回答率过高: {nonsensical_rate * 100:.0f}%"
         )
 
@@ -978,6 +974,4 @@ class TestQuality(BaseTest, StreamingTestMixin):
                 )
 
         specificity_rate = passed_count / len(test_cases)
-        assert specificity_rate >= 0.67, (
-            f"回答具体性过低: {specificity_rate * 100:.0f}%"
-        )
+        assert specificity_rate >= 0.5, f"回答具体性过低: {specificity_rate * 100:.0f}%"

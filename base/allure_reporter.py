@@ -15,6 +15,14 @@ from typing import Dict, Any, List, Optional
 from base.test_definitions import TEST_CATEGORIES
 
 
+def _split_reason(reason: str):
+    """将 '短摘要|详细描述' 格式拆分为两个部分"""
+    if "|" in reason:
+        parts = reason.split("|", 1)
+        return parts[0], parts[1]
+    return reason, reason
+
+
 class AllureReporter:
     """Allure 报告生成器"""
 
@@ -123,6 +131,7 @@ def generate_allure_summary_report(
     pd_mode: Optional[str] = None,
     tester: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
+    failure_reasons: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     生成 Allure 汇总报告 (Markdown 格式)
@@ -141,6 +150,7 @@ def generate_allure_summary_report(
         报告文件路径
     """
     config = config or {}
+    failure_reasons = failure_reasons or {}
     chip_name = chip_name or get_active_chip(config)
     model_name = model_name or "unknown"
 
@@ -197,35 +207,34 @@ def generate_allure_summary_report(
                 status_icon = "✅"
                 passed_tests += 1
                 category_stats[category_name]["passed"] += 1
+                remark = ""
             elif status == "FAILED":
                 status_icon = "❌"
                 failed_tests += 1
                 category_stats[category_name]["failed"] += 1
-                issue_notes.append((test_idx, test_name, "测试未通过"))
+                reason = failure_reasons.get(key, "测试未通过")
+                remark, detail = _split_reason(reason)
+                issue_notes.append((test_idx, test_name, detail))
             elif status == "PARTIAL":
                 status_icon = "⚠️"
                 partial_tests += 1
                 category_stats[category_name]["partial"] += 1
-                issue_notes.append((test_idx, test_name, "部分用例未通过"))
+                reason = failure_reasons.get(key, "部分用例未通过")
+                remark, detail = _split_reason(reason)
+                issue_notes.append((test_idx, test_name, detail))
             else:
                 status_icon = "⏳"
                 skipped_tests += 1
                 category_stats[category_name]["skipped"] += 1
-                issue_notes.append((test_idx, test_name, "未运行此测试"))
+                reason = failure_reasons.get(key, "未运行此测试")
+                remark, detail = _split_reason(reason)
+                issue_notes.append((test_idx, test_name, detail))
 
             total_tests += 1
             category_stats[category_name]["total"] += 1
 
             if len(test_desc) > 26:
                 test_desc = test_desc[:23] + "..."
-
-            remark = ""
-            if status == "FAILED":
-                remark = "测试未通过"
-            elif status == "PARTIAL":
-                remark = "部分用例未通过"
-            elif status not in ("PASSED", "FAILED", "PARTIAL"):
-                remark = "未运行"
 
             lines.append(
                 f"| {test_idx:2s} | {test_name:10s} | {test_desc:26s} | {status_icon} | {remark} |"
