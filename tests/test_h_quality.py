@@ -342,26 +342,31 @@ class TestQuality(BaseTest, StreamingTestMixin):
         ]
 
         quality_scores = []
-        for prompt in test_cases:
+        for idx, prompt in enumerate(test_cases):
             test_logger.info(f"测试: {prompt}")
             messages = [{"role": "user", "content": prompt}]
             TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, f"质量测试响应")
+            self.log_full_response(test_logger, response, f"H1-生成质量-{idx + 1}")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response)
-            quality_scores.append(len(content))
-            test_logger.info(f"响应长度: {len(content)}")
 
+            min_length = 20
+            passed = len(content.strip()) >= min_length
+            quality_scores.append(passed)
+            test_logger.info(
+                f"响应长度: {len(content)}, 通过: {passed} (最低要求: {min_length})"
+            )
+
+        pass_rate = sum(quality_scores) / len(test_cases)
         test_logger.info(
-            f"平均响应长度: {sum(quality_scores) / len(quality_scores):.1f}"
+            f"质量通过率: {pass_rate * 100:.0f}%, 平均响应长度: {sum(quality_scores) / len(quality_scores):.1f}"
         )
-
-        pass_rate = len(quality_scores) / len(test_cases)
-        assert pass_rate >= 0.5, f"Quality pass rate: {pass_rate}"
-        test_logger.info(f"Quality pass rate: {pass_rate * 100:.0f}%")
+        assert pass_rate >= 0.67, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
 
     @pytest.mark.h_quality
     @pytest.mark.p0
@@ -379,14 +384,28 @@ class TestQuality(BaseTest, StreamingTestMixin):
             response = api_client.chat_completion(
                 messages, max_tokens=2000, temperature=0
             )
+            self.log_full_response(test_logger, response, f"H2-生成一致性-第{i + 1}次")
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response)
             responses.append(content)
             test_logger.info(f"第{i + 1}次响应: {content[:2000]}...")
 
-        assert all(r and len(r) > 0 for r in responses), (
+        assert all(r and len(r.strip()) > 0 for r in responses), (
             "All responses should be non-empty"
         )
-        test_logger.info(f"Consistency test: {len(responses)} responses collected")
+
+        all_have_content = all(len(r.strip()) >= 10 for r in responses)
+        assert all_have_content, (
+            "All responses should have at least 10 chars for consistency check"
+        )
+
+        common_chars = set(responses[0]) & set(responses[1]) & set(responses[2])
+        test_logger.info(
+            f"Consistency test: {len(responses)} responses collected, "
+            f"common chars: {len(common_chars)}, "
+            f"lengths: {[len(r) for r in responses]}"
+        )
 
     @pytest.mark.h_quality
     @pytest.mark.p1
@@ -400,24 +419,29 @@ class TestQuality(BaseTest, StreamingTestMixin):
         ]
 
         hallucination_count = 0
-        for question, expected in test_facts:
+        for idx, (question, expected) in enumerate(test_facts):
             test_logger.info(f"测试问题: {question}")
             messages = [{"role": "user", "content": question}]
             TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "幻觉检测响应")
+            self.log_full_response(test_logger, response, f"H3-幻觉检测-{idx + 1}")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response).lower()
 
-            if expected not in content:
+            if expected.lower() not in content:
                 hallucination_count += 1
+                test_logger.warning(
+                    f"幻觉: 期望包含'{expected}', 实际: {content[:500]}"
+                )
 
         hallucination_rate = hallucination_count / len(test_facts)
         test_logger.info(f"Hallucination rate: {hallucination_rate * 100:.0f}%")
-        assert hallucination_rate < 0.5, (
-            f"High hallucination rate: {hallucination_rate}"
+        assert hallucination_rate < 0.2, (
+            f"Hallucination rate too high: {hallucination_rate * 100:.0f}%"
         )
 
     @pytest.mark.h_quality
@@ -436,19 +460,24 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "指令遵循响应")
+        self.log_full_response(test_logger, response, "H4-指令遵循")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
         content = self.get_message_content(response)
 
         try:
-            import json
+            import json as _json
 
-            data = json.loads(content)
-            assert "name" in data or "age" in data, "Should contain name or age field"
+            data = _json.loads(content)
+            assert "name" in data and "age" in data, (
+                f"JSON should contain both 'name' and 'age' fields, got: {list(data.keys())}"
+            )
             test_logger.info(f"Instruction following test passed, response: {data}")
-        except:
-            assert "name" in content.lower() or "age" in content.lower(), (
-                "Should follow instruction format"
+        except (json.JSONDecodeError, ValueError):
+            content_lower = content.lower()
+            assert "name" in content_lower and "age" in content_lower, (
+                f"Should follow instruction format with both 'name' and 'age', got: {content[:500]}"
             )
             test_logger.info("JSON解析失败但包含关键词")
 
@@ -464,23 +493,29 @@ class TestQuality(BaseTest, StreamingTestMixin):
         ]
 
         relevant_count = 0
-        for prompt, keywords in test_cases:
+        for idx, (prompt, keywords) in enumerate(test_cases):
             test_logger.info(f"测试问题: {prompt}")
             messages = [{"role": "user", "content": prompt}]
             TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "相关性响应")
+            self.log_full_response(test_logger, response, f"H5-回答相关性-{idx + 1}")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response).lower()
 
             if any(kw.lower() in content for kw in keywords):
                 relevant_count += 1
+            else:
+                test_logger.warning(
+                    f"回答不相关: 期望关键词{keywords}, 内容: {content[:500]}"
+                )
 
         relevance_rate = relevant_count / len(test_cases)
         test_logger.info(f"Relevance rate: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.5, f"Low relevance: {relevance_rate}"
+        assert relevance_rate >= 0.67, f"Low relevance: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.h_quality
     @pytest.mark.p0
@@ -517,8 +552,13 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
+            self.log_full_response(test_logger, response, f"H10-无意义检测-{idx + 1}")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+            self.assert_content_not_empty(response)
+            self.assert_content_not_empty(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response)
             test_logger.info(f"回答: {content[:2000]}...")
 
@@ -638,8 +678,10 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "API 响应")
+            self.log_full_response(test_logger, response, f"H8-科学领域-{idx + 1}")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response)
             test_logger.info(f"回答内容: {content}")
 
@@ -777,11 +819,14 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"=== 测试开始: {domain}领域回答相关性 ===")
 
         passed_count = 0
-        for question in questions:
+        for idx, question in enumerate(questions):
             test_logger.info(f"\n问题: {question}")
             messages = [{"role": "user", "content": question}]
+            TestLogger.log_request(test_logger, messages)
             response = api_client.chat_completion(messages, max_tokens=2000)
+            self.log_full_response(test_logger, response, f"H11-{domain}领域-{idx + 1}")
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
             test_logger.info(f"回答: {content[:2000]}...")
@@ -796,7 +841,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
                 f"相关性得分: {result['score']:.2f}, 匹配关键词: {result['matched_keywords']}"
             )
 
-            if result["relevant"] or result["score"] >= 0.1:
+            if result["relevant"]:
                 passed_count += 1
 
         rate = passed_count / len(questions)
@@ -816,7 +861,9 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"第1轮: {q1}")
         messages.append({"role": "user", "content": q1})
         r1 = api_client.chat_completion(messages)
+        self.log_full_response(test_logger, r1, "H12-上下文一致性-第1轮")
         self.assert_response_success(r1)
+        self.assert_content_not_empty(r1)
         c1 = self.get_message_content(r1)
         messages.append({"role": "assistant", "content": c1})
         test_logger.info(f"第1轮回答: {c1[:2000]}...")
@@ -825,7 +872,9 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"第2轮: {q2}")
         messages.append({"role": "user", "content": q2})
         r2 = api_client.chat_completion(messages)
+        self.log_full_response(test_logger, r2, "H12-上下文一致性-第2轮")
         self.assert_response_success(r2)
+        self.assert_content_not_empty(r2)
         c2 = self.get_message_content(r2)
         test_logger.info(f"第2轮回答: {c2[:2000]}...")
 
@@ -837,15 +886,20 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"第3轮: {q3}")
         messages.append({"role": "user", "content": q3})
         r3 = api_client.chat_completion(messages)
+        self.log_full_response(test_logger, r3, "H12-上下文一致性-第3轮")
         self.assert_response_success(r3)
+        self.assert_content_not_empty(r3)
         c3 = self.get_message_content(r3)
         messages.append({"role": "assistant", "content": c3})
+        test_logger.info(f"第3轮回答: {c3[:2000]}...")
 
         q4 = "我刚才说了我喜欢哪两种水果？"
         test_logger.info(f"第4轮: {q4}")
         messages.append({"role": "user", "content": q4})
         r4 = api_client.chat_completion(messages)
+        self.log_full_response(test_logger, r4, "H12-上下文一致性-第4轮")
         self.assert_response_success(r4)
+        self.assert_content_not_empty(r4)
         c4 = self.get_message_content(r4)
         test_logger.info(f"第4轮回答: {c4[:2000]}...")
 
@@ -898,8 +952,10 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
             response = api_client.chat_completion(messages, max_tokens=800)
             TestLogger.log_response(test_logger, response, "API 响应")
+            self.log_full_response(test_logger, response, f"H13-回答具体性-{idx + 1}")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
             test_logger.info(f"回答内容: {content}")

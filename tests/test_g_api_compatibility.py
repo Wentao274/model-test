@@ -15,12 +15,12 @@ G. API 兼容性测试
 import pytest
 from typing import Dict, Any
 
-from base.base_test import BaseTest
+from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
 from base.logger import TestLogger
 
 
-class TestAPICompatibility(BaseTest):
+class TestAPICompatibility(BaseTest, StreamingTestMixin):
     """API兼容性测试类"""
 
     def get_test_category(self) -> str:
@@ -41,10 +41,14 @@ class TestAPICompatibility(BaseTest):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "Chat Completions响应")
+        self.log_full_response(test_logger, response, "G1-ChatCompletions")
 
         # 验证响应格式
         self.assert_response_success(response)
-        test_logger.info("Chat Completions API 兼容")
+        self.assert_content_not_empty(response)
+
+        # 验证id字段
+        assert response.get("id") is not None, "Should have response id"
 
         # 验证必要字段
         message = response["choices"][0]["message"]
@@ -54,8 +58,10 @@ class TestAPICompatibility(BaseTest):
 
         # 验证usage
         usage = response.get("usage", {})
-        assert "prompt_tokens" in usage or "completion_tokens" in usage, (
-            "Should have usage"
+        assert usage, "Should have usage statistics"
+        assert usage.get("prompt_tokens", 0) > 0, "Should have prompt_tokens > 0"
+        assert usage.get("completion_tokens", 0) > 0, (
+            "Should have completion_tokens > 0"
         )
 
         test_logger.info(f"Chat Completions API: OK, usage={usage}")
@@ -72,15 +78,24 @@ class TestAPICompatibility(BaseTest):
 
         try:
             response = api_client.completion(prompt=prompt, max_tokens=100)
+            self.log_full_response(test_logger, response, "G2-Completions")
 
             # 验证响应
             assert response.get("choices") is not None, "Should have choices"
             assert len(response["choices"]) > 0, "Should have at least one choice"
 
             text = response["choices"][0].get("text", "")
-            assert len(text) > 0, "Should have text content"
+            assert len(text.strip()) > 0, (
+                f"Should have non-empty text content, got {len(text)} chars"
+            )
 
-            test_logger.info(f"Completions API: OK, text={text[:100]}")
+            usage = response.get("usage", {})
+            if usage:
+                assert usage.get("completion_tokens", 0) > 0, (
+                    "Should have completion_tokens > 0"
+                )
+
+            test_logger.info(f"Completions API: OK, text={text[:100]}, usage={usage}")
         except Exception as e:
             pytest.skip(f"Completions API not supported: {e}")
 
@@ -92,6 +107,7 @@ class TestAPICompatibility(BaseTest):
         test_logger.info("=== 测试开始: Models List ===")
 
         response = api_client.list_models()
+        self.log_full_response(test_logger, response, "G3-ModelsList")
 
         # 验证响应格式
         assert "data" in response or "object" in response, "Should have valid response"
@@ -104,7 +120,18 @@ class TestAPICompatibility(BaseTest):
             if models:
                 model = models[0]
                 assert "id" in model, "Model should have id"
-                test_logger.info(f"Models list: {len(models)} models found")
+                assert model.get("object") == "model" or "object" in model, (
+                    "Model item should have object field"
+                )
+                test_logger.info(
+                    f"Models list: {len(models)} models found, first: {model.get('id')}"
+                )
+            else:
+                test_logger.warning("Models list is empty")
+        else:
+            test_logger.info(
+                f"Models response has 'object' field: {response.get('object')}"
+            )
 
     @pytest.mark.g_api
     @pytest.mark.p0
@@ -116,6 +143,10 @@ class TestAPICompatibility(BaseTest):
         TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
 
         response = api_client.chat_completion(messages, max_tokens=100)
+        self.log_full_response(test_logger, response, "G4-Usage统计")
+
+        self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         # 验证usage存在
         usage = response.get("usage", {})
@@ -125,6 +156,8 @@ class TestAPICompatibility(BaseTest):
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
         total_tokens = usage.get("total_tokens", 0)
+
+        assert prompt_tokens > 0, "Should have prompt_tokens > 0"
 
         # 验证token计算正确
         if total_tokens > 0:
@@ -157,30 +190,54 @@ class TestAPICompatibility(BaseTest):
                 model_name=api_client.model_name,
             )
             response = invalid_client.chat_completion(messages)
+            self.log_full_response(test_logger, response, "G5-401认证错误")
             if response.get("error"):
                 error = response["error"]
                 test_logger.info(f"401 错误响应: {error}")
                 # 验证错误格式符合 OpenAI 规范
-                assert "code" in error or "type" in error, (
-                    "Error should have code or type"
+                assert "code" in error or "type" in error or "message" in error, (
+                    "Error should have code, type or message"
                 )
-                assert (
-                    error.get("code") in ["invalid_api_key", "authentication_failed"]
-                    or error.get("type") == "authentication_error"
-                    or "401" in str(error)
-                ), "Should be authentication error"
+                error_str = str(error).lower()
+                assert any(
+                    kw in error_str
+                    for kw in [
+                        "401",
+                        "auth",
+                        "invalid_api_key",
+                        "authentication",
+                        "unauthorized",
+                        "permission",
+                    ]
+                ), f"Should be authentication error, got: {error}"
+            else:
+                test_logger.warning("401 test: no error returned for invalid API key")
         except Exception as e:
+            self.log_full_response(
+                test_logger, {"error": str(e)}, "G5-401认证错误(异常)"
+            )
             test_logger.info(f"401 错误（异常）: {e}")
+            error_msg = str(e).lower()
+            assert any(
+                kw in error_msg for kw in ["401", "auth", "unauthorized", "permission"]
+            ), f"Should be authentication error, got: {e}"
 
         # 测试 400 错误（无效请求）
         try:
             # 发送空的content来触发400错误
             invalid_messages = [{"role": "user", "content": ""}]
             response = api_client.chat_completion(invalid_messages, max_tokens=1)
+            self.log_full_response(test_logger, response, "G5-400无效请求")
             if response.get("error"):
                 error = response["error"]
                 test_logger.info(f"400 错误响应: {error}")
+                assert "code" in error or "type" in error or "message" in error, (
+                    "Error should have code, type or message"
+                )
         except Exception as e:
+            self.log_full_response(
+                test_logger, {"error": str(e)}, "G5-400无效请求(异常)"
+            )
             test_logger.info(f"400 错误（异常）: {e}")
 
         test_logger.info("错误码规范测试完成")
@@ -217,6 +274,29 @@ class TestAPICompatibility(BaseTest):
             assert response.choices[0].message.content is not None, (
                 "Should have content"
             )
+            assert len(response.choices[0].message.content.strip()) > 0, (
+                "Content should not be empty"
+            )
+            assert response.choices[0].message.role == "assistant", (
+                "Role should be assistant"
+            )
+
+            # 验证usage
+            if response.usage:
+                assert response.usage.prompt_tokens > 0, "Should have prompt_tokens > 0"
+                assert response.usage.completion_tokens > 0, (
+                    "Should have completion_tokens > 0"
+                )
+
+            self.log_full_response(
+                test_logger,
+                {
+                    "id": response.id,
+                    "model": response.model,
+                    "usage": str(response.usage),
+                },
+                "G6-SDK兼容",
+            )
 
             test_logger.info("客户端 SDK 兼容性测试通过")
         except ImportError:
@@ -234,14 +314,24 @@ class TestAPICompatibility(BaseTest):
         messages = [{"role": "user", "content": "测试"}]
 
         # 测试不同参数组合
-        response1 = api_client.chat_completion(messages, temperature=0.7, max_tokens=100)
+        response1 = api_client.chat_completion(
+            messages, temperature=0.7, max_tokens=100
+        )
         self.assert_response_success(response1)
+        self.assert_content_not_empty(response1)
+        self.log_full_response(test_logger, response1, "G7-temperature=0.7")
 
         response2 = api_client.chat_completion(messages, temperature=0, max_tokens=100)
         self.assert_response_success(response2)
+        self.assert_content_not_empty(response2)
+        self.log_full_response(test_logger, response2, "G7-temperature=0")
 
-        response3 = api_client.chat_completion(messages, temperature=1.0, max_tokens=100)
+        response3 = api_client.chat_completion(
+            messages, temperature=1.0, max_tokens=100
+        )
         self.assert_response_success(response3)
+        self.assert_content_not_empty(response3)
+        self.log_full_response(test_logger, response3, "G7-temperature=1.0")
 
         test_logger.info("Response format variants: OK")
 
@@ -256,7 +346,28 @@ class TestAPICompatibility(BaseTest):
 
         # 流式请求
         response_iter = api_client.chat_completion_stream(messages, max_tokens=100)
-        chunks = list(response_iter)
+        result = self.collect_stream_chunks(response_iter)
 
-        test_logger.info(f"Stream parameter: {len(chunks)} chunks")
-        assert len(chunks) > 0, "Should receive streaming chunks"
+        self.log_full_response(
+            test_logger,
+            {
+                "chunks_count": len(result["chunks"]),
+                "content": result["content"][:2000],
+                "reasoning": result["reasoning"][:2000] if result["reasoning"] else "",
+            },
+            "G8-Stream参数",
+        )
+
+        assert len(result["chunks"]) > 0, "Should receive streaming chunks"
+        assert result["content"] or result["reasoning"], (
+            "Should have non-empty content or reasoning in streaming response"
+        )
+        if result["content"]:
+            assert len(result["content"].strip()) > 0, (
+                "Streaming content should not be empty"
+            )
+        test_logger.info(
+            f"Stream parameter: {len(result['chunks'])} chunks, "
+            f"content length: {len(result['content'])}, "
+            f"reasoning length: {len(result['reasoning'])}"
+        )

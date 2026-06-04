@@ -200,15 +200,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         return "B. 高级生成功能"
 
     @staticmethod
-    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
-        try:
-            full_json = json.dumps(response, ensure_ascii=False, indent=2)
-            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
-        except Exception as e:
-            test_logger.warning(f"序列化完整响应失败: {e}")
-            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
-
-    @staticmethod
     def _strip_thinking_tags(content: str) -> str:
         if not content:
             return content
@@ -263,7 +254,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, extra_body=thinking_params)
         TestLogger.log_response(test_logger, response, "思考模式响应")
-        self._log_full_response(test_logger, response, "B1-思考模式")
+        self.log_full_response(test_logger, response, "B1-思考模式")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -300,7 +291,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, extra_body=thinking_params)
         TestLogger.log_response(test_logger, response, "非思考模式响应")
-        self._log_full_response(test_logger, response, "B2-非思考模式")
+        self.log_full_response(test_logger, response, "B2-非思考模式")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -354,7 +345,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         response1 = api_client.chat_completion(messages, extra_body=thinking_params_on)
         TestLogger.log_response(test_logger, response1, "开启thinking响应")
-        self._log_full_response(test_logger, response1, "B3-开启thinking")
+        self.log_full_response(test_logger, response1, "B3-开启thinking")
 
         self.assert_response_success(response1)
         has_thinking1 = self._check_has_thinking(response1, test_logger)
@@ -373,7 +364,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         response2 = api_client.chat_completion(messages, extra_body=thinking_params_off)
         TestLogger.log_response(test_logger, response2, "关闭thinking响应")
-        self._log_full_response(test_logger, response2, "B3-关闭thinking")
+        self.log_full_response(test_logger, response2, "B3-关闭thinking")
 
         self.assert_response_success(response2)
 
@@ -540,7 +531,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         )
 
         final_response = api_client.chat_completion(messages)
-        self._log_full_response(
+        self.log_full_response(
             test_logger, final_response, f"工具[{function_name}]最终响应"
         )
         final_content = self.get_message_content(final_response)
@@ -597,7 +588,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         final_response = api_client.chat_completion(
             messages, tools=tools, tool_choice="auto"
         )
-        self._log_full_response(test_logger, final_response, "并行工具调用最终响应")
+        self.log_full_response(test_logger, final_response, "并行工具调用最终响应")
         final_content = self.get_message_content(final_response)
         test_logger.info(f"模型最终响应: {final_content}")
         return final_content, final_response
@@ -616,7 +607,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=TOOLS_GET_WEATHER, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response, "单工具调用响应")
-        self._log_full_response(test_logger, response, "B4-单工具调用")
+        self.log_full_response(test_logger, response, "B4-单工具调用")
 
         self.assert_response_success(response)
 
@@ -686,7 +677,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 messages, tools=tools, tool_choice="auto"
             )
             TestLogger.log_response(test_logger, response, f"{desc}工具调用")
-            self._log_full_response(test_logger, response, f"B5-测试{idx}-{desc}")
+            self.log_full_response(test_logger, response, f"B5-测试{idx}-{desc}")
 
             self.assert_response_success(response)
             tool_calls = self.get_tool_calls(response)
@@ -735,7 +726,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=TOOLS_MULTIPLE, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response, "并行工具调用响应")
-        self._log_full_response(test_logger, response, "B6-并行工具调用")
+        self.log_full_response(test_logger, response, "B6-并行工具调用")
 
         self.assert_response_success(response)
         tool_calls = self.get_tool_calls(response)
@@ -846,7 +837,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=tools, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response1, "第1步响应")
-        self._log_full_response(test_logger, response1, "B7-第1步")
+        self.log_full_response(test_logger, response1, "B7-第1步")
 
         tool_calls = self.get_tool_calls(response1)
         if len(tool_calls) == 0:
@@ -880,7 +871,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=tools, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response2, "第2步响应")
-        self._log_full_response(test_logger, response2, "B7-第2步")
+        self.log_full_response(test_logger, response2, "B7-第2步")
 
         tool_calls2 = self.get_tool_calls(response2)
         if len(tool_calls2) == 0:
@@ -922,7 +913,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=tools, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response3, "第3步响应")
-        self._log_full_response(test_logger, response3, "B7-第3步")
+        self.log_full_response(test_logger, response3, "B7-第3步")
 
         tool_calls3 = self.get_tool_calls(response3)
         if len(tool_calls3) == 0:
@@ -980,7 +971,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, response_format={"type": "json_object"}
         )
         TestLogger.log_response(test_logger, response, "JSON Mode响应")
-        self._log_full_response(test_logger, response, "B8-JSON-Mode")
+        self.log_full_response(test_logger, response, "B8-JSON-Mode")
 
         self.assert_response_success(response)
 
@@ -1067,7 +1058,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, response_format={"type": "json_object", "schema": schema}
         )
         TestLogger.log_response(test_logger, response, "结构化输出响应")
-        self._log_full_response(test_logger, response, "B9-结构化输出")
+        self.log_full_response(test_logger, response, "B9-结构化输出")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
@@ -1153,7 +1144,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             raise
 
         TestLogger.log_response(test_logger, response, "Prefix约束响应")
-        self._log_full_response(test_logger, response, "B10-Prefix约束")
+        self.log_full_response(test_logger, response, "B10-Prefix约束")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
@@ -1185,7 +1176,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             raise
 
         TestLogger.log_response(test_logger, response, "Suffix约束响应")
-        self._log_full_response(test_logger, response, "B10-Suffix约束")
+        self.log_full_response(test_logger, response, "B10-Suffix约束")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)

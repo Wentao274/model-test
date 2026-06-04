@@ -139,6 +139,16 @@ class BaseTest(ABC):
         """获取usage信息"""
         return response.get("usage", {})
 
+    @staticmethod
+    def log_full_response(test_logger, response: dict, title: str = "完整响应"):
+        """记录完整响应信息到日志"""
+        try:
+            full_json = json.dumps(response, ensure_ascii=False, indent=2)
+            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
+        except Exception as e:
+            test_logger.warning(f"序列化完整响应失败: {e}")
+            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
+
 
 class StreamingTestMixin:
     """流式测试Mixin"""

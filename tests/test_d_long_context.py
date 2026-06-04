@@ -16,7 +16,6 @@ D. 长上下文处理测试
 - D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
 """
 
-import json
 import pytest
 from typing import List
 
@@ -41,15 +40,6 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "D. 长上下文处理"
 
-    @staticmethod
-    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
-        try:
-            full_json = json.dumps(response, ensure_ascii=False, indent=2)
-            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
-        except Exception as e:
-            test_logger.warning(f"序列化完整响应失败: {e}")
-            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
-
     @pytest.mark.d_long_context
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -63,7 +53,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "短上下文响应")
-        self._log_full_response(test_logger, response, "D1-短上下文基线")
+        self.log_full_response(test_logger, response, "D1-短上下文基线")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -97,7 +87,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "中等上下文响应")
-        self._log_full_response(test_logger, response, "D2-中等上下文")
+        self.log_full_response(test_logger, response, "D2-中等上下文")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -135,7 +125,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "长上下文响应")
-        self._log_full_response(test_logger, response, "D3-长上下文")
+        self.log_full_response(test_logger, response, "D3-长上下文")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -173,7 +163,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         try:
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "超长上下文响应")
-            self._log_full_response(test_logger, response, "D4-超长上下文")
+            self.log_full_response(test_logger, response, "D4-超长上下文")
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
 
@@ -219,7 +209,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "大海捞针响应")
-        self._log_full_response(test_logger, response, "D5-大海捞针")
+        self.log_full_response(test_logger, response, "D5-大海捞针")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -262,7 +252,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "边界响应")
-            self._log_full_response(test_logger, response, "D6-上下文边界行为")
+            self.log_full_response(test_logger, response, "D6-上下文边界行为")
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -295,7 +285,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         try:
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "截断响应")
-            self._log_full_response(test_logger, response, "D7-上下文截断")
+            self.log_full_response(test_logger, response, "D7-上下文截断")
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -334,7 +324,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=4000)
         TestLogger.log_response(test_logger, response, "长输出响应")
-        self._log_full_response(test_logger, response, "D8-长输出生成")
+        self.log_full_response(test_logger, response, "D8-长输出生成")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -375,7 +365,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             TestLogger.log_response(test_logger, response, "超长上下文响应")
 
             self.assert_response_success(response)
-            self._log_full_response(test_logger, response, "D9-超长上下文(非流式)")
+            self.log_full_response(test_logger, response, "D9-超长上下文(非流式)")
 
             reasoning = self.get_reasoning_content(response)
             content = self.get_message_content(response)
@@ -424,7 +414,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
             result = self.collect_stream_chunks(response_iter)
 
-            self._log_full_response(
+            self.log_full_response(
                 test_logger,
                 {
                     "chunks_count": len(result["chunks"]),
@@ -507,7 +497,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
                     try:
                         response = api_client.chat_completion(messages, max_tokens=2000)
-                        self._log_full_response(
+                        self.log_full_response(
                             test_logger,
                             response,
                             f"D11-边界二分法-迭代{iteration + 1}-长度{mid}",
@@ -582,7 +572,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             max_tokens=2000,
         )
         TestLogger.log_response(test_logger, response, "长上下文+思考响应")
-        self._log_full_response(test_logger, response, "D12-长上下文+思考模式")
+        self.log_full_response(test_logger, response, "D12-长上下文+思考模式")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)

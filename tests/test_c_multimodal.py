@@ -93,15 +93,6 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
     def get_test_category(self) -> str:
         return "C. 多模态能力"
 
-    @staticmethod
-    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
-        try:
-            full_json = json.dumps(response, ensure_ascii=False, indent=2)
-            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
-        except Exception as e:
-            test_logger.warning(f"序列化完整响应失败: {e}")
-            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
-
     @pytest.mark.c_multimodal
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -135,7 +126,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "单图理解响应")
-        self._log_full_response(test_logger, response, "C1-红色图理解")
+        self.log_full_response(test_logger, response, "C1-红色图理解")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -179,7 +170,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
             response = api_client.chat_completion(messages)
             TestLogger.log_response(test_logger, response, "实际图片理解响应")
-            self._log_full_response(test_logger, response, "C1-实际图片理解")
+            self.log_full_response(test_logger, response, "C1-实际图片理解")
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -230,7 +221,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "多图对比响应")
-        self._log_full_response(test_logger, response, "C2-多图对比")
+        self.log_full_response(test_logger, response, "C2-多图对比")
 
         if response.get("error"):
             pytest.skip(f"Model does not support multi-image: {response.get('error')}")
@@ -287,7 +278,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 4K高分辨率图片")
 
         response = api_client.chat_completion(messages)
-        self._log_full_response(test_logger, response, "C3-4K生成图")
+        self.log_full_response(test_logger, response, "C3-4K生成图")
 
         if response.get("error"):
             pytest.skip(f"Model does not support high-res images: {response['error']}")
@@ -337,7 +328,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.info("请求: 真实高清图片理解")
 
             response = api_client.chat_completion(messages)
-            self._log_full_response(test_logger, response, "C3-真实高清图")
+            self.log_full_response(test_logger, response, "C3-真实高清图")
 
             if response.get("error"):
                 pytest.skip(
@@ -388,7 +379,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: OCR识别")
 
         response = api_client.chat_completion(messages)
-        self._log_full_response(test_logger, response, "C4-生成文字OCR")
+        self.log_full_response(test_logger, response, "C4-生成文字OCR")
 
         if response.get("error"):
             pytest.skip(f"Model does not support OCR: {response.get('error')}")
@@ -438,7 +429,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 真实表格OCR识别")
 
         response = api_client.chat_completion(messages)
-        self._log_full_response(test_logger, response, "C4-真实表格OCR")
+        self.log_full_response(test_logger, response, "C4-真实表格OCR")
 
         if response.get("error"):
             pytest.skip(
@@ -490,7 +481,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 视频理解")
 
         response = api_client.chat_completion(messages)
-        self._log_full_response(test_logger, response, "C5-视频理解")
+        self.log_full_response(test_logger, response, "C5-视频理解")
 
         if response.get("error"):
             pytest.skip(
@@ -549,7 +540,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.info("请求: 识别Flask代码截图")
 
             response = api_client.chat_completion(messages)
-            self._log_full_response(test_logger, response, "C6-Flask代码识别")
+            self.log_full_response(test_logger, response, "C6-Flask代码识别")
 
             if response.get("error"):
                 pytest.skip(
@@ -604,7 +595,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.info("请求: UI设计图生成登录代码")
 
             response = api_client.chat_completion(messages)
-            self._log_full_response(test_logger, response, "C6-UI登录代码")
+            self.log_full_response(test_logger, response, "C6-UI登录代码")
 
             if response.get("error"):
                 pytest.skip(
@@ -734,7 +725,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 多模态工具调用")
 
         response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
-        self._log_full_response(test_logger, response, "C7-多模态工具调用")
+        self.log_full_response(test_logger, response, "C7-多模态工具调用")
 
         if response.get("error"):
             pytest.skip(
@@ -827,7 +818,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info(f"请求: {format}格式图片")
 
         response = api_client.chat_completion(messages)
-        self._log_full_response(test_logger, response, f"C8-{format}格式")
+        self.log_full_response(test_logger, response, f"C8-{format}格式")
 
         if response.get("error"):
             pytest.skip(

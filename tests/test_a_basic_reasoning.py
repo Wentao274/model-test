@@ -16,7 +16,6 @@ A. 基础推理能力测试
 - A12: 特殊Token处理 - 含emoji、代码块、数学符号、HTML标签的输入
 """
 
-import json
 import re
 import pytest
 from difflib import SequenceMatcher
@@ -33,16 +32,6 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "A. 基础推理能力"
 
-    @staticmethod
-    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
-        """记录完整响应信息到日志（INFO级别，不截断）"""
-        try:
-            full_json = json.dumps(response, ensure_ascii=False, indent=2)
-            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
-        except Exception as e:
-            test_logger.warning(f"序列化完整响应失败: {e}")
-            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
-
     @pytest.mark.a_basic
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -55,7 +44,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "单轮对话响应")
-        self._log_full_response(test_logger, response, "A1-单轮对话")
+        self.log_full_response(test_logger, response, "A1-单轮对话")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -93,7 +82,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response1 = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response1, "第1轮响应")
-        self._log_full_response(test_logger, response1, "A2-第1轮")
+        self.log_full_response(test_logger, response1, "A2-第1轮")
 
         self.assert_response_success(response1, "First round")
         messages.append(response1["choices"][0]["message"])
@@ -105,7 +94,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response2 = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response2, "第2轮响应")
-        self._log_full_response(test_logger, response2, "A2-第2轮")
+        self.log_full_response(test_logger, response2, "A2-第2轮")
 
         self.assert_response_success(response2, "Second round")
         content2 = self.get_message_content(response2)
@@ -121,7 +110,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         messages.append({"role": "user", "content": "那我喜欢的水果是什么呢？"})
         response3 = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response3, "第3轮响应")
-        self._log_full_response(test_logger, response3, "A2-第3轮")
+        self.log_full_response(test_logger, response3, "A2-第3轮")
 
         self.assert_response_success(response3, "Third round")
         content3 = self.get_message_content(response3)
@@ -133,7 +122,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         messages.append({"role": "user", "content": "我居住的城市是上海"})
         response4 = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response4, "第4轮响应")
-        self._log_full_response(test_logger, response4, "A2-第4轮")
+        self.log_full_response(test_logger, response4, "A2-第4轮")
 
         self.assert_response_success(response4, "Fourth round")
         messages.append(response4["choices"][0]["message"])
@@ -143,7 +132,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         messages.append({"role": "user", "content": "请总结一下我们刚才谈论的所有内容"})
         response5 = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response5, "第5轮响应")
-        self._log_full_response(test_logger, response5, "A2-第5轮")
+        self.log_full_response(test_logger, response5, "A2-第5轮")
 
         self.assert_response_success(response5, "Fifth round")
         content5 = self.get_message_content(response5)
@@ -173,7 +162,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "System Prompt响应")
-        self._log_full_response(test_logger, response, "A3-SystemPrompt")
+        self.log_full_response(test_logger, response, "A3-SystemPrompt")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -202,7 +191,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         test_logger.info("验证模型在偏离角色的问题上仍保持角色设定")
         response_deviate = api_client.chat_completion(messages)
-        self._log_full_response(test_logger, response_deviate, "A3-角色偏离测试")
+        self.log_full_response(test_logger, response_deviate, "A3-角色偏离测试")
 
         self.assert_response_success(response_deviate)
         content_deviate = self.get_message_content(response_deviate)
@@ -274,7 +263,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, stream=False)
         TestLogger.log_response(test_logger, response, "非流式响应")
-        self._log_full_response(test_logger, response, "A5-非流式输出")
+        self.log_full_response(test_logger, response, "A5-非流式输出")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -314,7 +303,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("temp=0: 确定性输出")
         response0 = api_client.chat_completion(messages, temperature=0.0)
         TestLogger.log_response(test_logger, response0, "temp=0第一次响应")
-        self._log_full_response(test_logger, response0, "A6-temp=0-第1次")
+        self.log_full_response(test_logger, response0, "A6-temp=0-第1次")
 
         self.assert_response_success(response0)
         content0 = self.get_message_content(response0)
@@ -324,7 +313,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("temp=1.0: 多样性第一次输出")
         response1 = api_client.chat_completion(messages, temperature=1.0)
         TestLogger.log_response(test_logger, response1, "temp=1.0第一次响应")
-        self._log_full_response(test_logger, response1, "A6-temp=1.0-第1次")
+        self.log_full_response(test_logger, response1, "A6-temp=1.0-第1次")
 
         self.assert_response_success(response1)
         content1 = self.get_message_content(response1)
@@ -334,7 +323,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("验证temp=0的确定性：再次调用相同prompt")
         response0_repeat = api_client.chat_completion(messages, temperature=0.0)
         TestLogger.log_response(test_logger, response0_repeat, "temp=0第二次响应")
-        self._log_full_response(test_logger, response0_repeat, "A6-temp=0-第2次")
+        self.log_full_response(test_logger, response0_repeat, "A6-temp=0-第2次")
 
         self.assert_response_success(response0_repeat)
         content0_repeat = self.get_message_content(response0_repeat)
@@ -351,7 +340,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("temp=1.0: 多样性第二次输出")
         response1_repeat = api_client.chat_completion(messages, temperature=1.0)
         TestLogger.log_response(test_logger, response1_repeat, "temp=1.0第二次响应")
-        self._log_full_response(test_logger, response1_repeat, "A6-temp=1.0-第2次")
+        self.log_full_response(test_logger, response1_repeat, "A6-temp=1.0-第2次")
 
         self.assert_response_success(response1_repeat)
         content1_repeat = self.get_message_content(response1_repeat)
@@ -400,7 +389,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         TestLogger.log_response(
             test_logger, response, f"{param_type}={param_value}响应"
         )
-        self._log_full_response(test_logger, response, f"A7-{param_type}={param_value}")
+        self.log_full_response(test_logger, response, f"A7-{param_type}={param_value}")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
@@ -429,7 +418,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=max_tokens)
         TestLogger.log_response(test_logger, response, f"max_tokens={max_tokens}响应")
-        self._log_full_response(test_logger, response, f"A8-max_tokens={max_tokens}")
+        self.log_full_response(test_logger, response, f"A8-max_tokens={max_tokens}")
 
         self.assert_response_success(response)
         self.assert_max_tokens_limit(response, max_tokens)
@@ -463,7 +452,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, stop=["苹果", "香蕉"])
         TestLogger.log_response(test_logger, response, "Stop Sequences响应")
-        self._log_full_response(test_logger, response, "A9-StopSequences")
+        self.log_full_response(test_logger, response, "A9-StopSequences")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
@@ -494,7 +483,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("第一次调用 (seed=42, temp=0)")
         response1 = api_client.chat_completion(messages, temperature=0.0, seed=42)
         TestLogger.log_response(test_logger, response1, "第一次响应")
-        self._log_full_response(test_logger, response1, "A10-Seed-第1次")
+        self.log_full_response(test_logger, response1, "A10-Seed-第1次")
 
         self.assert_response_success(response1)
         content1 = self.get_message_content(response1)
@@ -504,7 +493,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         test_logger.info("第二次调用 (seed=42, temp=0)")
         response2 = api_client.chat_completion(messages, temperature=0.0, seed=42)
         TestLogger.log_response(test_logger, response2, "第二次响应")
-        self._log_full_response(test_logger, response2, "A10-Seed-第2次")
+        self.log_full_response(test_logger, response2, "A10-Seed-第2次")
 
         self.assert_response_success(response2)
         content2 = self.get_message_content(response2)
@@ -559,7 +548,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, f"{lang}语言响应")
-        self._log_full_response(test_logger, response, f"A11-多语言-{lang}")
+        self.log_full_response(test_logger, response, f"A11-多语言-{lang}")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -614,7 +603,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, f"{test_type}响应")
-        self._log_full_response(test_logger, response, f"A12-特殊Token-{test_type}")
+        self.log_full_response(test_logger, response, f"A12-特殊Token-{test_type}")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
