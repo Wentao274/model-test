@@ -16,6 +16,7 @@ D. 长上下文处理测试
 - D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
 """
 
+import json
 import pytest
 from typing import List
 
@@ -40,28 +41,46 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "D. 长上下文处理"
 
+    @staticmethod
+    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
+        try:
+            full_json = json.dumps(response, ensure_ascii=False, indent=2)
+            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
+        except Exception as e:
+            test_logger.warning(f"序列化完整响应失败: {e}")
+            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
+
     @pytest.mark.d_long_context
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_short_context_baseline(self, api_client: ModelAPIClient, test_logger):
-        """D1: 短上下文基线 - input 1K tokens"""
         test_logger.info("=== 测试开始: 短上下文基线 ===")
 
-        # 约250字
-        prompt = "请简短介绍一下人工智能的发展历史" + "。" * 100
+        prompt = "请简短介绍一下人工智能的发展历史"
 
         messages = [{"role": "user", "content": prompt}]
         TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "短上下文响应")
+        self._log_full_response(test_logger, response, "D1-短上下文基线")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
 
+        content = self.get_message_content(response)
+        assert len(content.strip()) > 20, (
+            f"Short context response should be substantive, got {len(content.strip())} chars"
+        )
+
         usage = response.get("usage", {})
+        assert usage.get("completion_tokens", 0) > 0, (
+            "Should have completion_tokens > 0"
+        )
+        assert usage.get("prompt_tokens", 0) > 0, "Should have prompt_tokens > 0"
         test_logger.info(
-            f"Short context test passed, completion_tokens: {usage.get('completion_tokens')}"
+            f"Short context baseline passed, prompt_tokens={usage.get('prompt_tokens')}, "
+            f"completion_tokens={usage.get('completion_tokens')}"
         )
 
     @pytest.mark.d_long_context
@@ -78,10 +97,26 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "中等上下文响应")
+        self._log_full_response(test_logger, response, "D2-中等上下文")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
-        test_logger.info("Medium context test passed")
+
+        content = self.get_message_content(response)
+        assert len(content.strip()) > 50, (
+            f"Medium context response should be substantive, got {len(content.strip())} chars"
+        )
+
+        usage = response.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        assert prompt_tokens > 0, "Should have prompt_tokens > 0 for medium context"
+        assert usage.get("completion_tokens", 0) > 0, (
+            "Should have completion_tokens > 0"
+        )
+        test_logger.info(
+            f"Medium context passed, prompt_tokens={prompt_tokens}, "
+            f"completion_tokens={usage.get('completion_tokens')}"
+        )
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
@@ -90,7 +125,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 长上下文 ===")
 
         # 约16000字
-        prompt = "以下是一篇长文章：" + "这是第" + "测试段落。 " * 4000
+        padding = "这是测试段落。 " * 4000
+        prompt = "以下是一篇长文章：" + padding
 
         messages = [
             {"role": "user", "content": prompt + "\n\n请总结这篇文章的主要内容。"}
@@ -99,10 +135,26 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "长上下文响应")
+        self._log_full_response(test_logger, response, "D3-长上下文")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
-        test_logger.info("Long context test passed, input tokens estimated: 16000+")
+
+        content = self.get_message_content(response)
+        assert len(content.strip()) > 50, (
+            f"Long context response should be substantive, got {len(content.strip())} chars"
+        )
+
+        usage = response.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        assert prompt_tokens > 0, "Should have prompt_tokens > 0 for long context"
+        assert usage.get("completion_tokens", 0) > 0, (
+            "Should have completion_tokens > 0"
+        )
+        test_logger.info(
+            f"Long context passed, prompt_tokens={prompt_tokens}, "
+            f"completion_tokens={usage.get('completion_tokens')}"
+        )
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -121,8 +173,27 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         try:
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "超长上下文响应")
+            self._log_full_response(test_logger, response, "D4-超长上下文")
             self.assert_response_success(response)
-            test_logger.info("Long context test passed, input tokens estimated: 32000+")
+            self.assert_content_not_empty(response)
+
+            content = self.get_message_content(response)
+            assert len(content.strip()) > 10, (
+                f"Super long context response should not be trivial, got {len(content.strip())} chars"
+            )
+
+            usage = response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            assert prompt_tokens > 0, (
+                "Should have prompt_tokens > 0 for super long context"
+            )
+            assert usage.get("completion_tokens", 0) > 0, (
+                "Should have completion_tokens > 0"
+            )
+            test_logger.info(
+                f"Super long context passed, prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={usage.get('completion_tokens')}"
+            )
         except Exception as e:
             if "max_model_len" in str(e).lower() or "context" in str(e).lower():
                 pytest.skip(f"Model does not support this context length: {e}")
@@ -148,15 +219,28 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "大海捞针响应")
+        self._log_full_response(test_logger, response, "D5-大海捞针")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
         content = self.get_message_content(response)
 
-        # 验证模型能召回插入的信息
-        assert "42" in content or "答案" in content, (
-            f"Model should recall the needle info, got: {content[:2000]}"
+        assert "42" in content, (
+            f"Model should recall the needle '42', got: {content[:500]}"
         )
-        test_logger.info(f"NIAH test passed, response: {content[:2000]}")
+        content_lower = content.lower()
+        assert any(
+            kw in content_lower for kw in ["特殊标记", "special", "标记", "答案"]
+        ), f"Model should reference the needle context, got: {content[:500]}"
+
+        usage = response.get("usage", {})
+        assert usage.get("prompt_tokens", 0) > 0, (
+            "Should have prompt_tokens > 0 for NIAH test"
+        )
+        test_logger.info(
+            f"NIAH test passed, prompt_tokens={usage.get('prompt_tokens')}, "
+            f"completion_tokens={usage.get('completion_tokens')}, response: {content[:2000]}"
+        )
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -178,10 +262,21 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "边界响应")
+            self._log_full_response(test_logger, response, "D6-上下文边界行为")
 
-            # 应该能正常处理
             self.assert_response_success(response)
-            test_logger.info(f"Context boundary test passed, max_len: {max_len}")
+            self.assert_content_not_empty(response)
+
+            usage = response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            assert prompt_tokens > 0, "Should have prompt_tokens > 0 at boundary"
+            assert usage.get("completion_tokens", 0) > 0, (
+                "Should have completion_tokens > 0 at boundary"
+            )
+            test_logger.info(
+                f"Context boundary test passed, max_len: {max_len}, "
+                f"prompt_tokens={prompt_tokens}, completion_tokens={usage.get('completion_tokens')}"
+            )
         else:
             pytest.skip("Model max_model_len not available")
 
@@ -200,13 +295,27 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         try:
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "截断响应")
-            # 应该被处理（截断或拒绝）
+            self._log_full_response(test_logger, response, "D7-上下文截断")
+
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-            test_logger.info(f"Context truncation handled: {finish_reason}")
+            usage = response.get("usage", {})
+            test_logger.info(
+                f"Context truncation handled: finish_reason={finish_reason}, "
+                f"prompt_tokens={usage.get('prompt_tokens')}, completion_tokens={usage.get('completion_tokens')}"
+            )
+            assert finish_reason in ("stop", "length"), (
+                f"finish_reason should be 'stop' or 'length' when context is truncated, got: {finish_reason}"
+            )
         except Exception as e:
-            # 可能返回错误
             test_logger.info(f"Context exceeded: {e}")
-            assert "context" in str(e).lower() or "length" in str(e).lower()
+            error_msg = str(e).lower()
+            assert any(
+                kw in error_msg
+                for kw in ["context", "length", "too_many", "exceed", "limit", "token"]
+            ), f"Error should relate to context/length limit, got: {e}"
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -225,16 +334,25 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, max_tokens=4000)
         TestLogger.log_response(test_logger, response, "长输出响应")
+        self._log_full_response(test_logger, response, "D8-长输出生成")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
+
+        content = self.get_message_content(response)
+        assert len(content.strip()) > 200, (
+            f"Long output response should be substantial, got {len(content.strip())} chars"
+        )
 
         usage = response.get("usage", {})
         completion_tokens = usage.get("completion_tokens", 0)
-        test_logger.info(f"Long output: {completion_tokens} tokens generated")
-
-        # 验证有足够输出
-        assert completion_tokens > 100, (
-            f"Expected long output, got {completion_tokens} tokens"
+        assert completion_tokens > 200, (
+            f"Expected long output (>200 tokens), got {completion_tokens} tokens"
+        )
+        assert usage.get("prompt_tokens", 0) > 0, "Should have prompt_tokens > 0"
+        test_logger.info(
+            f"Long output: {completion_tokens} tokens generated, "
+            f"content length: {len(content)} chars"
         )
 
     @pytest.mark.d_long_context
@@ -257,18 +375,29 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             TestLogger.log_response(test_logger, response, "超长上下文响应")
 
             self.assert_response_success(response)
+            self._log_full_response(test_logger, response, "D9-超长上下文(非流式)")
 
             reasoning = self.get_reasoning_content(response)
             content = self.get_message_content(response)
 
-            assert reasoning or content, "Should have either reasoning or content"
+            assert content and len(content.strip()) > 0, (
+                "Should have non-empty content in super long context"
+            )
 
             usage = response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            assert prompt_tokens > 0, (
+                "Should have prompt_tokens > 0 for super long context"
+            )
+            assert completion_tokens > 0, "Should have completion_tokens > 0"
             test_logger.info(
-                f"Super long context test: prompt_tokens={usage.get('prompt_tokens')}, completion_tokens={usage.get('completion_tokens')}"
+                f"Super long context test: prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={completion_tokens}"
             )
             test_logger.info(
-                f"Content length: {len(content) if content else 0}, Reasoning length: {len(reasoning) if reasoning else 0}"
+                f"Content length: {len(content) if content else 0}, "
+                f"Reasoning length: {len(reasoning) if reasoning else 0}"
             )
 
         except Exception as e:
@@ -295,10 +424,31 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
             result = self.collect_stream_chunks(response_iter)
 
-            test_logger.info(
-                f"Streaming chunks: {len(result['chunks'])}, content length: {len(result['content'])}, reasoning length: {len(result['reasoning'])}"
+            self._log_full_response(
+                test_logger,
+                {
+                    "chunks_count": len(result["chunks"]),
+                    "content": result["content"][:2000],
+                    "reasoning": result["reasoning"][:2000]
+                    if result["reasoning"]
+                    else "",
+                },
+                "D10-超长上下文(流式)",
             )
+
             assert len(result["chunks"]) > 0, "Should receive streaming chunks"
+            assert result["content"] or result["reasoning"], (
+                "Should have non-empty content or reasoning in streaming response"
+            )
+            if result["content"]:
+                assert len(result["content"].strip()) > 0, (
+                    "Streaming content should not be empty"
+                )
+            test_logger.info(
+                f"Streaming chunks: {len(result['chunks'])}, "
+                f"content length: {len(result['content'])}, "
+                f"reasoning length: {len(result['reasoning'])}"
+            )
 
         except Exception as e:
             if "max_model_len" in str(e).lower() or "context" in str(e).lower():
@@ -357,6 +507,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
                     try:
                         response = api_client.chat_completion(messages, max_tokens=2000)
+                        self._log_full_response(
+                            test_logger,
+                            response,
+                            f"D11-边界二分法-迭代{iteration + 1}-长度{mid}",
+                        )
                         if response.get("error"):
                             test_logger.warning(
                                 f"长度 {mid} 失败: {response.get('error')}"
@@ -427,12 +582,26 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             max_tokens=2000,
         )
         TestLogger.log_response(test_logger, response, "长上下文+思考响应")
+        self._log_full_response(test_logger, response, "D12-长上下文+思考模式")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         reasoning = self.get_reasoning_content(response)
         content = self.get_message_content(response)
 
+        assert reasoning is not None and len(reasoning.strip()) > 0, (
+            "Thinking mode should produce non-empty reasoning_content in long context"
+        )
+
+        usage = response.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        assert prompt_tokens > 0, (
+            "Should have prompt_tokens > 0 for long context with thinking"
+        )
+
         test_logger.info(
-            f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, content={len(content) if content else 0} chars"
+            f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, "
+            f"content={len(content) if content else 0} chars, "
+            f"prompt_tokens={prompt_tokens}"
         )

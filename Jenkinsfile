@@ -8,11 +8,11 @@ pipeline {
         string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称')
         string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称')
         string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080/v1', description: 'API 地址')
-        password(name: 'API_KEY', defaultValue: '', description: 'API Key (必填)')
+        password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
-        string(name: 'MARKER', defaultValue: 'j_response_quality', description: '测试标记 (p0, p1, smoke 等)，输入all或为空表示执行所有用例')
-        string(name: 'WORK_DIR', defaultValue: '/root/liwt/maas-image/model-test', description: '宿主机测试目录')
+        string(name: 'MARKER', defaultValue: 'p0', description: '测试标记 (p0, p1, smoke 等)，输入all或为空表示执行所有用例')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '邮件接收者（逗号分隔）')
+        string(name: 'WORK_DIR', defaultValue: '/dingofs/data1/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
     }
 
     environment {
@@ -60,6 +60,7 @@ ENDSSH"""
         stage('运行测试') {
             steps {
                 script {
+                    def apiKey = params.API_KEY ? params.API_KEY.toString().trim() : ''
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """
@@ -84,7 +85,7 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
     if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
         pytest -v \\
             --base-url "${params.BASE_URL}" \\
-            --api-key "${params.API_KEY}" \\
+            --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
             --infra "${params.INFRA}" \\
@@ -96,7 +97,7 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
     else
         pytest -v -m "${params.MARKER}" \\
             --base-url "${params.BASE_URL}" \\
-            --api-key "${params.API_KEY}" \\
+            --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
             --infra "${params.INFRA}" \\
@@ -110,7 +111,7 @@ else
     if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
         pytest -v \\
             --base-url "${params.BASE_URL}" \\
-            --api-key "${params.API_KEY}" \\
+            --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
             --infra "${params.INFRA}" \\
@@ -122,7 +123,7 @@ else
     else
         pytest -v -m "${params.MARKER}" \\
             --base-url "${params.BASE_URL}" \\
-            --api-key "${params.API_KEY}" \\
+            --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
             --infra "${params.INFRA}" \\

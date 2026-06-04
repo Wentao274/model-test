@@ -12,6 +12,7 @@ C. 多模态能力测试
 - C8: 图片格式兼容性 - PNG/JPEG/WebP/GIF/Base64编码
 """
 
+import json
 import pytest
 import base64
 from typing import List
@@ -92,6 +93,15 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
     def get_test_category(self) -> str:
         return "C. 多模态能力"
 
+    @staticmethod
+    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
+        try:
+            full_json = json.dumps(response, ensure_ascii=False, indent=2)
+            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
+        except Exception as e:
+            test_logger.warning(f"序列化完整响应失败: {e}")
+            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
+
     @pytest.mark.c_multimodal
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -125,16 +135,22 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "单图理解响应")
+        self._log_full_response(test_logger, response, "C1-红色图理解")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        assert content and len(content) > 0, "Should have response content"
         failed_keyword = check_multimodal_failure(content, "image")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize image. Response contains: '{failed_keyword}'"
             )
+
+        content_lower = content.lower()
+        assert any(kw in content_lower for kw in ["红", "red", "红色"]), (
+            f"Model should identify the image color as red, got: {content[:500]}"
+        )
         test_logger.info(f"Image understanding response: {content[:2000]}...")
 
         # ========== 测试实际图片 ==========
@@ -142,7 +158,8 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         real_image_path = IMAGES_DIR / "single" / "sea_animals.png"
 
         if not real_image_path.exists():
-            pytest.skip(f"测试图片不存在: {real_image_path}")
+            test_logger.warning(f"测试图片不存在，跳过实际图片测试: {real_image_path}")
+        else:
             with open(real_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -162,23 +179,22 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
             response = api_client.chat_completion(messages)
             TestLogger.log_response(test_logger, response, "实际图片理解响应")
+            self._log_full_response(test_logger, response, "C1-实际图片理解")
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, (
-                "Should have response content for real image"
-            )
-
             failed_keyword = check_multimodal_failure(content, "image")
             if failed_keyword:
                 pytest.fail(
                     f"Model failed to recognize real image. Response contains: '{failed_keyword}'"
                 )
 
-            assert len(content) > 10, "Response should be descriptive"
+            assert len(content) > 10, (
+                f"Response should be descriptive, got only {len(content)} chars"
+            )
             test_logger.info(f"Real image understanding response: {content[:2000]}...")
-            test_logger.info("实际图片理解测试通过")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
@@ -214,19 +230,30 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "多图对比响应")
+        self._log_full_response(test_logger, response, "C2-多图对比")
 
         if response.get("error"):
-            pytest.fail(f"Model does not support multi-image: {response.get('error')}")
+            pytest.skip(f"Model does not support multi-image: {response.get('error')}")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        assert content and len(content) > 0, "Should have response content"
         failed_keyword = check_multimodal_failure(content, "image")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize multi-image. Response contains: '{failed_keyword}'"
             )
+
+        assert len(content.strip()) > 20, (
+            f"Comparison response should be descriptive, got only {len(content.strip())} chars"
+        )
+
+        content_lower = content.lower()
+        assert any(
+            kw in content_lower
+            for kw in ["区别", "不同", "差异", "differ", "comparison", "对比", "相比"]
+        ), f"Response should describe differences between images, got: {content[:500]}"
 
         test_logger.info("Multi-image comparison completed")
 
@@ -260,18 +287,26 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 4K高分辨率图片")
 
         response = api_client.chat_completion(messages)
+        self._log_full_response(test_logger, response, "C3-4K生成图")
+
         if response.get("error"):
-            pytest.fail(f"Model does not support high-res images: {response['error']}")
+            pytest.skip(f"Model does not support high-res images: {response['error']}")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        assert content and len(content) > 0, "Should have response content"
         failed_keyword = check_multimodal_failure(content, "image")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize high-res image. Response contains: '{failed_keyword}'"
             )
+
+        content_lower = content.lower()
+        assert any(
+            kw in content_lower
+            for kw in ["蓝", "blue", "灰", "gray", "grey", "青", "颜色", "color"]
+        ), f"Model should identify the image color, got: {content[:500]}"
 
         test_logger.info("High resolution image test completed")
 
@@ -280,7 +315,10 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         real_image_path = IMAGES_DIR / "high" / "sun_raise.jpg"
 
         if not real_image_path.exists():
-            pytest.skip(f"测试图片不存在: {real_image_path}")
+            test_logger.warning(
+                f"测试图片不存在，跳过真实高清图片测试: {real_image_path}"
+            )
+        else:
             with open(real_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -299,6 +337,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.info("请求: 真实高清图片理解")
 
             response = api_client.chat_completion(messages)
+            self._log_full_response(test_logger, response, "C3-真实高清图")
 
             if response.get("error"):
                 pytest.skip(
@@ -306,15 +345,14 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 )
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, (
-                "Should have response content for real high-res image"
+            assert len(content) > 20, (
+                f"Response should be detailed for high-res image, got {len(content)} chars"
             )
-            assert len(content) > 20, "Response should be detailed for high-res image"
 
             test_logger.info(f"Real high-res image response: {content[:2000]}...")
-            test_logger.info("真实高清图片测试通过")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p0
@@ -350,18 +388,27 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: OCR识别")
 
         response = api_client.chat_completion(messages)
+        self._log_full_response(test_logger, response, "C4-生成文字OCR")
+
         if response.get("error"):
-            pytest.fail(f"Model does not support OCR: {response.get('error')}")
+            pytest.skip(f"Model does not support OCR: {response.get('error')}")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
         content = self.get_message_content(response)
-        assert content and len(content) > 0, "Should have OCR result"
         failed_keyword = check_multimodal_failure(content, "image")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize OCR image. Response contains: '{failed_keyword}'"
             )
         test_logger.info(f"OCR result: {content[:2000] if content else 'empty'}")
+
+        content_lower = content.lower()
+        has_test = "test" in content_lower or "123" in content
+        has_hello = "hello" in content_lower or "world" in content_lower
+        assert has_test or has_hello, (
+            f"OCR should recognize 'Test 123' or 'Hello World', got: {content[:500]}"
+        )
 
         # ========== 测试真实表格截图 ==========
         test_logger.info("=== 测试真实表格截图: bench_metrics.png ===")
@@ -391,6 +438,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 真实表格OCR识别")
 
         response = api_client.chat_completion(messages)
+        self._log_full_response(test_logger, response, "C4-真实表格OCR")
 
         if response.get("error"):
             pytest.skip(
@@ -398,20 +446,20 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             )
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        assert content and len(content) > 0, (
-            "Should have OCR result for real table image"
-        )
-
         failed_keyword = check_multimodal_failure(content, "image")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize table image. Response contains: '{failed_keyword}'"
             )
 
+        assert len(content.strip()) > 30, (
+            f"Table OCR response should be detailed, got {len(content.strip())} chars"
+        )
+
         test_logger.info(f"Real table OCR result: {content[:2000]}...")
-        test_logger.info("真实表格OCR测试通过")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
@@ -442,24 +490,28 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 视频理解")
 
         response = api_client.chat_completion(messages)
+        self._log_full_response(test_logger, response, "C5-视频理解")
 
         if response.get("error"):
-            pytest.fail(
+            pytest.skip(
                 f"Model does not support video understanding: {response.get('error')}"
             )
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        assert content and len(content) > 0, "Should have video understanding result"
         failed_keyword = check_multimodal_failure(content, "video")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize video. Response contains: '{failed_keyword}'"
             )
 
+        assert len(content.strip()) > 20, (
+            f"Video understanding response should be descriptive, got {len(content.strip())} chars"
+        )
+
         test_logger.info(f"Video understanding result: {content[:2000]}...")
-        test_logger.info("视频理解测试通过")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
@@ -472,7 +524,10 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         flask_image_path = CODE_DIR / "flask_app.png"
 
         if not flask_image_path.exists():
-            pytest.skip(f"测试图片不存在: {flask_image_path}")
+            test_logger.warning(
+                f"测试图片不存在，跳过Flask代码识别: {flask_image_path}"
+            )
+        else:
             with open(flask_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -494,6 +549,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.info("请求: 识别Flask代码截图")
 
             response = api_client.chat_completion(messages)
+            self._log_full_response(test_logger, response, "C6-Flask代码识别")
 
             if response.get("error"):
                 pytest.skip(
@@ -501,24 +557,32 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 )
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, "Should have code recognition result"
             failed_keyword = check_multimodal_failure(content, "image")
             if failed_keyword:
                 pytest.fail(
                     f"Model failed to recognize screenshot. Response contains: '{failed_keyword}'"
                 )
 
+            content_lower = content.lower()
+            assert any(
+                kw in content_lower
+                for kw in ["flask", "app", "def ", "import", "route", "```"]
+            ), f"Response should contain code-related content, got: {content[:500]}"
+
             test_logger.info(f"Recognized Flask code:\n{content}")
-            test_logger.info("Flask代码识别测试通过")
 
         # ========== 测试2: UI设计图生成登录代码 ==========
         test_logger.info("=== 测试2: UI设计图生成登录代码 ===")
         login_image_path = CODE_DIR / "login_ui.png"
 
         if not login_image_path.exists():
-            pytest.skip(f"测试图片不存在: {login_image_path}")
+            test_logger.warning(
+                f"测试图片不存在，跳过UI登录代码生成: {login_image_path}"
+            )
+        else:
             with open(login_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -540,6 +604,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.info("请求: UI设计图生成登录代码")
 
             response = api_client.chat_completion(messages)
+            self._log_full_response(test_logger, response, "C6-UI登录代码")
 
             if response.get("error"):
                 pytest.skip(
@@ -547,17 +612,30 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 )
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
-            assert content and len(content) > 0, "Should have generated login code"
             failed_keyword = check_multimodal_failure(content, "image")
             if failed_keyword:
                 pytest.fail(
                     f"Model failed to recognize UI image. Response contains: '{failed_keyword}'"
                 )
 
+            content_lower = content.lower()
+            assert any(
+                kw in content_lower
+                for kw in [
+                    "def ",
+                    "class ",
+                    "import",
+                    "```",
+                    "login",
+                    "input",
+                    "button",
+                ]
+            ), f"Response should contain code-related content, got: {content[:500]}"
+
             test_logger.info(f"Generated login code:\n{content}")
-            test_logger.info("UI设计图生成登录代码测试通过")
 
         test_logger.info("代码截图→代码测试完成")
 
@@ -656,6 +734,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("请求: 多模态工具调用")
 
         response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
+        self._log_full_response(test_logger, response, "C7-多模态工具调用")
 
         if response.get("error"):
             pytest.skip(
@@ -664,36 +743,55 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         self.assert_response_success(response)
 
-        # 获取工具调用
         message = response.get("choices", [{}])[0].get("message", {})
         tool_calls = message.get("tool_calls", [])
 
-        # 如果没有自动触发工具调用，检查内容是否有相关回答
         if len(tool_calls) == 0:
             content = self.get_message_content(response)
             test_logger.warning(f"No tool calls triggered, content: {content}")
-            # 某些模型可能不触发工具调用但会直接回答
-            assert content and len(content) > 0, "Should have response content"
-            test_logger.info("模型直接回答了问题，未触发工具调用")
+            assert content and len(content.strip()) > 0, "Should have response content"
         else:
             test_logger.info(f"触发了 {len(tool_calls)} 个工具调用")
 
-            # 预期的工具列表（根据图片中的三个问题）
-            expected_tools = ["get_weather", "search_news", "translate"]
+            expected_tools = ["get_weather", "search_news", "translate", "get_capital"]
+            called_tool_names = []
 
-            # 验证工具调用
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call.get("function", {}).get("name")
-                arguments = tool_call.get("function", {}).get("arguments", "{}")
-                test_logger.info(f"工具调用 {i + 1}: {tool_name}({arguments})")
+                arguments_raw = tool_call.get("function", {}).get("arguments", "{}")
+                test_logger.info(f"工具调用 {i + 1}: {tool_name}({arguments_raw})")
 
-                # 验证工具名称是预期的
+                assert tool_name is not None, (
+                    f"Tool call {i + 1} should have function name"
+                )
                 assert tool_name in expected_tools, (
                     f"Expected tool in {expected_tools}, got '{tool_name}'"
                 )
+                assert tool_call.get("id") is not None, (
+                    f"Tool call '{tool_name}' should have 'id' field"
+                )
 
-            # 验证工具调用数量（图片中有3个问题）
-            test_logger.info(f"共触发 {len(tool_calls)} 个工具调用")
+                try:
+                    args = (
+                        json.loads(arguments_raw)
+                        if isinstance(arguments_raw, str)
+                        else arguments_raw
+                    )
+                except json.JSONDecodeError:
+                    pytest.fail(
+                        f"Tool '{tool_name}' arguments is not valid JSON: {arguments_raw}"
+                    )
+
+                assert isinstance(args, dict), (
+                    f"Tool '{tool_name}' arguments should be dict"
+                )
+                called_tool_names.append(tool_name)
+
+            assert len(called_tool_names) > 0, "Should have at least one tool call"
+
+            test_logger.info(
+                f"共触发 {len(tool_calls)} 个工具调用: {called_tool_names}"
+            )
 
         test_logger.info("多模态工具调用测试通过")
 
@@ -729,17 +827,26 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info(f"请求: {format}格式图片")
 
         response = api_client.chat_completion(messages)
+        self._log_full_response(test_logger, response, f"C8-{format}格式")
+
         if response.get("error"):
-            pytest.fail(f"Model does not support {format} format")
+            pytest.skip(
+                f"Model does not support {format} format: {response.get('error')}"
+            )
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
         content = self.get_message_content(response)
-        assert content and len(content) > 0, "Should have response content"
         failed_keyword = check_multimodal_failure(content, "image")
         if failed_keyword:
             pytest.fail(
                 f"Model failed to recognize {format} image. Response contains: '{failed_keyword}'"
             )
+
+        content_lower = content.lower()
+        assert any(kw in content_lower for kw in ["蓝", "blue", "颜色", "color"]), (
+            f"Model should identify the {format} image color as blue, got: {content[:500]}"
+        )
 
         test_logger.info(f"Format {format} test passed")

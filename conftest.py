@@ -107,7 +107,7 @@ def api_client(
     # 如果有命令行参数，使用命令行参数
     if cmd_base_url:
         chip_name = (cmd_chip or "cli").lower()
-        api_key = cmd_api_key or "cli-api-key"
+        api_key = cmd_api_key if cmd_api_key is not None else "cli-api-key"
         model_name = (
             cmd_model_name or cmd_model_key or config.get("default_model", "qwen35")
         )
@@ -152,7 +152,7 @@ def api_client(
     # 使用环境变量
     if env_base_url:
         chip_name = (env_chip or "env").lower()
-        api_key = env_api_key or "env-api-key"
+        api_key = env_api_key if env_api_key is not None else "env-api-key"
         model_name = env_model_name or config.get("default_model", "qwen35")
         model_name = sanitize_model_name(model_name)
 

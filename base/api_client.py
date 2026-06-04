@@ -25,9 +25,10 @@ class ModelAPIClient:
         self.timeout = timeout
         self.config = config or {}
         self.session = requests.Session()
-        self.session.headers.update(
-            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        )
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        self.session.headers.update(headers)
 
     def get_thinking_params(self, enabled: bool = None) -> Dict[str, Any]:
         """根据模型配置生成思考模式参数
