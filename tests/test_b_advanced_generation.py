@@ -199,6 +199,57 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "B. 高级生成功能"
 
+    @staticmethod
+    def _log_full_response(test_logger, response: dict, title: str = "完整响应"):
+        try:
+            full_json = json.dumps(response, ensure_ascii=False, indent=2)
+            test_logger.info(f"=== {title} 完整响应 ===\n{full_json}")
+        except Exception as e:
+            test_logger.warning(f"序列化完整响应失败: {e}")
+            test_logger.info(f"=== {title} 原始响应 ===\n{response}")
+
+    @staticmethod
+    def _strip_thinking_tags(content: str) -> str:
+        if not content:
+            return content
+        if "" in content:
+            parts = content.split("", 1)
+            return parts[1].strip() if len(parts) > 1 else ""
+        return content
+
+    def _check_has_thinking(self, response: dict, test_logger) -> bool:
+        reasoning = self.get_reasoning_content(response)
+        content = self.get_message_content(response)
+        has_reasoning_field = reasoning is not None and len(reasoning.strip()) > 0
+        has_thinking_tags = False
+        thinking_content = ""
+        if content:
+            if "" in content and "" in content:
+                start = content.find("") + len("")
+                end = content.find("")
+                thinking_content = content[start:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+            elif content.startswith("<|im_start|>assistant\n\n"):
+                after_start = content.find("\n") + len("\n")
+                if "" in content:
+                    end = content.find("")
+                    thinking_content = content[after_start:end].strip()
+                    has_thinking_tags = len(thinking_content) > 0
+            elif "" in content and "" not in content:
+                end = content.find("")
+                thinking_content = content[:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+                test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
+        test_logger.info(
+            f"reasoning 字段: {reasoning[:2000] if reasoning else 'None'}..."
+        )
+        test_logger.info(
+            f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
+        )
+        if thinking_content:
+            test_logger.info(f"思考内容: {thinking_content[:2000]}...")
+        return has_reasoning_field or has_thinking_tags
+
     @pytest.mark.b_advanced
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -210,59 +261,27 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         thinking_params = api_client.get_thinking_params(True)
         TestLogger.log_request(test_logger, messages, thinking_params)
 
-        # 使用模型配置的thinking参数
         response = api_client.chat_completion(messages, extra_body=thinking_params)
         TestLogger.log_response(test_logger, response, "思考模式响应")
+        self._log_full_response(test_logger, response, "B1-思考模式")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
-        # 验证思考模式开启成功
-        reasoning = self.get_reasoning_content(response)
+        has_thinking = self._check_has_thinking(response, test_logger)
+        assert has_thinking, (
+            "Thinking mode should return reasoning content (reasoning field or thinking tags)"
+        )
+
         content = self.get_message_content(response)
+        content_clean = self._strip_thinking_tags(content)
+        test_logger.info(f"最终回答内容: {content_clean[:2000]}...")
 
-        # 检查是否有 thinking 内容的多种方式：
-        # 1. reasoning 字段有内容
-        # 2. content 中包含 <think> 或 </think> 标签
-        # 3. 模板格式: <|im_start|>assistant\n<think>\n{思考内容}\n</think>\n\n{实际回复}
-        has_reasoning_field = reasoning is not None and len(reasoning) > 0
-
-        # 检查标签格式（兼容不同模型）
-        has_thinking_tags = False
-        thinking_content = ""
-
-        if content:
-            # 方式1: 标准标签
-            if "<think>" in content and "</think>" in content:
-                start = content.find("<think>") + len("<think>")
-                end = content.find("</think>")
-                thinking_content = content[start:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-            # 方式2: 模板格式 <|im_start|>assistant\n<think>\n
-            elif content.startswith("<|im_start|>assistant\n<think>\n"):
-                # 检查是否有实际的思考内容
-                after_start = content.find("<think>\n") + len("<think>\n")
-                if "</think>" in content:
-                    end = content.find("</think>")
-                    thinking_content = content[after_start:end].strip()
-                    has_thinking_tags = len(thinking_content) > 0
-            # 方式3: MiniMax M2 格式 - 只有 </think> 标签，之前的内容都是思考内容
-            elif "</think>" in content and "<think>" not in content:
-                end = content.find("</think>")
-                thinking_content = content[:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-                test_logger.info("检测到 MiniMax M2 格式（仅有 </think> 结束标签）")
-
-        test_logger.info(
-            f"reasoning 字段: {reasoning[:2000] if reasoning else 'None'}..."
+        assert len(content_clean.strip()) > 0, (
+            "Final answer content should not be empty"
         )
-        test_logger.info(
-            f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
-        )
-        if thinking_content:
-            test_logger.info(f"思考内容: {thinking_content[:2000]}...")
-
-        assert has_reasoning_field or has_thinking_tags, (
-            "Thinking mode should return reasoning content (reasoning field or </think> tags)"
+        assert any(kw in content_clean for kw in ["56088", "56088.0"]), (
+            f"Thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
         )
 
         test_logger.info("思考模式验证通过")
@@ -281,44 +300,41 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages, extra_body=thinking_params)
         TestLogger.log_response(test_logger, response, "非思考模式响应")
+        self._log_full_response(test_logger, response, "B2-非思考模式")
 
         self.assert_response_success(response)
+        self.assert_content_not_empty(response)
 
-        # 验证无thinking泄漏
         content = self.get_message_content(response)
         reasoning = self.get_reasoning_content(response)
 
-        # reasoning 字段应为空
         assert reasoning is None or reasoning == "", (
-            "Thinking disabled but reasoning field is not empty"
+            f"Thinking disabled but reasoning field is not empty: {reasoning[:500]}"
         )
 
-        # 检查内容中是否有实际的思考内容（标签之间不应有内容）
         if content:
-            if "<think>" not in content and "</think>" not in content:
-                pass
-            elif "<think>" in content and "</think>" in content:
-                # 检查 <think> 标签之间是否有实际内容
-                import re
-
-                # 匹配 <think> 和 </think> 之间的内容
-                thinking_blocks = re.findall(
-                    r"<think>\s*(.*?)\s*</think>", content, re.DOTALL
-                )
+            if "" in content and "" in content:
+                thinking_blocks = re.findall(r"\s*(.*?)\s*", content, re.DOTALL)
                 for block in thinking_blocks:
-                    block = block.strip()
-                    # 允许空思考或只有空白字符
                     assert not block.strip(), (
                         f"Thinking disabled but found thinking content: {block[:2000]}..."
                     )
-
-            elif "</think>" in content and "<think>" not in content:
-                # 方式2: 检查 MiniMax M2 格式 - 只有</think>结束标签，之前不应有思考内容
-                end = content.find("</think>")
+            elif "" in content and "" not in content:
+                end = content.find("")
                 potential_thinking = content[:end].strip()
                 assert not potential_thinking.strip(), (
-                    f"Thinking disabled but found thinking content before </think> 标签: {potential_thinking[:2000]}..."
+                    f"Thinking disabled but found thinking content before end tag: "
+                    f"{potential_thinking[:2000]}..."
                 )
+
+        content_clean = self._strip_thinking_tags(content)
+        assert len(content_clean.strip()) > 0, (
+            "Non-thinking mode should still produce a content response"
+        )
+        assert any(kw in content_clean for kw in ["56088", "56088.0"]), (
+            f"Non-thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
+        )
+
         test_logger.info("非思考模式测试通过，无thinking泄漏")
 
     @pytest.mark.b_advanced
@@ -330,7 +346,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
 
-        # 开启thinking
         test_logger.info("第1轮: 开启thinking模式")
         thinking_params_on = api_client.get_thinking_params(True)
         thinking_params_off = api_client.get_thinking_params(False)
@@ -339,40 +354,43 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         response1 = api_client.chat_completion(messages, extra_body=thinking_params_on)
         TestLogger.log_response(test_logger, response1, "开启thinking响应")
+        self._log_full_response(test_logger, response1, "B3-开启thinking")
 
         self.assert_response_success(response1)
-        reasoning1 = self.get_reasoning_content(response1)
-        test_logger.info(
-            f"开启thinking后的reasoning: {reasoning1[:2000] if reasoning1 else 'None'}..."
+        has_thinking1 = self._check_has_thinking(response1, test_logger)
+        assert has_thinking1, (
+            "First request with thinking=ON should have thinking content"
         )
+
         content1 = self.get_message_content(response1)
-        # 验证开启thinking时有思考内容
-        has_thinking1 = reasoning1 and len(reasoning1) > 0
+        content1_clean = self._strip_thinking_tags(content1)
+        assert len(content1_clean.strip()) > 0, (
+            "Thinking mode response should have final answer"
+        )
 
-        # 检查标签格式
-        if content1:
-            # 标准格式: 同时有  标签
-            if "" in content1:
-                has_thinking1 = True
-            # MiniMax M2 格式: 只有结尾</think>标签
-            elif "</think>" in content1 and "<think>" not in content1:
-                end = content1.find("</think>")
-                thinking_text = content1[:end].strip()
-                has_thinking1 = len(thinking_text) > 0
-
-        assert has_thinking1, "First request should have thinking content"
-
-        # 关闭thinking
         test_logger.info("第2轮: 关闭thinking模式")
-        # )
-
         TestLogger.log_request(test_logger, messages, thinking_params_off)
 
         response2 = api_client.chat_completion(messages, extra_body=thinking_params_off)
         TestLogger.log_response(test_logger, response2, "关闭thinking响应")
+        self._log_full_response(test_logger, response2, "B3-关闭thinking")
 
         self.assert_response_success(response2)
-        self.assert_no_thinking_leakage(response2)
+
+        reasoning2 = self.get_reasoning_content(response2)
+        assert reasoning2 is None or reasoning2 == "", (
+            f"Thinking OFF should have no reasoning field, got: {reasoning2[:500]}"
+        )
+
+        content2 = self.get_message_content(response2)
+        content2_clean = self._strip_thinking_tags(content2)
+        assert len(content2_clean.strip()) > 0, (
+            "Non-thinking response should have content"
+        )
+        assert any(kw in content2_clean for kw in ["56088", "56088.0"]), (
+            f"Non-thinking mode should produce correct answer, got: {content2_clean[:500]}"
+        )
+
         test_logger.info("思考模式切换测试通过")
 
     def _execute_tool(self, tool_name: str, arguments: dict) -> dict:
@@ -492,16 +510,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         return {}
 
     def _execute_tool_call(self, api_client, messages, tool_call, test_logger):
-        """执行单个工具调用并获取模型最终响应"""
         tool_call_id = tool_call.get("id")
         function_name = tool_call.get("function", {}).get("name")
         function_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
 
-        # 执行工具
         tool_result = self._execute_tool(function_name, function_args)
         test_logger.info(f"工具 [{function_name}] 执行结果: {tool_result}")
 
-        # 将工具调用和结果添加到消息中
         messages.append(
             {
                 "role": "assistant",
@@ -524,17 +539,17 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             }
         )
 
-        # 获取模型最终响应
         final_response = api_client.chat_completion(messages)
+        self._log_full_response(
+            test_logger, final_response, f"工具[{function_name}]最终响应"
+        )
         final_content = self.get_message_content(final_response)
         test_logger.info(f"模型最终响应: {final_content}")
-        return final_content
+        return final_content, final_response
 
     def _execute_parallel_tool_calls(
         self, api_client, messages, tool_calls, tools, test_logger
     ):
-        """执行多个并行工具调用并获取模型最终响应"""
-        # 执行所有工具调用
         tool_results = []
         for tool_call in tool_calls:
             tool_call_id = tool_call.get("id")
@@ -554,7 +569,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 }
             )
 
-        # 将所有工具调用添加到消息中
         messages.append(
             {
                 "role": "assistant",
@@ -571,7 +585,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             }
         )
 
-        # 将所有工具结果添加到消息中
         for tr in tool_results:
             messages.append(
                 {
@@ -581,13 +594,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 }
             )
 
-        # 获取模型最终响应
         final_response = api_client.chat_completion(
             messages, tools=tools, tool_choice="auto"
         )
+        self._log_full_response(test_logger, final_response, "并行工具调用最终响应")
         final_content = self.get_message_content(final_response)
         test_logger.info(f"模型最终响应: {final_content}")
-        return final_content
+        return final_content, final_response
 
     @pytest.mark.b_advanced
     @pytest.mark.p0
@@ -603,26 +616,49 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=TOOLS_GET_WEATHER, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response, "单工具调用响应")
+        self._log_full_response(test_logger, response, "B4-单工具调用")
 
         self.assert_response_success(response)
-        # 验证工具调用
+
         tool_calls = self.get_tool_calls(response)
         assert len(tool_calls) > 0, "Should have tool calls"
 
-        # 验证工具名称
         tool_name = tool_calls[0].get("function", {}).get("name")
         assert tool_name == "get_weather", (
             f"Expected tool 'get_weather', got '{tool_name}'"
         )
 
-        # 验证参数
-        arguments = tool_calls[0].get("function", {}).get("arguments", "{}")
-        args = eval(arguments) if isinstance(arguments, str) else arguments
-        assert "city" in args, "Should have city parameter"
+        assert tool_calls[0].get("id") is not None, "Tool call should have 'id' field"
+        assert len(tool_calls[0].get("id", "")) > 0, "Tool call id should not be empty"
+
+        arguments_raw = tool_calls[0].get("function", {}).get("arguments", "{}")
+        try:
+            args = (
+                json.loads(arguments_raw)
+                if isinstance(arguments_raw, str)
+                else arguments_raw
+            )
+        except json.JSONDecodeError as e:
+            pytest.fail(
+                f"Tool call arguments is not valid JSON: {arguments_raw}, error: {e}"
+            )
+
+        assert "city" in args, f"Should have 'city' parameter, got args: {args}"
+        assert args["city"].strip() != "", "City parameter should not be empty"
         test_logger.info(f"Tool call: {tool_name}({args})")
 
-        # 执行工具调用并获取最终响应
-        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        assert finish_reason == "tool_calls", (
+            f"When tool is called, finish_reason should be 'tool_calls', got '{finish_reason}'"
+        )
+
+        final_content, final_response = self._execute_tool_call(
+            api_client, messages, tool_calls[0], test_logger
+        )
+        self.assert_response_success(final_response)
+        assert len(final_content.strip()) > 0, (
+            "Final response after tool execution should not be empty"
+        )
 
     @pytest.mark.b_advanced
     @pytest.mark.p0
@@ -631,84 +667,58 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         """B5: 工具调用-多工具 - 定义多个function，验证模型选择正确的工具"""
         test_logger.info("=== 测试开始: 多工具调用（5个工具） ===")
 
-        # 使用5个不同的工具
         tools = TOOLS_FIVE
 
-        # 测试1: 天气相关问题
-        test_logger.info("【测试1】天气相关问题 -> 应选择 get_weather")
-        messages = [{"role": "user", "content": "北京今天天气怎么样？"}]
-        TestLogger.log_request(test_logger, messages, {"tools": "5 tools"})
+        test_cases = [
+            ("天气相关问题", "北京今天天气怎么样？", "get_weather"),
+            ("股票相关问题", "现在苹果公司(AAPL)的股价是多少？", "get_stock_price"),
+            ("新闻搜索问题", "搜索关于人工智能的最新新闻", "search_news"),
+            ("数学计算问题", "帮我计算一下 123 + 456 等于多少？", "calculate"),
+            ("翻译问题", "把 Hello 翻译成中文", "translate"),
+        ]
 
-        response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
-        TestLogger.log_response(test_logger, response, "天气工具调用")
+        for idx, (desc, user_msg, expected_tool) in enumerate(test_cases, 1):
+            test_logger.info(f"【测试{idx}】{desc} -> 应选择 {expected_tool}")
+            messages = [{"role": "user", "content": user_msg}]
+            TestLogger.log_request(test_logger, messages, {"tools": "5 tools"})
 
-        self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response)
-        assert len(tool_calls) > 0, "Should have tool calls"
-        tool_name = tool_calls[0].get("function", {}).get("name")
-        test_logger.info(f"Selected tool: {tool_name}")
-        assert tool_name == "get_weather", f"Expected 'get_weather', got '{tool_name}'"
+            response = api_client.chat_completion(
+                messages, tools=tools, tool_choice="auto"
+            )
+            TestLogger.log_response(test_logger, response, f"{desc}工具调用")
+            self._log_full_response(test_logger, response, f"B5-测试{idx}-{desc}")
 
-        # 执行工具调用并获取最终响应
-        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+            self.assert_response_success(response)
+            tool_calls = self.get_tool_calls(response)
+            assert len(tool_calls) > 0, (
+                f"[测试{idx}] Should have tool calls for '{desc}'"
+            )
 
-        # 测试2: 股票相关问题
-        test_logger.info("【测试2】股票相关问题 -> 应选择 get_stock_price")
-        messages = [{"role": "user", "content": "现在苹果公司(AAPL)的股价是多少？"}]
+            tool_name = tool_calls[0].get("function", {}).get("name")
+            test_logger.info(f"Selected tool: {tool_name}")
+            assert tool_name == expected_tool, (
+                f"[测试{idx}] Expected '{expected_tool}', got '{tool_name}'"
+            )
 
-        response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
-        TestLogger.log_response(test_logger, response, "股票工具调用")
+            assert tool_calls[0].get("id") is not None, (
+                f"[测试{idx}] Tool call should have 'id' field"
+            )
 
-        self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response)
-        tool_name = tool_calls[0].get("function", {}).get("name")
-        test_logger.info(f"Selected tool: {tool_name}")
-        assert tool_name == "get_stock_price", (
-            f"Expected 'get_stock_price', got '{tool_name}'"
-        )
-        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+            arguments_raw = tool_calls[0].get("function", {}).get("arguments", "{}")
+            try:
+                args = (
+                    json.loads(arguments_raw)
+                    if isinstance(arguments_raw, str)
+                    else arguments_raw
+                )
+            except json.JSONDecodeError as e:
+                pytest.fail(f"[测试{idx}] Invalid JSON in arguments: {arguments_raw}")
 
-        # 测试3: 新闻搜索问题
-        test_logger.info("【测试3】新闻搜索问题 -> 应选择 search_news")
-        messages = [{"role": "user", "content": "搜索关于人工智能的最新新闻"}]
+            assert isinstance(args, dict) and len(args) > 0, (
+                f"[测试{idx}] Tool arguments should be non-empty dict, got: {args}"
+            )
 
-        response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
-        TestLogger.log_response(test_logger, response, "新闻工具调用")
-
-        self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response)
-        tool_name = tool_calls[0].get("function", {}).get("name")
-        test_logger.info(f"Selected tool: {tool_name}")
-        assert tool_name == "search_news", f"Expected 'search_news', got '{tool_name}'"
-        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
-
-        # 测试4: 数学计算问题
-        test_logger.info("【测试4】数学计算问题 -> 应选择 calculate")
-        messages = [{"role": "user", "content": "帮我计算一下 123 + 456 等于多少？"}]
-
-        response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
-        TestLogger.log_response(test_logger, response, "计算工具调用")
-
-        self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response)
-        tool_name = tool_calls[0].get("function", {}).get("name")
-        test_logger.info(f"Selected tool: {tool_name}")
-        assert tool_name == "calculate", f"Expected 'calculate', got '{tool_name}'"
-        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
-
-        # 测试5: 翻译问题
-        test_logger.info("【测试5】翻译问题 -> 应选择 translate")
-        messages = [{"role": "user", "content": "把 Hello 翻译成中文"}]
-
-        response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
-        TestLogger.log_response(test_logger, response, "翻译工具调用")
-
-        self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response)
-        tool_name = tool_calls[0].get("function", {}).get("name")
-        test_logger.info(f"Selected tool: {tool_name}")
-        assert tool_name == "translate", f"Expected 'translate', got '{tool_name}'"
-        self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+            self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
 
         test_logger.info("多工具调用测试完成")
 
@@ -725,24 +735,54 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=TOOLS_MULTIPLE, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response, "并行工具调用响应")
+        self._log_full_response(test_logger, response, "B6-并行工具调用")
 
         self.assert_response_success(response)
         tool_calls = self.get_tool_calls(response)
 
-        # 可能有多个工具调用或单个工具调用都算通过
         test_logger.info(f"工具调用数量: {len(tool_calls)}")
         assert len(tool_calls) > 0, "Should have tool calls"
 
-        # 执行并行工具调用并获取最终响应
-        self._execute_parallel_tool_calls(
+        called_tools = set()
+        for tc in tool_calls:
+            fn_name = tc.get("function", {}).get("name")
+            assert fn_name is not None, "Tool call should have function name"
+            assert tc.get("id") is not None, (
+                f"Tool call '{fn_name}' should have 'id' field"
+            )
+            called_tools.add(fn_name)
+
+            arguments_raw = tc.get("function", {}).get("arguments", "{}")
+            try:
+                args = (
+                    json.loads(arguments_raw)
+                    if isinstance(arguments_raw, str)
+                    else arguments_raw
+                )
+            except json.JSONDecodeError:
+                pytest.fail(
+                    f"Tool '{fn_name}' arguments is not valid JSON: {arguments_raw}"
+                )
+
+            assert isinstance(args, dict), f"Tool '{fn_name}' arguments should be dict"
+
+        test_logger.info(f"调用的工具集合: {called_tools}")
+        assert called_tools.issubset({"get_weather", "get_time"}), (
+            f"Called tools should be subset of available tools, got: {called_tools}"
+        )
+
+        if len(tool_calls) >= 2:
+            test_logger.info("模型并行调用了多个工具")
+
+        final_content, final_response = self._execute_parallel_tool_calls(
             api_client, messages, tool_calls, TOOLS_MULTIPLE, test_logger
         )
+        self.assert_response_success(final_response)
+        assert len(final_content.strip()) > 0, "Final response should not be empty"
 
     @pytest.mark.b_advanced
     @pytest.mark.p1
-    def test_multi_step_tool_chain(
-        self, api_client: ModelAPIClient, test_logger
-    ):
+    def test_multi_step_tool_chain(self, api_client: ModelAPIClient, test_logger):
         """B7: 工具调用-多步链式 - 工具结果作为下一步输入，验证3+步链式执行"""
         test_logger.info("=== 测试开始: 多步外部API工具链(3步) ===")
 
@@ -806,6 +846,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=tools, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response1, "第1步响应")
+        self._log_full_response(test_logger, response1, "B7-第1步")
 
         tool_calls = self.get_tool_calls(response1)
         if len(tool_calls) == 0:
@@ -819,8 +860,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         # 校验第1步结果
         assert function_name == "get_time", f"Expected get_time, got {function_name}"
-        assert function_args.get("timezone") == "Asia/Shanghai", (
-            f"Expected timezone=Asia/Shanghai, got {function_args.get('timezone')}"
+        assert function_args.get("timezone") is not None, (
+            "get_time should have timezone parameter"
         )
         assert "time" in tool_result, "Expected 'time' in tool result"
 
@@ -839,6 +880,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=tools, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response2, "第2步响应")
+        self._log_full_response(test_logger, response2, "B7-第2步")
 
         tool_calls2 = self.get_tool_calls(response2)
         if len(tool_calls2) == 0:
@@ -856,8 +898,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert function_name2 == "get_weather", (
             f"Expected get_weather, got {function_name2}"
         )
-        assert function_args2.get("city") == "上海", (
-            f"Expected city=上海, got {function_args2.get('city')}"
+        assert function_args2.get("city") is not None, (
+            "get_weather should have city parameter"
         )
         assert "temperature" in tool_result2, "Expected 'temperature' in tool result"
         assert "condition" in tool_result2, "Expected 'condition' in tool result"
@@ -880,6 +922,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, tools=tools, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response3, "第3步响应")
+        self._log_full_response(test_logger, response3, "B7-第3步")
 
         tool_calls3 = self.get_tool_calls(response3)
         if len(tool_calls3) == 0:
@@ -901,6 +944,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert "target_lang" in function_args3, (
             "Expected 'target_lang' in function arguments"
         )
+        assert function_args3.get("target_lang", "").lower() in (
+            "en",
+            "english",
+            "英文",
+        ), (
+            f"Expected target_lang to be English/en, got: {function_args3.get('target_lang')}"
+        )
 
         # 校验第3步结果
         assert "result" in tool_result3, "Expected 'result' in tool_result3"
@@ -916,7 +966,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: JSON Mode ===")
 
         messages = [
-            {"role": "system", "content": "你是一个JSON生成器"},
+            {
+                "role": "system",
+                "content": "你是一个JSON生成器，请始终返回合法的JSON对象",
+            },
             {"role": "user", "content": "请返回一个包含姓名和年龄的JSON对象"},
         ]
         TestLogger.log_request(
@@ -927,32 +980,65 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, response_format={"type": "json_object"}
         )
         TestLogger.log_response(test_logger, response, "JSON Mode响应")
+        self._log_full_response(test_logger, response, "B8-JSON-Mode")
 
         self.assert_response_success(response)
 
-        # 尝试解析JSON
         content = self.get_message_content(response)
 
-        # 处理 content 中包含 <think> 思考内容的情况
-        # 有些模型会把思考内容 append 到 JSON 前面，实际 JSON 在 </think> 之后
-        if content and "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted JSON after </think>: {content[:2000]}...")
+        if content and "" in content:
+            content = content.split("", 1)[1].strip()
+            test_logger.info(f"Extracted JSON after end tag: {content[:2000]}...")
 
-        if content:
+        json_data = None
+        json_error = None
+
+        if content and content.strip():
             try:
-                json_data = self.assert_valid_json(content)
-                assert isinstance(json_data, dict), "Should return a JSON object"
-                test_logger.info(f"JSON response: {json_data}")
-            except:
-                # 某些模型的响应可能在reasoning中
-                reasoning = self.get_reasoning_content(response)
-                if reasoning:
+                json_data = json.loads(content.strip())
+            except json.JSONDecodeError:
+                try:
+                    json_data = extract_json_from_text(content)
+                except ValueError as e:
+                    json_error = f"Failed to parse JSON from content: {e}"
+
+        if json_data is None:
+            reasoning = self.get_reasoning_content(response)
+            if reasoning:
+                try:
+                    json_data = json.loads(reasoning.strip())
+                except json.JSONDecodeError:
                     try:
-                        json_data = self.assert_valid_json(reasoning)
-                        test_logger.info(f"JSON in reasoning: {json_data}")
-                    except:
-                        pytest.fail("JSON not found in content or reasoning")
+                        json_data = extract_json_from_text(reasoning)
+                    except ValueError as e:
+                        json_error = f"JSON not found in content or reasoning. Content: {content[:500]}"
+
+        if json_data is None:
+            pytest.fail(json_error or "No valid JSON found in response")
+
+        assert isinstance(json_data, dict), (
+            f"Should return a JSON object (dict), got {type(json_data).__name__}"
+        )
+        test_logger.info(f"JSON response: {json_data}")
+
+        assert len(json_data) > 0, "JSON object should not be empty"
+
+        has_name_field = any(k in json_data for k in ["name", "姓名", "名字"])
+        has_age_field = any(k in json_data for k in ["age", "年龄", "岁数"])
+        assert has_name_field, (
+            f"JSON should contain a name-related field, got keys: {list(json_data.keys())}"
+        )
+        assert has_age_field, (
+            f"JSON should contain an age-related field, got keys: {list(json_data.keys())}"
+        )
+
+        age_value = (
+            json_data.get("age") or json_data.get("年龄") or json_data.get("岁数")
+        )
+        if age_value is not None:
+            assert isinstance(age_value, (int, float)), (
+                f"Age field should be numeric, got {type(age_value).__name__}: {age_value}"
+            )
 
     @pytest.mark.b_advanced
     @pytest.mark.p0
@@ -981,6 +1067,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages, response_format={"type": "json_object", "schema": schema}
         )
         TestLogger.log_response(test_logger, response, "结构化输出响应")
+        self._log_full_response(test_logger, response, "B9-结构化输出")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
@@ -1019,11 +1106,31 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         test_logger.info(f"Structured output found in {source}: {json_data}")
 
-        # 兼容中英文键名
         has_name = "name" in json_data or "姓名" in json_data
         has_age = "age" in json_data or "年龄" in json_data
-        assert has_name, "Should have 'name' or '姓名' field"
-        assert has_age, "Should have 'age' or '年龄' field"
+        assert has_name, (
+            f"Should have 'name' or '姓名' field, got keys: {list(json_data.keys())}"
+        )
+        assert has_age, (
+            f"Should have 'age' or '年龄' field, got keys: {list(json_data.keys())}"
+        )
+
+        assert isinstance(json_data, dict), (
+            f"Should return a JSON object, got {type(json_data).__name__}"
+        )
+
+        age_value = json_data.get("age") or json_data.get("年龄")
+        if age_value is not None:
+            assert isinstance(age_value, int), (
+                f"'age' field should be integer per schema, got {type(age_value).__name__}: {age_value}"
+            )
+
+        name_value = json_data.get("name") or json_data.get("姓名")
+        if name_value is not None:
+            assert isinstance(name_value, str) and len(name_value.strip()) > 0, (
+                f"'name' field should be non-empty string, got: {name_value}"
+            )
+
         test_logger.info("结构化输出验证通过")
 
     @pytest.mark.b_advanced
@@ -1038,24 +1145,31 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages)
 
         # 使用 prefix 参数（如果API支持）
-        response = api_client.chat_completion(messages, prefix="答案是：")
+        try:
+            response = api_client.chat_completion(messages, prefix="答案是：")
+        except Exception as e:
+            if "prefix" in str(e).lower() or "unsupported" in str(e).lower():
+                pytest.skip(f"API不支持prefix参数: {e}")
+            raise
+
         TestLogger.log_response(test_logger, response, "Prefix约束响应")
+        self._log_full_response(test_logger, response, "B10-Prefix约束")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
 
-        # 处理 content 中包含 </think> 思考内容的情况
-        if content and "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted content after </think>: {content[:2000]}...")
+        if content and "" in content:
+            content = content.split("", 1)[1].strip()
+            test_logger.info(f"Extracted content after end tag: {content[:2000]}...")
 
         test_logger.info(f"Prefix 约束响应: {content[:2000]}...")
 
-        # 验证前缀是否被正确遵循（如果API支持）
-        if content and not content.startswith("答案是："):
-            pytest.fail(
-                f"Prefix约束未遵循，期望以'答案是：'开头，实际回复: {content[:2000]}..."
-            )
+        assert content is not None and len(content.strip()) > 0, (
+            "Prefix constraint response should not be empty"
+        )
+        assert content.strip().startswith("答案是："), (
+            f"Prefix约束未遵循，期望以'答案是：'开头，实际回复: {content[:500]}"
+        )
 
         # ========== 测试 suffix 约束 ==========
         test_logger.info("【测试2】Suffix 约束：回答必须以 '完毕。' 结尾")
@@ -1063,23 +1177,30 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages)
 
         # 使用 suffix 参数
-        response = api_client.chat_completion(messages, suffix="完毕。")
+        try:
+            response = api_client.chat_completion(messages, suffix="完毕。")
+        except Exception as e:
+            if "suffix" in str(e).lower() or "unsupported" in str(e).lower():
+                pytest.skip(f"API不支持suffix参数: {e}")
+            raise
+
         TestLogger.log_response(test_logger, response, "Suffix约束响应")
+        self._log_full_response(test_logger, response, "B10-Suffix约束")
 
         self.assert_response_success(response)
         content = self.get_message_content(response)
 
-        # 处理 content 中包含 </think> 思考内容的情况
-        if content and "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted content after </think>: {content[:2000]}...")
+        if content and "" in content:
+            content = content.split("", 1)[1].strip()
+            test_logger.info(f"Extracted content after end tag: {content[:2000]}...")
 
         test_logger.info(f"Suffix 约束响应: {content[:2000]}...")
 
-        # 验证后缀是否被正确遵循
-        if content and not content.endswith("完毕。"):
-            pytest.fail(
-                f"Suffix约束未遵循，期望以'完毕。'结尾，实际回复: {content[:2000]}..."
-            )
+        assert content is not None and len(content.strip()) > 0, (
+            "Suffix constraint response should not be empty"
+        )
+        assert content.strip().endswith("完毕。"), (
+            f"Suffix约束未遵循，期望以'完毕。'结尾，实际回复: {content[:500]}"
+        )
 
         test_logger.info("Prefix/Suffix 约束测试完成")

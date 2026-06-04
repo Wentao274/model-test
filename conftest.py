@@ -28,6 +28,13 @@ from allure_commons.types import AttachmentType
 _test_results = {}
 
 
+def sanitize_model_name(name: str) -> str:
+    """处理模型名中的路径分隔符，取最后一段作为模型名"""
+    if not name:
+        return name
+    return name.rsplit("/", 1)[-1]
+
+
 def load_config() -> Dict[str, Any]:
     """加载配置文件"""
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
@@ -104,6 +111,7 @@ def api_client(
         model_name = (
             cmd_model_name or cmd_model_key or config.get("default_model", "qwen35")
         )
+        model_name = sanitize_model_name(model_name)
 
         # thinking_mode 优先级：命令行 > 环境变量 > config.yaml（默认启用）
         cmd_no_thinking = request.config.getoption("--no-thinking-mode", default=None)
@@ -146,6 +154,7 @@ def api_client(
         chip_name = (env_chip or "env").lower()
         api_key = env_api_key or "env-api-key"
         model_name = env_model_name or config.get("default_model", "qwen35")
+        model_name = sanitize_model_name(model_name)
 
         # thinking_mode 优先级：环境变量 > config.yaml
         thinking_mode = env_thinking_mode
@@ -188,6 +197,7 @@ def api_client(
         model_name = enabled_models[0]
     else:
         model_name = config.get("default_model", "qwen35")
+    model_name = sanitize_model_name(model_name)
 
     model_config = config["models"][model_name]
     if model_config.get("thinking_mode") is None:
@@ -292,6 +302,9 @@ def test_logger(request, config):
                 model_name = config.get("default_model")
         except:
             pass
+
+    if model_name:
+        model_name = sanitize_model_name(model_name)
 
     # 获取当前使用的芯片平台名称（优先级：命令行 > 环境变量 > config.yaml）
     cmd_chip = request.config.getoption("--chip", default=None)
@@ -484,6 +497,8 @@ def pytest_configure(config):
             model_name = env_model
         else:
             model_name = cfg.get("default_model", "default")
+
+        model_name = sanitize_model_name(model_name)
     except:
         pass
 
@@ -620,6 +635,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                 break
         if not model_name or model_name == "unknown":
             model_name = cfg.get("default_model", "unknown")
+
+    model_name = sanitize_model_name(model_name)
 
     model = {
         "name": model_name,
