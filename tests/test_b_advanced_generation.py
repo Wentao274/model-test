@@ -203,8 +203,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
     def _strip_thinking_tags(content: str) -> str:
         if not content:
             return content
-        if "" in content:
-            parts = content.split("", 1)
+        if "</think>" in content:
+            parts = content.split("</think>", 1)
             return parts[1].strip() if len(parts) > 1 else ""
         return content
 
@@ -215,19 +215,19 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         has_thinking_tags = False
         thinking_content = ""
         if content:
-            if "" in content and "" in content:
-                start = content.find("") + len("")
-                end = content.find("")
+            if "<think>" in content and "</think>" in content:
+                start = content.find("<think>") + len("<think>")
+                end = content.find("</think>")
                 thinking_content = content[start:end].strip()
                 has_thinking_tags = len(thinking_content) > 0
             elif content.startswith("<|im_start|>assistant\n\n"):
                 after_start = content.find("\n") + len("\n")
-                if "" in content:
-                    end = content.find("")
+                if "</think>" in content:
+                    end = content.find("</think>")
                     thinking_content = content[after_start:end].strip()
                     has_thinking_tags = len(thinking_content) > 0
-            elif "" in content and "" not in content:
-                end = content.find("")
+            elif "</think>" in content and "<think>" not in content:
+                end = content.find("</think>")
                 thinking_content = content[:end].strip()
                 has_thinking_tags = len(thinking_content) > 0
                 test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
@@ -304,14 +304,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         )
 
         if content:
-            if "" in content and "" in content:
-                thinking_blocks = re.findall(r"\s*(.*?)\s*", content, re.DOTALL)
+            if "<think>" in content and "</think>" in content:
+                thinking_blocks = re.findall(r"<think>\s*(.*?)\s*</think>", content, re.DOTALL)
                 for block in thinking_blocks:
                     assert not block.strip(), (
                         f"Thinking disabled but found thinking content: {block[:2000]}..."
                     )
-            elif "" in content and "" not in content:
-                end = content.find("")
+            elif "</think>" in content and "<think>" not in content:
+                end = content.find("</think>")
                 potential_thinking = content[:end].strip()
                 assert not potential_thinking.strip(), (
                     f"Thinking disabled but found thinking content before end tag: "
@@ -514,6 +514,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 "tool_calls": [
                     {
                         "id": tool_call_id,
+                        "type": "function",
                         "function": {
                             "name": function_name,
                             "arguments": json.dumps(function_args),
@@ -566,6 +567,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 "tool_calls": [
                     {
                         "id": tr["id"],
+                        "type": "function",
                         "function": {
                             "name": tr["function_name"],
                             "arguments": json.dumps(tr["function_args"]),
@@ -977,10 +979,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         content = self.get_message_content(response)
 
-        if content and "" in content:
-            content = content.split("", 1)[1].strip()
-            test_logger.info(f"Extracted JSON after end tag: {content[:2000]}...")
-
         json_data = None
         json_error = None
 
@@ -1149,10 +1147,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.assert_response_success(response)
         content = self.get_message_content(response)
 
-        if content and "" in content:
-            content = content.split("", 1)[1].strip()
-            test_logger.info(f"Extracted content after end tag: {content[:2000]}...")
-
         test_logger.info(f"Prefix 约束响应: {content[:2000]}...")
 
         assert content is not None and len(content.strip()) > 0, (
@@ -1181,9 +1175,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.assert_response_success(response)
         content = self.get_message_content(response)
 
-        if content and "" in content:
-            content = content.split("", 1)[1].strip()
-            test_logger.info(f"Extracted content after end tag: {content[:2000]}...")
 
         test_logger.info(f"Suffix 约束响应: {content[:2000]}...")
 

@@ -545,14 +545,14 @@ class TestQuality(BaseTest, StreamingTestMixin):
         ]
 
         passed_count = 0
-        for case in test_cases:
+        for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
             TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
-            self.log_full_response(test_logger, response, f"H10-无意义检测-{idx + 1}")
+            self.log_full_response(test_logger, response, f"H6-编程领域-{idx + 1}")
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -671,7 +671,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         ]
 
         passed_count = 0
-        for case in test_cases:
+        for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
             TestLogger.log_request(test_logger, messages)
@@ -945,7 +945,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         ]
 
         passed_count = 0
-        for case in test_cases:
+        for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
             TestLogger.log_request(test_logger, messages)

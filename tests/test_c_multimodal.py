@@ -735,7 +735,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         self.assert_response_success(response)
 
         message = response.get("choices", [{}])[0].get("message", {})
-        tool_calls = message.get("tool_calls", [])
+        tool_calls = message.get("tool_calls") or []
 
         if len(tool_calls) == 0:
             content = self.get_message_content(response)

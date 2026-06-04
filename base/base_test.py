@@ -161,7 +161,10 @@ class StreamingTestMixin:
 
         for chunk in response_iterator:
             chunks.append(chunk)
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            choices = chunk.get("choices", [])
+            if not choices:
+                continue
+            delta = choices[0].get("delta", {})
             if delta.get("content"):
                 content_parts.append(delta["content"])
             if delta.get("reasoning_content"):

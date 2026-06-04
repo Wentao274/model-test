@@ -40,6 +40,15 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "D. 长上下文处理"
 
+    @staticmethod
+    def _get_max_context_len(model_info: dict) -> int:
+        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和 sglang(context-length)"""
+        for key in ("max_model_len", "context-length", "context_length"):
+            val = model_info.get(key, 0)
+            if val:
+                return int(val)
+        return 0
+
     @pytest.mark.d_long_context
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -240,10 +249,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         # 尝试获取模型信息
         model_info = api_client.get_model_info()
-        max_len = model_info.get("max_model_len", 0)
+        max_len = self._get_max_context_len(model_info)
 
         if max_len > 0:
-            # 生成接近限制的输入
             estimated_tokens = max(1000, max_len - 1000)
             prompt = "测试内容 " * (estimated_tokens // 4)
 
@@ -455,7 +463,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         try:
             model_info = api_client.get_model_info()
-            max_len = model_info.get("max_model_len", 0)
+            max_len = self._get_max_context_len(model_info)
             test_logger.info(f"模型定义的最大上下文长度: {max_len}")
 
             if max_len > 0:
