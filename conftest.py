@@ -652,7 +652,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     test_time = datetime.now().strftime("%H:%M:%S")
 
     generator = TestReportGenerator("test_reports", config=cfg)
-    filepath = generator.generate(model, _test_results, test_date, test_time)
+    filepath = generator.generate(
+        model, _test_results, test_date, test_time, chip_name=chip_name
+    )
 
     # 生成 Allure 汇总报告
     allure_summary_path = None

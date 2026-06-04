@@ -53,6 +53,7 @@ def main():
     parser.add_argument("--output", "-o", default="test_reports", help="输出目录")
     parser.add_argument("--json", "-j", help="pytest JSON报告路径")
     parser.add_argument("--model", "-m", help="指定模型名称")
+    parser.add_argument("--chip", help="芯片平台名称")
 
     args = parser.parse_args()
 
@@ -77,10 +78,12 @@ def main():
     test_date = datetime.now().strftime("%Y-%m-%d")
     test_time = datetime.now().strftime("%H:%M:%S")
 
-    generator = TestReportGenerator(args.output)
+    generator = TestReportGenerator(args.output, config=config)
 
     for model in models_to_test:
-        filepath = generator.generate(model, test_results, test_date, test_time)
+        filepath = generator.generate(
+            model, test_results, test_date, test_time, chip_name=args.chip
+        )
         print(f"报告已生成: {filepath}")
 
 

@@ -38,6 +38,7 @@ class TestReportGenerator:
         test_results: Dict[str, str],
         test_date: Optional[str] = None,
         test_time: Optional[str] = None,
+        chip_name: Optional[str] = None,
     ) -> Path:
         """生成测试报告"""
         if test_date is None:
@@ -45,11 +46,12 @@ class TestReportGenerator:
         if test_time is None:
             test_time = datetime.now().strftime("%H:%M:%S")
 
+        effective_chip = (chip_name or self.chip_name).lower()
         test_datetime = datetime.now().strftime("%Y%m%d%H%M%S")
 
         content = self._build_report_content(model, test_results, test_date, test_time)
 
-        chip_dir = self.output_dir / self.chip_name
+        chip_dir = self.output_dir / effective_chip
         chip_dir.mkdir(parents=True, exist_ok=True)
 
         model_dir = chip_dir / model["name"]

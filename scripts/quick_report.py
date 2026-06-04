@@ -89,7 +89,7 @@ def main():
     test_date = datetime.now().strftime("%Y-%m-%d")
     test_time = datetime.now().strftime("%H:%M:%S")
 
-    generator = TestReportGenerator("test_reports")
+    generator = TestReportGenerator("test_reports", config=config)
     filepath = generator.generate(model, test_results, test_date, test_time)
 
     passed = sum(1 for v in test_results.values() if v == "PASSED")
