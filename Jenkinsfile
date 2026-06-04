@@ -2,6 +2,9 @@ pipeline {
     agent any
 
     parameters {
+        string(name: 'TESTER', defaultValue: 'liwt', description: '测试人员名称 (必填)')
+        choice(name: 'INFRA', choices: ['vllm', 'sglang'], description: '推理框架')
+        choice(name: 'PD', choices: ['agg', 'disagg'], description: 'PD分离模式,agg 表示非 PD 分离, disagg 表示 PD 分离')
         string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称')
         string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称')
         string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080/v1', description: 'API 地址')
@@ -16,7 +19,7 @@ pipeline {
         API_KEY_CREDENTIALS = 'API_KEY'
         REMOTE_HOST = '10.201.132.50'
         REMOTE_USER = 'root'
-        BUILD_OUTPUT_DIR = "builds/${BUILD_NUMBER}"
+        BUILD_OUTPUT_DIR = "builds/${params.TESTER}/${BUILD_NUMBER}"
     }
 
     stages {
@@ -69,6 +72,9 @@ mkdir -p ${BUILD_OUTPUT_DIR}
 
 # 打印参数值
 echo "=== 参数信息 ==="
+echo "TESTER: ${params.TESTER}"
+echo "INFRA: ${params.INFRA}"
+echo "PD: ${params.PD}"
 echo "BASE_URL: ${params.BASE_URL}"
 echo "MODEL: ${params.MODEL}"
 echo "CHIP: ${params.CHIP}"
@@ -82,6 +88,9 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
             --api-key "${API_KEY}" \
             --model-name "${params.MODEL}" \
             --chip "${params.CHIP}" \
+            --infra "${params.INFRA}" \
+            --pd-mode "${params.PD}" \
+            --tester "${params.TESTER}" \
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
             --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
             --thinking-mode
@@ -91,6 +100,9 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
             --api-key "${API_KEY}" \
             --model-name "${params.MODEL}" \
             --chip "${params.CHIP}" \
+            --infra "${params.INFRA}" \
+            --pd-mode "${params.PD}" \
+            --tester "${params.TESTER}" \
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
             --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
             --thinking-mode
@@ -102,6 +114,9 @@ else
             --api-key "${API_KEY}" \
             --model-name "${params.MODEL}" \
             --chip "${params.CHIP}" \
+            --infra "${params.INFRA}" \
+            --pd-mode "${params.PD}" \
+            --tester "${params.TESTER}" \
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
             --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
             --no-thinking-mode
@@ -111,6 +126,9 @@ else
             --api-key "${API_KEY}" \
             --model-name "${params.MODEL}" \
             --chip "${params.CHIP}" \
+            --infra "${params.INFRA}" \
+            --pd-mode "${params.PD}" \
+            --tester "${params.TESTER}" \
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \
             --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \
             --no-thinking-mode
@@ -172,7 +190,7 @@ if ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "[ -d ${params.
     scp -o StrictHostKeyChecking=no \
         ${REMOTE_USER}@${REMOTE_HOST}:${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-html.tar.gz \
         ./reports/${BUILD_NUMBER}/
-    
+
     mkdir -p reports/${BUILD_NUMBER}/allure-html
     tar -xzf ./reports/${BUILD_NUMBER}/allure-html.tar.gz -C ./reports/${BUILD_NUMBER}/
 fi
@@ -212,22 +230,22 @@ fi
                             html += '</tbody></table>'
                             return html
                         }
-                        
+
                         // 读取 Markdown 报告，提取统计信息
                         def reportFile = sh(script: "ls reports/${BUILD_NUMBER}/*.md 2>/dev/null | head -1", returnStdout: true).trim()
                         def summaryHtml = ""
                         def categoryHtml = ""
-                        
+
                         if (reportFile && fileExists(reportFile)) {
                             def content = readFile(reportFile)
-                            
+
                             // 提取统计汇总 section
                             def summaryMatch = content =~ /(?s)## 统计汇总\n(.*?)(?=\n##|\Z)/
                             if (summaryMatch) {
                                 def summaryMd = summaryMatch.group(1).trim()
                                 summaryHtml = convertMarkdownTableToHtml(summaryMd)
                             }
-                            
+
                             // 提取分类统计 section
                             def categoryMatch = content =~ /(?s)## 分类统计\n(.*?)(?=\n---|\Z)/
                             if (categoryMatch) {
@@ -235,7 +253,7 @@ fi
                                 categoryHtml = convertMarkdownTableToHtml(categoryMd)
                             }
                         }
-                        
+
                         def emailBody = """
 <html>
 <head>
@@ -263,15 +281,18 @@ fi
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
                 <tr><th>模型名称</th><td>${params.MODEL}</td></tr>
+                <tr><th>推理框架</th><td>${params.INFRA}</td></tr>
+                <tr><th>PD模式</th><td>${params.PD}</td></tr>
+                <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>
             </table>
-            
+
             ${summaryHtml ? "<h3>统计汇总</h3>" + summaryHtml : ""}
             ${categoryHtml ? "<h3>分类统计</h3>" + categoryHtml : ""}
-            
+
             <p style="margin-top: 20px;">详细测试报告请查看附件中的 Markdown 文件。</p>
             <p>Jenkins 构建地址: <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
         </div>
@@ -281,7 +302,7 @@ fi
     </div>
 </body>
 </html>"""
-                        
+
                         emailext(
                             subject: "[测试报告] ${params.CHIP} - ${params.MODEL} - 构建 #${BUILD_NUMBER} - ${currentBuild.currentResult}",
                             body: emailBody,
@@ -299,7 +320,7 @@ fi
                 sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                     sh '''
 ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << 'ENDSSH'
-cd ${params.WORK_DIR}/builds 2>/dev/null || exit 0
+cd ${params.WORK_DIR}/builds/${params.TESTER} 2>/dev/null || exit 0
 ls -t | tail -n +21 | xargs -r rm -rf
 ENDSSH'''
                 }

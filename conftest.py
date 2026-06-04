@@ -389,6 +389,24 @@ def pytest_addoption(parser):
         help="Disable thinking mode",
     )
     parser.addoption(
+        "--infra",
+        action="store",
+        default=None,
+        help="Inference framework (e.g., vllm, sglang)",
+    )
+    parser.addoption(
+        "--pd-mode",
+        action="store",
+        default=None,
+        help="PD disaggregation mode (e.g., agg, disagg)",
+    )
+    parser.addoption(
+        "--tester",
+        action="store",
+        default=None,
+        help="Tester name",
+    )
+    parser.addoption(
         "--summary-report-dir",
         action="store",
         default=None,
@@ -630,6 +648,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             summary_report_dir,
             model.get("name", "unknown"),
             chip_name,
+            config.getoption("--infra", default=None),
+            config.getoption("--pd-mode", default=None),
+            config.getoption("--tester", default=None),
             cfg,
         )
     except Exception as e:
