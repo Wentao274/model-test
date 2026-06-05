@@ -456,7 +456,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     @pytest.mark.d_long_context
     @pytest.mark.p0
     def test_context_boundary_exact_limit(
-        self, api_client: ModelAPIClient, test_logger
+        self, api_client: ModelAPIClient, test_logger, record_warning
     ):
         """D11: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度"""
         test_logger.info("=== 测试开始: 上下文边界（二分法） ===")
@@ -514,6 +514,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                             test_logger.warning(
                                 f"长度 {mid} 失败: {response.get('error')}"
                             )
+                            record_warning(f"长度{mid}请求失败")
                             high = mid - 1
                             failed_len = mid
                         else:
@@ -528,6 +529,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                             or "context" in error_msg
                         ):
                             test_logger.warning(f"长度 {mid} 超限: {e}")
+                            record_warning(f"长度{mid}超限")
                             high = mid - 1
                             failed_len = mid
                         else:

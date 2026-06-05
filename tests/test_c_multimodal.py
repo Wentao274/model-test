@@ -250,7 +250,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
-    def test_high_resolution_image(self, api_client: ModelAPIClient, test_logger):
+    def test_high_resolution_image(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """C3: 高分辨率图片 - 4K分辨率图片"""
         test_logger.info("=== 测试开始: 高分辨率图片 ===")
 
@@ -309,6 +311,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.warning(
                 f"测试图片不存在，跳过真实高清图片测试: {real_image_path}"
             )
+            record_warning("测试图片不存在")
         else:
             with open(real_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -506,7 +509,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
-    def test_screenshot_to_code(self, api_client: ModelAPIClient, test_logger):
+    def test_screenshot_to_code(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """C6: 代码截图→代码 - UI设计稿生成代码"""
         test_logger.info("=== 测试开始: 代码截图→代码 ===")
 
@@ -518,6 +523,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.warning(
                 f"测试图片不存在，跳过Flask代码识别: {flask_image_path}"
             )
+            record_warning("Flask测试图片不存在")
         else:
             with open(flask_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -573,6 +579,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             test_logger.warning(
                 f"测试图片不存在，跳过UI登录代码生成: {login_image_path}"
             )
+            record_warning("UI测试图片不存在")
         else:
             with open(login_image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -632,7 +639,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
-    def test_multimodal_tool_call(self, api_client: ModelAPIClient, test_logger):
+    def test_multimodal_tool_call(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """C7: 多模态工具调用 - 基于图片内容触发工具调用"""
         test_logger.info("=== 测试开始: 多模态工具调用 ===")
 
@@ -740,6 +749,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         if len(tool_calls) == 0:
             content = self.get_message_content(response)
             test_logger.warning(f"No tool calls triggered, content: {content}")
+            record_warning("未触发工具调用")
             assert content and len(content.strip()) > 0, "Should have response content"
         else:
             test_logger.info(f"触发了 {len(tool_calls)} 个工具调用")

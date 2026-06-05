@@ -409,7 +409,9 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
     @pytest.mark.h_quality
     @pytest.mark.p1
-    def test_hallucination_detection(self, api_client: ModelAPIClient, test_logger):
+    def test_hallucination_detection(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """H3: 幻觉率检测 - 验证事实性回答"""
         test_logger.info("=== 测试开始: 幻觉检测 ===")
 
@@ -437,6 +439,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
                 test_logger.warning(
                     f"幻觉: 期望包含'{expected}', 实际: {content[:500]}"
                 )
+                record_warning(f"幻觉: 期望包含'{expected}'")
 
         hallucination_rate = hallucination_count / len(test_facts)
         test_logger.info(f"Hallucination rate: {hallucination_rate * 100:.0f}%")

@@ -27,6 +27,7 @@ from allure_commons.types import AttachmentType
 # 测试结果收集器
 _test_results = {}
 _failure_reasons = {}
+_test_warnings = {}
 
 
 def sanitize_model_name(name: str) -> str:
@@ -83,6 +84,34 @@ def cleanup_loggers():
     TestLogger._loggers.clear()
     yield
     TestLogger._loggers.clear()
+
+
+@pytest.fixture(scope="function")
+def record_warning(request):
+    """记录测试警告信息，用于在报告中展示"""
+
+    def _record(warning_msg: str):
+        test_func = request.node.name.split("[")[0]
+        test_func_base = (
+            test_func.replace("test_", "")
+            if test_func.startswith("test_")
+            else test_func
+        )
+        for marker, category in TEST_CATEGORIES.items():
+            for test_info in category["tests"]:
+                if len(test_info) >= 4:
+                    test_idx, test_name, test_desc, test_func_name = test_info
+                else:
+                    test_idx, test_name, test_desc = test_info
+                    test_func_name = test_name.replace("-", "_").replace(" ", "_")
+                if test_func_base == test_func_name:
+                    key = f"{marker}_{test_idx}"
+                    if key not in _test_warnings:
+                        _test_warnings[key] = []
+                    _test_warnings[key].append(warning_msg)
+                    break
+
+    return _record
 
 
 @pytest.fixture(scope="function")
@@ -727,6 +756,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         test_time,
         chip_name=chip_name,
         failure_reasons=_failure_reasons,
+        test_warnings=_test_warnings,
     )
 
     # 生成 Allure 汇总报告
@@ -745,6 +775,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             config.getoption("--tester", default=None),
             cfg,
             failure_reasons=_failure_reasons,
+            test_warnings=_test_warnings,
         )
     except Exception as e:
         terminalreporter.write_line(f"Allure 汇总报告生成失败: {e}")

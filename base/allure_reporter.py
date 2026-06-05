@@ -132,6 +132,7 @@ def generate_allure_summary_report(
     tester: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
     failure_reasons: Optional[Dict[str, str]] = None,
+    test_warnings: Optional[Dict[str, List[str]]] = None,
 ) -> str:
     """
     生成 Allure 汇总报告 (Markdown 格式)
@@ -151,6 +152,7 @@ def generate_allure_summary_report(
     """
     config = config or {}
     failure_reasons = failure_reasons or {}
+    test_warnings = test_warnings or {}
     chip_name = chip_name or get_active_chip(config)
     model_name = model_name or "unknown"
 
@@ -207,7 +209,14 @@ def generate_allure_summary_report(
                 status_icon = "✅"
                 passed_tests += 1
                 category_stats[category_name]["passed"] += 1
-                remark = ""
+                warnings = test_warnings.get(key, [])
+                if warnings:
+                    status_icon = "⚠️✅"
+                    remark = warnings[0][:30]
+                    detail = "; ".join(warnings)
+                    issue_notes.append((test_idx, test_name, f"⚠️ {detail}"))
+                else:
+                    remark = ""
             elif status == "FAILED":
                 status_icon = "❌"
                 failed_tests += 1

@@ -472,7 +472,9 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
     @pytest.mark.a_basic
     @pytest.mark.p1
-    def test_seed_reproducibility(self, api_client: ModelAPIClient, test_logger):
+    def test_seed_reproducibility(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """A10: Seed 可复现性 - 相同seed+temp=0，验证输出一致"""
         test_logger.info("=== 测试开始: Seed 可复现性 ===")
 
@@ -508,6 +510,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             test_logger.warning(f"[2] {content2}")
             if similarity < 0.3:
                 test_logger.warning("相似度极低，模型可能不支持seed参数，跳过严格断言")
+                record_warning("模型可能不支持seed参数")
                 test_logger.info("Seed 可复现性测试降级通过：模型可能不支持seed参数")
             else:
                 assert similarity >= 0.9, (

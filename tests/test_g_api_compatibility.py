@@ -102,7 +102,7 @@ class TestAPICompatibility(BaseTest, StreamingTestMixin):
     @pytest.mark.g_api
     @pytest.mark.p1
     @pytest.mark.smoke
-    def test_models_list(self, api_client: ModelAPIClient, test_logger):
+    def test_models_list(self, api_client: ModelAPIClient, test_logger, record_warning):
         """G3: 模型列表接口"""
         test_logger.info("=== 测试开始: Models List ===")
 
@@ -128,6 +128,7 @@ class TestAPICompatibility(BaseTest, StreamingTestMixin):
                 )
             else:
                 test_logger.warning("Models list is empty")
+                record_warning("Models list is empty")
         else:
             test_logger.info(
                 f"Models response has 'object' field: {response.get('object')}"
@@ -173,7 +174,7 @@ class TestAPICompatibility(BaseTest, StreamingTestMixin):
 
     @pytest.mark.g_api
     @pytest.mark.p1
-    def test_error_codes(self, api_client: ModelAPIClient, test_logger):
+    def test_error_codes(self, api_client: ModelAPIClient, test_logger, record_warning):
         """G5: 错误码规范 - 400/401/404/429/500 错误码"""
         test_logger.info("=== 测试开始: 错误码规范 ===")
 
@@ -212,6 +213,7 @@ class TestAPICompatibility(BaseTest, StreamingTestMixin):
                 ), f"Should be authentication error, got: {error}"
             else:
                 test_logger.warning("401 test: no error returned for invalid API key")
+                record_warning("401未返回错误")
         except Exception as e:
             self.log_full_response(
                 test_logger, {"error": str(e)}, "G5-401认证错误(异常)"

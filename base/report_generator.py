@@ -48,6 +48,7 @@ class TestReportGenerator:
         test_time: Optional[str] = None,
         chip_name: Optional[str] = None,
         failure_reasons: Optional[Dict[str, str]] = None,
+        test_warnings: Optional[Dict[str, List[str]]] = None,
     ) -> Path:
         """生成测试报告"""
         if test_date is None:
@@ -59,7 +60,12 @@ class TestReportGenerator:
         test_datetime = datetime.now().strftime("%Y%m%d%H%M%S")
 
         content = self._build_report_content(
-            model, test_results, test_date, test_time, failure_reasons or {}
+            model,
+            test_results,
+            test_date,
+            test_time,
+            failure_reasons or {},
+            test_warnings or {},
         )
 
         chip_dir = self.output_dir / effective_chip
@@ -86,9 +92,11 @@ class TestReportGenerator:
         test_date: str,
         test_time: str,
         failure_reasons: Dict[str, str] = None,
+        test_warnings: Dict[str, List[str]] = None,
     ) -> str:
         """构建报告内容"""
         failure_reasons = failure_reasons or {}
+        test_warnings = test_warnings or {}
         model_name = model["name"]
         model_display = model["display_name"]
 
@@ -148,8 +156,15 @@ class TestReportGenerator:
                     status_icon = "✅"
                     passed_tests += 1
                     category_stats[category_name]["passed"] += 1
-                    note_short = ""
-                    note_detail = ""
+                    warnings = test_warnings.get(key, [])
+                    if warnings:
+                        status_icon = "⚠️✅"
+                        note_short = warnings[0][:30]
+                        note_detail = "; ".join(warnings)
+                        issue_notes.append((test_idx, test_name, f"⚠️ {note_detail}"))
+                    else:
+                        note_short = ""
+                        note_detail = ""
                 elif status == "FAILED":
                     status_icon = "❌"
                     failed_tests += 1
