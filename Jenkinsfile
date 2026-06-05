@@ -7,10 +7,10 @@ pipeline {
         choice(name: 'PD', choices: ['agg', 'disagg'], description: 'PD分离模式,agg 表示非 PD 分离, disagg 表示 PD 分离')
         string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称')
         string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称')
-        string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080/v1', description: 'API 地址')
+        string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080/v1', description: 'API 地址（必填，请注意带有/v1后缀）')
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
-        string(name: 'MARKER', defaultValue: 'p0', description: '测试标记 (p0, p1, smoke 等)，输入all或为空表示执行所有用例')
+        string(name: 'MARKER', defaultValue: 'all', description: '测试标记 (p0, p1, smoke 等)，输入all或为空表示执行所有用例')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '邮件接收者（逗号分隔）')
         string(name: 'WORK_DIR', defaultValue: '/dingofs/data1/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
     }

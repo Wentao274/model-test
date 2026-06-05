@@ -540,7 +540,7 @@ def _extract_failure_reason(report) -> str:
     else:
         message = str(longrepr)
     short, detail = _summarize_error(message)
-    detail = detail[:150] if len(detail) > 150 else detail
+    detail = detail[:300] if len(detail) > 300 else detail
     return f"{short}|{detail}"
 
 
@@ -566,14 +566,14 @@ def _summarize_error(message: str):
     for pattern, short in error_rules:
         if pattern in msg:
             detail = msg.replace("\n", " ").strip()
-            if len(detail) > 100:
-                detail = detail[:97] + "..."
+            if len(detail) > 200:
+                detail = detail[:197] + "..."
             return short, detail
     last_line = msg.split("\n")[-1].strip() if "\n" in msg else msg
     short = last_line[:15] + "..." if len(last_line) > 15 else last_line
     detail = msg.replace("\n", " ").strip()
-    if len(detail) > 100:
-        detail = detail[:97] + "..."
+    if len(detail) > 200:
+        detail = detail[:197] + "..."
     return short or "未知错误", detail or "未知错误"
 
 

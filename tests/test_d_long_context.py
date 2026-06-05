@@ -47,7 +47,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             val = model_info.get(key, 0)
             if val:
                 return int(val)
-        return 0
+        return 202752
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
