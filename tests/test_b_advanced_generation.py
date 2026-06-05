@@ -621,7 +621,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
 
-        tool_calls = self.get_tool_calls(response)
+        tool_calls = self.get_tool_calls(response) or []
         assert len(tool_calls) > 0, "Should have tool calls"
 
         tool_name = tool_calls[0].get("function", {}).get("name")
@@ -690,7 +690,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             self.log_full_response(test_logger, response, f"B5-测试{idx}-{desc}")
 
             self.assert_response_success(response)
-            tool_calls = self.get_tool_calls(response)
+            tool_calls = self.get_tool_calls(response) or []
             assert len(tool_calls) > 0, (
                 f"[测试{idx}] Should have tool calls for '{desc}'"
             )
@@ -739,7 +739,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "B6-并行工具调用")
 
         self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response) or []
+        tool_calls = self.get_tool_calls(response) or [] or []
 
         test_logger.info(f"工具调用数量: {len(tool_calls)}")
         assert len(tool_calls) > 0, "Should have tool calls"
@@ -849,7 +849,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_response(test_logger, response1, "第1步响应")
         self.log_full_response(test_logger, response1, "B7-第1步")
 
-        tool_calls = self.get_tool_calls(response1)
+        tool_calls = self.get_tool_calls(response1) or []
         if len(tool_calls) == 0:
             pytest.skip("Model does not support multi-step tool chain")
 
@@ -890,7 +890,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_response(test_logger, response2, "第2步响应")
         self.log_full_response(test_logger, response2, "B7-第2步")
 
-        tool_calls2 = self.get_tool_calls(response2)
+        tool_calls2 = self.get_tool_calls(response2) or []
         if len(tool_calls2) == 0:
             pytest.skip("Model did not call get_weather tool")
 
@@ -933,7 +933,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_response(test_logger, response3, "第3步响应")
         self.log_full_response(test_logger, response3, "B7-第3步")
 
-        tool_calls3 = self.get_tool_calls(response3)
+        tool_calls3 = self.get_tool_calls(response3) or []
         if len(tool_calls3) == 0:
             pytest.skip("Model did not call translate tool")
 

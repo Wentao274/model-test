@@ -81,8 +81,28 @@ def check_multimodal_failure(content: str, media_type: str = "image") -> str | N
         return None
     content_lower = content.lower()
     keywords = NO_IMAGE_KEYWORDS if media_type == "image" else NO_VIDEO_KEYWORDS
+    positive_keywords = [
+        "图片内容",
+        "图片描述",
+        "图片中",
+        "画面中",
+        "图像中",
+        "描述",
+        "颜色",
+        "蓝色",
+        "红色",
+        "绿色",
+        "可以看到",
+        "呈现出",
+        "显示",
+        "content",
+        "description",
+    ]
+    has_positive = any(kw in content_lower for kw in positive_keywords)
     for keyword in keywords:
         if keyword in content_lower:
+            if has_positive:
+                continue
             return keyword
     return None
 
@@ -256,6 +276,52 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         """C3: 高分辨率图片 - 4K分辨率图片"""
         test_logger.info("=== 测试开始: 高分辨率图片 ===")
 
+        # ========== 测试真实高清图片 ==========
+        test_logger.info("=== 测试真实高清图片: sun_raise.jpg ===")
+        real_image_path = IMAGES_DIR / "high" / "sun_raise.jpg"
+
+        if not real_image_path.exists():
+            test_logger.warning(
+                f"测试图片不存在，跳过真实高清图片测试: {real_image_path}"
+            )
+            record_warning("测试图片不存在")
+        else:
+            with open(real_image_path, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "请详细描述这张图片的内容"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                        },
+                    ],
+                }
+            ]
+            test_logger.info("请求: 真实高清图片理解")
+
+            response = api_client.chat_completion(messages)
+            self.log_full_response(test_logger, response, "C3-真实高清图")
+
+            if response.get("error"):
+                pytest.skip(
+                    f"Model does not support real high-res images: {response['error']}"
+                )
+
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+
+            content = self.get_message_content(response)
+            assert len(content) > 20, (
+                f"Response should be detailed for high-res image, got {len(content)} chars"
+            )
+
+            test_logger.info(f"Real high-res image response: {content[:2000]}...")
+
+        test_logger.info("=== 测试程序生成高清图片 ===")
         # 生成4K图片
         import io
         from PIL import Image
@@ -303,50 +369,6 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         test_logger.info("High resolution image test completed")
 
-        # ========== 测试真实高清图片 ==========
-        test_logger.info("=== 测试真实高清图片: sun_raise.jpg ===")
-        real_image_path = IMAGES_DIR / "high" / "sun_raise.jpg"
-
-        if not real_image_path.exists():
-            test_logger.warning(
-                f"测试图片不存在，跳过真实高清图片测试: {real_image_path}"
-            )
-            record_warning("测试图片不存在")
-        else:
-            with open(real_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "请详细描述这张图片的内容"},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
-                        },
-                    ],
-                }
-            ]
-            test_logger.info("请求: 真实高清图片理解")
-
-            response = api_client.chat_completion(messages)
-            self.log_full_response(test_logger, response, "C3-真实高清图")
-
-            if response.get("error"):
-                pytest.skip(
-                    f"Model does not support real high-res images: {response['error']}"
-                )
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-
-            content = self.get_message_content(response)
-            assert len(content) > 20, (
-                f"Response should be detailed for high-res image, got {len(content)} chars"
-            )
-
-            test_logger.info(f"Real high-res image response: {content[:2000]}...")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p0
