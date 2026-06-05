@@ -237,6 +237,7 @@ fi
                         def reportFile = sh(script: "ls reports/${BUILD_NUMBER}/*.md 2>/dev/null | head -1", returnStdout: true).trim()
                         def summaryHtml = ""
                         def categoryHtml = ""
+                        def conclusionHtml = ""
 
                         if (reportFile && fileExists(reportFile)) {
                             def content = readFile(reportFile)
@@ -249,10 +250,27 @@ fi
                             }
 
                             // 提取分类统计 section
-                            def categoryMatch = content =~ /(?s)## 分类统计\n(.*?)(?=\n---|\Z)/
+                            def categoryMatch = content =~ /(?s)## 分类统计\n(.*?)(?=\n##|\n---|\Z)/
                             if (categoryMatch) {
                                 def categoryMd = categoryMatch.group(1).trim()
                                 categoryHtml = convertMarkdownTableToHtml(categoryMd)
+                            }
+
+                            // 提取测试结论 section
+                            def conclusionMatch = content =~ /(?s)## 测试结论\n(.*?)(?=\n##\s+\S|\Z)/
+                            if (conclusionMatch) {
+                                def conclusionMd = conclusionMatch.group(1).trim()
+                                conclusionHtml = conclusionMd
+                                    .replaceAll(/>\s*\*\*结论：/, '> <strong>结论：')
+                                    .replaceAll(/\*\*/, '</strong>')
+                                    .replaceAll(/###\s+(.+)/, '<h4>$1</h4>')
+                                    .replaceAll(/^- \x{274C}\s+(.+)$/m, '<div style="color:#d32f2f;padding-left:15px;">❌ $1</div>')
+                                    .replaceAll(/^- \x{26A0}\x{FE0F}?\s+(.+)$/m, '<div style="color:#f57c00;padding-left:15px;">⚠️ $1</div>')
+                                    .replaceAll(/^- \x{274C}/, '<div style="color:#d32f2f;padding-left:15px;">❌ ')
+                                    .replaceAll(/^- \x{26A0}\x{FE0F}?/, '<div style="color:#f57c00;padding-left:15px;">⚠️ ')
+                                    .replaceAll(/^\*\*(.+?)\*\*[：:](.*)$/m, '<strong>$1</strong>$2')
+                                    .replaceAll(/\n\n/, '<br/><br/>')
+                                    .replaceAll(/\n/, '<br/>')
                             }
                         }
 
@@ -269,6 +287,8 @@ fi
         th { background-color: #f2f2f2; }
         .summary-table th { background-color: #e3f2fd; }
         .category-table th { background-color: #fff3e0; }
+        .conclusion { background-color: #f5f5f5; border-left: 4px solid #ff9800; padding: 12px 15px; margin-top: 10px; border-radius: 3px; }
+        .conclusion h4 { margin: 8px 0 4px 0; color: #333; }
         .footer { margin-top: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 0 0 5px 5px; color: #666; font-size: 12px; }
     </style>
 </head>
@@ -295,6 +315,7 @@ fi
 
             ${summaryHtml ? "<h3>统计汇总</h3>" + summaryHtml : ""}
             ${categoryHtml ? "<h3>分类统计</h3>" + categoryHtml : ""}
+            ${conclusionHtml ? "<h3>测试结论</h3><div class=\"conclusion\">" + conclusionHtml + "</div>" : ""}
 
             <p style="margin-top: 20px;">详细测试报告请查看附件中的 Markdown 文件。</p>
             <p>Jenkins 构建地址: <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>

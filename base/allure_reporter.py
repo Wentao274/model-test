@@ -122,6 +122,164 @@ def get_test_category_info(test_nodeid: str) -> Optional[tuple]:
     return None
 
 
+def _build_conclusion(
+    category_stats: Dict,
+    test_results: Dict[str, str],
+    failure_reasons: Dict[str, str],
+    test_warnings: Dict[str, List[str]],
+) -> List[str]:
+    """构建测试结论"""
+    lines = []
+    lines.append("## 测试结论")
+    lines.append("")
+
+    critical_issues = []
+    important_issues = []
+    general_issues = []
+    warning_issues = []
+
+    for marker, category in TEST_CATEGORIES.items():
+        category_name = category["name"]
+        criticality = category.get("criticality", "一般")
+        stats = category_stats.get(category_name, {})
+
+        category_failed = []
+        category_partial = []
+        category_warned = []
+
+        for test_info in category["tests"]:
+            test_idx = test_info[0]
+            test_name = test_info[1]
+            key = f"{marker}_{test_idx}"
+            status = test_results.get(key, "未运行")
+
+            if status == "FAILED":
+                reason = failure_reasons.get(key, "测试未通过")
+                _, detail = _split_reason(reason)
+                category_failed.append((test_idx, test_name, detail))
+            elif status == "PARTIAL":
+                reason = failure_reasons.get(key, "部分用例未通过")
+                _, detail = _split_reason(reason)
+                category_partial.append((test_idx, test_name, detail))
+            elif status == "PASSED":
+                warnings = test_warnings.get(key, [])
+                if warnings:
+                    category_warned.append((test_idx, test_name, "; ".join(warnings)))
+
+        if category_failed or category_partial:
+            issue_type = (
+                "未通过"
+                if category_failed and not category_partial
+                else (
+                    "部分通过"
+                    if category_partial and not category_failed
+                    else "未通过/部分通过"
+                )
+            )
+            entry = {
+                "category": category_name,
+                "criticality": criticality,
+                "type": issue_type,
+                "failed": category_failed,
+                "partial": category_partial,
+            }
+            if criticality == "关键":
+                critical_issues.append(entry)
+            elif criticality == "重要":
+                important_issues.append(entry)
+            else:
+                general_issues.append(entry)
+
+        if category_warned:
+            warning_issues.append(
+                {
+                    "category": category_name,
+                    "criticality": criticality,
+                    "warnings": category_warned,
+                }
+            )
+
+    has_critical_failure = len(critical_issues) > 0
+    has_important_failure = len(important_issues) > 0
+    has_general_failure = len(general_issues) > 0
+    has_warnings = len(warning_issues) > 0
+
+    if (
+        not has_critical_failure
+        and not has_important_failure
+        and not has_general_failure
+    ):
+        if has_warnings:
+            conclusion = "⚠️ 有条件通过"
+            lines.append(f"> **结论：{conclusion}**")
+            lines.append("")
+            lines.append("所有测试用例均已通过，但存在警告项需要关注：")
+        else:
+            conclusion = "✅ 通过"
+            lines.append(f"> **结论：{conclusion}**")
+            lines.append("")
+            lines.append("所有测试用例均已通过，测试结果可接受。")
+    elif has_critical_failure:
+        conclusion = "❌ 不通过"
+        lines.append(f"> **结论：{conclusion}**")
+        lines.append("")
+        lines.append("关键分类存在未通过用例，测试结果不可接受，必须修复后重新测试。")
+    else:
+        conclusion = "⚠️ 有条件通过"
+        lines.append(f"> **结论：{conclusion}**")
+        lines.append("")
+        if has_important_failure:
+            lines.append("重要分类存在未通过用例，建议修复后重新测试。")
+        else:
+            lines.append("一般分类存在未通过用例，可酌情接受，建议后续修复。")
+
+    lines.append("")
+
+    if critical_issues:
+        lines.append("### 关键分类问题")
+        lines.append("")
+        for entry in critical_issues:
+            lines.append(f"**{entry['category']}**（{entry['type']}）：")
+            for test_idx, test_name, detail in entry["failed"]:
+                lines.append(f"- ❌ {test_idx} {test_name}：{detail}")
+            for test_idx, test_name, detail in entry["partial"]:
+                lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
+            lines.append("")
+
+    if important_issues:
+        lines.append("### 重要分类问题")
+        lines.append("")
+        for entry in important_issues:
+            lines.append(f"**{entry['category']}**（{entry['type']}）：")
+            for test_idx, test_name, detail in entry["failed"]:
+                lines.append(f"- ❌ {test_idx} {test_name}：{detail}")
+            for test_idx, test_name, detail in entry["partial"]:
+                lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
+            lines.append("")
+
+    if general_issues:
+        lines.append("### 一般分类问题")
+        lines.append("")
+        for entry in general_issues:
+            lines.append(f"**{entry['category']}**（{entry['type']}）：")
+            for test_idx, test_name, detail in entry["failed"]:
+                lines.append(f"- ❌ {test_idx} {test_name}：{detail}")
+            for test_idx, test_name, detail in entry["partial"]:
+                lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
+            lines.append("")
+
+    if warning_issues:
+        lines.append("### 警告项")
+        lines.append("")
+        for entry in warning_issues:
+            lines.append(f"**{entry['category']}**：")
+            for test_idx, test_name, detail in entry["warnings"]:
+                lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
+            lines.append("")
+
+    return lines
+
+
 def generate_allure_summary_report(
     test_results: Dict[str, str],
     output_dir: str = "allure-report",
@@ -305,6 +463,13 @@ def generate_allure_summary_report(
         lines.append(
             f"| {category_name:14s} | {total:3d} | {passed:3d} | {failed:4d} | {partial:5d} | {skipped:5d} | {cat_pass_rate:5s} |"
         )
+
+    lines.append("")
+
+    conclusion_lines = _build_conclusion(
+        category_stats, test_results, failure_reasons, test_warnings
+    )
+    lines.extend(conclusion_lines)
 
     lines.append("")
     lines.append("---")

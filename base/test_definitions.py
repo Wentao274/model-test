@@ -9,6 +9,7 @@ from typing import Dict
 TEST_CATEGORIES = {
     "a_basic": {
         "name": "A. 基础推理能力",
+        "criticality": "关键",
         "tests": [
             (
                 "A1",
@@ -66,6 +67,7 @@ TEST_CATEGORIES = {
     },
     "b_advanced": {
         "name": "B. 高级生成功能",
+        "criticality": "重要",
         "tests": [
             (
                 "B1",
@@ -131,6 +133,7 @@ TEST_CATEGORIES = {
     },
     "c_multimodal": {
         "name": "C. 多模态能力",
+        "criticality": "一般",
         "tests": [
             ("C1", "单图理解", "图片+文本提问", "single_image_understanding"),
             ("C2", "多图对比", "跨图比较", "multi_image_comparison"),
@@ -144,6 +147,7 @@ TEST_CATEGORIES = {
     },
     "d_long_context": {
         "name": "D. 长上下文处理",
+        "criticality": "重要",
         "tests": [
             ("D1", "短上下文基线", "1K tokens", "short_context_baseline"),
             ("D2", "中等上下文", "8K-16K tokens", "medium_context"),
@@ -181,6 +185,7 @@ TEST_CATEGORIES = {
     },
     "e_performance": {
         "name": "E. 性能指标",
+        "criticality": "一般",
         "tests": [
             ("E1", "TTFT", "首Token延迟", "ttft"),
             ("E2", "TPOT", "每Token生成时间", "tpot"),
@@ -198,6 +203,7 @@ TEST_CATEGORIES = {
     },
     "f_stability": {
         "name": "F. 稳定性与边界",
+        "criticality": "一般",
         "tests": [
             ("F1", "空输入", "空prompt", "empty_input"),
             ("F2", "超大输入", "超max_model_len", "oversized_input"),
@@ -211,6 +217,7 @@ TEST_CATEGORIES = {
     },
     "g_api": {
         "name": "G. API兼容性",
+        "criticality": "重要",
         "tests": [
             (
                 "G1",
@@ -234,6 +241,7 @@ TEST_CATEGORIES = {
     },
     "h_quality": {
         "name": "H. 质量评估与回答相关性",
+        "criticality": "关键",
         "tests": [
             ("H1", "生成质量", "质量对比", "generation_quality"),
             ("H2", "生成一致性", "多次生成", "generation_consistency"),
