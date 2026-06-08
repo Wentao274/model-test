@@ -54,7 +54,7 @@
 | A6  | Temperature 控制   | temp=0（确定性）vs temp=1.0（多样性），验证输出差异     | P0  |
 | A7  | Top-p / Top-k 采样 | 不同 top_p/top_k 值，验证多样性控制生效             | P1  |
 | A8  | Max Tokens 限制    | 设置 max_tokens=50/100/500，验证输出不超限       | P0  |
-| A9  | Stop Sequences   | 设置 stop=["。","\\n"]，验证在 stop token 处截断 | P1  |
+| A9  | Stop Sequences   | 设置 stop=["苹果","香蕉"]，请求列举水果，验证输出在 stop token 处截断且不包含 stop token | P1  |
 | A10 | Seed 可复现性        | 相同 seed + temp=0，验证输出一致                | P1  |
 | A11 | 多语言能力            | 中/英/日/韩/法 等多语言输入输出                     | P1  |
 | A12 | 特殊 Token 处理      | 含 emoji、代码块、数学符号、HTML 标签的输入            | P1  |

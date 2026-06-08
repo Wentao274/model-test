@@ -196,21 +196,92 @@ model-test/
 
 ## Jenkins Pipeline
 
-项目提供了 `Jenkinsfile`，支持参数化构建：
+项目提供了 `Jenkinsfile`，通过 SSH 在远程主机上执行测试，并将结果拉取回 Jenkins 发送邮件通知。
 
-```bash
-# 构建参数
-CHIP=hygon-bw1000        # 芯片平台
-MODEL=minimax-m2.5        # 模型名称
-BASE_URL=http://...        # API 地址
-API_KEY=xxx                # API 密钥
-THINKING_MODE=false        # 思考模式
-MARKER=p0                  # 测试标记
+### 构建参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `TESTER` | string | `liwt` | 测试人员名称（必填） |
+| `INFRA` | choice | `vllm` | 推理框架（vllm / sglang） |
+| `PD` | choice | `agg` | PD分离模式（agg=非分离 / disagg=PD分离） |
+| `CHIP` | string | `nvidia-h100` | 芯片平台名称 |
+| `MODEL` | string | `kimi-k2.5` | 模型名称 |
+| `BASE_URL` | string | `http://10.201.149.10:8080/v1` | API 地址（必填，需带 /v1 后缀） |
+| `API_KEY` | password | 空 | API Key（可选） |
+| `THINKING_MODE` | boolean | `true` | 启用思考模式 |
+| `MARKER` | string | `all` | 测试标记（p0/p1/smoke 等，all 或空=全部） |
+| `RECIPIENTS` | text | `liwt@zetyun.com` | 邮件接收者（逗号分隔） |
+| `WORK_DIR` | string | `/dingofs/data1/...` | 远程测试仓库目录 |
+
+### Pipeline 阶段
+
+| 阶段 | 说明 |
+|------|------|
+| 环境检查 | SSH 到远程主机，同步代码、创建虚拟环境、安装依赖 |
+| 运行测试 | 执行 pytest，生成 Allure 数据和 Markdown 汇总报告 |
+| 生成 Allure 报告 | 调用 `allure generate` 生成 HTML 报告 |
+| 拉取报告到 Jenkins | 将 Markdown 报告、allure-results、Allure HTML 拉取到 Jenkins |
+| 发送邮件 | 解析 Markdown 报告，生成 HTML 邮件发送通知 |
+| 清理旧构建 | 保留最近 20 次构建记录，自动清理更早的 |
+
+### 邮件通知
+
+邮件正文包含以下信息，附件包含完整的 Markdown 测试报告：
+
+1. **测试概要** — 构建编号、测试人员、芯片/模型/框架/模式等参数信息
+2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
+3. **分类统计** — 按 8 大分类的通过率统计
+4. **测试结论** — 根据分类关键等级自动判定（详见"测试结论判定"章节）
+
+邮件主题格式：`[模型推理 - 功能测试报告] {芯片} - {模型} - 构建 #{编号} - {状态}`
+
+### 远程构建输出
+
+构建结果存储在远程主机的 `builds/{TESTER}/{BUILD_NUMBER}/` 目录下：
+
+```
+builds/{TESTER}/{BUILD_NUMBER}/
+├── allure-results/          # Allure 原始数据
+├── allure-report/           # Markdown 汇总报告
+│   └── {chip}/{model}/
+│       └── {model}_{ts}/
+│           └── test_report_{model}_{ts}.md
+└── allure-html/             # Allure HTML 报告
 ```
 
-**输出**：
-- `reports/{BUILD_NUMBER}.tar.gz` - 包含 Markdown 报告、日志、Allure HTML
-- Jenkins Allure 插件自动展示报告趋势
+## 测试结论判定
+
+测试报告的"分类统计"下方会自动生成**测试结论**，根据各分类的测试结果和分类关键等级综合评估。
+
+### 分类关键等级
+
+| 关键等级 | 分类 |
+|---------|------|
+| 关键 | A. 基础推理能力、H. 质量评估与回答相关性 |
+| 重要 | B. 高级生成功能、D. 长上下文处理、G. API兼容性 |
+| 一般 | C. 多模态能力、E. 性能指标、F. 稳定性与边界 |
+
+### 判定规则
+
+按以下优先级依次判断，满足即返回结论：
+
+| 结论 | 判定条件 | 含义 |
+|------|---------|------|
+| ❌ 不通过 | 关键分类存在未通过或部分通过用例 | 必须修复后重新测试 |
+| ⚠️ 有条件通过 | 重要分类存在未通过或部分通过用例（关键分类全部通过） | 建议修复后重新测试 |
+| ⚠️ 有条件通过 | 一般分类存在未通过或部分通过用例（关键+重要分类全部通过） | 可酌情接受，建议后续修复 |
+| ⚠️ 有条件通过 | 全部通过但存在警告项 | 所有用例通过，但警告项需关注 |
+| ✅ 通过 | 全部通过且无警告 | 测试结果可接受 |
+
+### 结论展示内容
+
+结论区域按优先级分层展示问题详情：
+
+1. **关键分类问题** — 列出关键分类中未通过/部分通过的用例及原因
+2. **重要分类问题** — 列出重要分类中未通过/部分通过的用例及原因
+3. **一般分类问题** — 列出一般分类中未通过/部分通过的用例及原因
+4. **警告项** — 列出通过但带有警告的用例及警告内容
 
 ## 注意事项
 
