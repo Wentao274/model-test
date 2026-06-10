@@ -74,12 +74,24 @@ NO_VIDEO_KEYWORDS = [
     "haven't seen",
 ]
 
+PLACEHOLDER_KEYWORDS = [
+    "placeholder",
+    "占位符",
+    "视频占位",
+    "image_placeholder",
+    "video_placeholder",
+    "<|",
+]
+
 
 def check_multimodal_failure(content: str, media_type: str = "image") -> str | None:
     """检查多模态响应是否包含识别失败的关键词"""
     if not content:
         return None
     content_lower = content.lower()
+    for keyword in PLACEHOLDER_KEYWORDS:
+        if keyword in content_lower:
+            return keyword
     keywords = NO_IMAGE_KEYWORDS if media_type == "image" else NO_VIDEO_KEYWORDS
     positive_keywords = [
         "图片内容",
@@ -369,7 +381,6 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         test_logger.info("High resolution image test completed")
 
-
     @pytest.mark.c_multimodal
     @pytest.mark.p0
     def test_chart_ocr(self, api_client: ModelAPIClient, test_logger):
@@ -483,23 +494,17 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         """C5: 视频理解 - 输入视频文件"""
         test_logger.info("=== 测试开始: 视频理解 ===")
 
-        video_path = VIDEO_DIR / "water.mp4"
-
-        if not video_path.exists():
-            pytest.skip(f"Video file not found: {video_path}")
-
-        with open(video_path, "rb") as f:
-            video_b64 = base64.b64encode(f.read()).decode("utf-8")
+        video_url = "http://10.201.132.50:9999/videos/water.mp4"
 
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "请描述这个视频的内容"},
                     {
                         "type": "video_url",
-                        "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
+                        "video_url": {"url": video_url},
                     },
+                    {"type": "text", "text": "请描述这个视频的内容"},
                 ],
             }
         ]
