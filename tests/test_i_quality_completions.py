@@ -270,6 +270,30 @@ class ResponseRelevanceChecker:
         }
 
     @staticmethod
+    def _detect_primary_domain(text: str):
+        """检测文本主要所属领域，返回 (domain, score) 或 (None, 0)"""
+        text_lower = text.lower()
+        domain_scores = {}
+        for domain, domain_info in ResponseRelevanceChecker.DOMAIN_KEYWORDS.items():
+            score = sum(
+                1 for kw in domain_info.get("keywords", []) if kw.lower() in text_lower
+            )
+            if score > 0:
+                domain_scores[domain] = score
+
+        if not domain_scores:
+            return None, 0
+
+        best_domain = max(domain_scores.keys(), key=lambda d: domain_scores[d])
+        best_score = domain_scores[best_domain]
+        total = sum(domain_scores.values())
+
+        if best_score >= 2 and best_score / total > 0.4:
+            return best_domain, best_score / total
+
+        return None, 0
+
+    @staticmethod
     def is_nonsensical_response(question: str, answer: str) -> Tuple[bool, str]:
         """
         检测无意义回答（与问题完全不相关）
@@ -307,6 +331,20 @@ class ResponseRelevanceChecker:
 
         if overlap_ratio < 0.05 and len(answer_lower) > 50:
             return True, "no_keyword_overlap"
+
+        q_domain, q_confidence = ResponseRelevanceChecker._detect_primary_domain(
+            question
+        )
+        a_domain, a_confidence = ResponseRelevanceChecker._detect_primary_domain(answer)
+
+        if (
+            q_domain
+            and a_domain
+            and q_domain != a_domain
+            and q_confidence > 0.3
+            and a_confidence > 0.3
+        ):
+            return True, f"domain_mismatch: question({q_domain}) vs answer({a_domain})"
 
         return False, ""
 
@@ -447,14 +485,25 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response).lower()
+            content = self.get_message_content(response)
 
-            if expected.lower() not in content:
+            is_nonsensical, nonsensical_reason = (
+                ResponseRelevanceChecker.is_nonsensical_response(question, content)
+            )
+            expected_found = expected.lower() in content.lower()
+
+            if not expected_found:
                 hallucination_count += 1
                 test_logger.warning(
                     f"幻觉: 期望包含'{expected}', 实际: {content[:500]}"
                 )
                 record_warning(f"幻觉: 期望包含'{expected}'")
+            elif is_nonsensical:
+                hallucination_count += 1
+                test_logger.warning(
+                    f"幻觉: 回答与问题不相关({nonsensical_reason}), 期望包含'{expected}', 实际: {content[:500]}"
+                )
+                record_warning(f"幻觉: 回答与问题不相关({nonsensical_reason})")
 
         hallucination_rate = hallucination_count / len(test_facts)
         test_logger.info(f"Hallucination rate: {hallucination_rate * 100:.0f}%")
