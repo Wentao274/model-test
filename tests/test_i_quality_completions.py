@@ -364,7 +364,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         quality_scores = []
         for idx, prompt in enumerate(test_cases):
             test_logger.info(f"测试: {prompt}")
-            TestLogger.log_request(test_logger, prompt)
+            TestLogger.log_request(test_logger, [{"role": "user", "content": prompt}])
 
             response = api_client.completion(prompt, max_tokens=2000)
             TestLogger.log_response(test_logger, response, f"质量测试响应")
@@ -394,7 +394,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 生成一致性 (Completions API) ===")
 
         prompt = "请用一句话介绍北京"
-        TestLogger.log_request(test_logger, prompt)
+        TestLogger.log_request(test_logger, [{"role": "user", "content": prompt}])
 
         responses = []
         for i in range(3):
@@ -439,7 +439,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         hallucination_count = 0
         for idx, (question, expected) in enumerate(test_facts):
             test_logger.info(f"测试问题: {question}")
-            TestLogger.log_request(test_logger, question)
+            TestLogger.log_request(test_logger, [{"role": "user", "content": question}])
 
             response = api_client.completion(question, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "幻觉检测响应")
@@ -469,7 +469,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 指令遵循 (Completions API) ===")
 
         prompt = "请用JSON格式回答，包含name和age两个字段，不要有其他内容"
-        TestLogger.log_request(test_logger, prompt)
+        TestLogger.log_request(test_logger, [{"role": "user", "content": prompt}])
 
         response = api_client.completion(prompt, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "指令遵循响应")
@@ -508,7 +508,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         relevant_count = 0
         for idx, (prompt, keywords) in enumerate(test_cases):
             test_logger.info(f"测试问题: {prompt}")
-            TestLogger.log_request(test_logger, prompt)
+            TestLogger.log_request(test_logger, [{"role": "user", "content": prompt}])
 
             response = api_client.completion(prompt, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "相关性响应")
@@ -559,7 +559,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(test_logger, case["question"])
+            TestLogger.log_request(
+                test_logger, [{"role": "user", "content": case["question"]}]
+            )
 
             response = api_client.completion(case["question"], max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
@@ -618,7 +620,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for case in test_cases:
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(test_logger, case["question"])
+            TestLogger.log_request(
+                test_logger, [{"role": "user", "content": case["question"]}]
+            )
 
             response = api_client.completion(case["question"], max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
@@ -676,7 +680,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(test_logger, case["question"])
+            TestLogger.log_request(
+                test_logger, [{"role": "user", "content": case["question"]}]
+            )
 
             response = api_client.completion(case["question"], max_tokens=2000)
             TestLogger.log_response(test_logger, response, "API 响应")
@@ -723,7 +729,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         garbled_count = 0
         for prompt in test_prompts:
             test_logger.info(f"\n测试: {prompt}")
-            TestLogger.log_request(test_logger, prompt)
+            TestLogger.log_request(test_logger, [{"role": "user", "content": prompt}])
 
             response = api_client.completion(prompt, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
@@ -766,7 +772,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         nonsensical_count = 0
         for question in test_cases:
             test_logger.info(f"\n问题: {question}")
-            TestLogger.log_request(test_logger, question)
+            TestLogger.log_request(test_logger, [{"role": "user", "content": question}])
 
             response = api_client.completion(question, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
@@ -821,7 +827,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for idx, question in enumerate(questions):
             test_logger.info(f"\n问题: {question}")
-            TestLogger.log_request(test_logger, question)
+            TestLogger.log_request(test_logger, [{"role": "user", "content": question}])
             response = api_client.completion(question, max_tokens=2000)
             self.log_full_response(test_logger, response, f"I11-{domain}领域-{idx + 1}")
             self.assert_response_success(response)
@@ -950,7 +956,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(test_logger, case["question"])
+            TestLogger.log_request(
+                test_logger, [{"role": "user", "content": case["question"]}]
+            )
 
             response = api_client.completion(case["question"], max_tokens=800)
             TestLogger.log_response(test_logger, response, "API 响应")

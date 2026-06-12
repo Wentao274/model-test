@@ -34,7 +34,7 @@
 | E. 性能指标      | 12   | 延迟、吞吐、并发、显存         |
 | F. 稳定性与边界    | 8    | 异常输入、OOM 恢复、长时间运行   |
 | G. API 兼容性   | 8    | OpenAI 兼容、参数一致性     |
-| H. Chat Completions API 质量评估与回答相关性 | 13   | 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
+| H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 
 ---

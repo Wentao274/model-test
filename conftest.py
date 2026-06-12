@@ -639,6 +639,16 @@ def pytest_runtest_logreport(report):
         _last_test_file = test_file
         _last_test_func = test_func
 
+        # 从 test_id 中提取测试文件名，用于确定 marker 前缀
+        # test_h_quality_chat_completions.py → h_quality_chat_completions
+        # test_i_quality_completions.py → i_quality_completions
+        marker_from_file = None
+        test_file_basename = test_file.replace("\\", "/").split("/")[-1]
+        if test_file_basename.startswith("test_h_"):
+            marker_from_file = "h_quality_chat_completions"
+        elif test_file_basename.startswith("test_i_"):
+            marker_from_file = "i_quality_completions"
+
         # 提取测试函数名（去掉 test_ 前缀）
         test_func_base = (
             test_func.replace("test_", "")
@@ -649,6 +659,10 @@ def pytest_runtest_logreport(report):
         # 遍历所有测试分类，匹配测试函数名
         matched = False
         for marker, category in TEST_CATEGORIES.items():
+            # 如果已从文件名确定了 marker，跳过不匹配的 marker
+            if marker_from_file and marker != marker_from_file:
+                continue
+
             for test_info in category["tests"]:
                 if len(test_info) >= 4:
                     test_idx, test_name, test_desc, test_func_name = test_info
