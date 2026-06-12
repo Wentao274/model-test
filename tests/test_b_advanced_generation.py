@@ -277,7 +277,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert len(content_clean.strip()) > 0, (
             "Final answer content should not be empty"
         )
-        assert any(kw in content_clean for kw in ["56088", "56088.0"]), (
+        assert any(kw in content_clean for kw in ["56088", "56088.0", "56,088"]), (
             f"Thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
         )
 
@@ -330,7 +330,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert len(content_clean.strip()) > 0, (
             "Non-thinking mode should still produce a content response"
         )
-        assert any(kw in content_clean for kw in ["56088", "56088.0"]), (
+        assert any(kw in content_clean for kw in ["56088", "56088.0", "56,088"]), (
             f"Non-thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
         )
 
@@ -386,7 +386,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert len(content2_clean.strip()) > 0, (
             "Non-thinking response should have content"
         )
-        assert any(kw in content2_clean for kw in ["56088", "56088.0"]), (
+        assert any(kw in content2_clean for kw in ["56088", "56088.0", "56,088"]), (
             f"Non-thinking mode should produce correct answer, got: {content2_clean[:500]}"
         )
 
