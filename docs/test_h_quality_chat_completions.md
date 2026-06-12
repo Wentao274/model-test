@@ -1,7 +1,7 @@
-# H. 质量评估与回答相关性测试
+# H. Chat Completions API 质量评估与回答相关性测试
 
 ## 概述
-验证模型生成内容的质量和回答相关性，包括生成质量、一致性、幻觉率、指令遵循度、回答相关性、乱码检测、无意义回答检测、上下文一致性等。
+验证 `/v1/chat/completions` 接口的模型生成内容质量和回答相关性，包括生成质量、一致性、幻觉率、指令遵循度、回答相关性、乱码检测、无意义回答检测、上下文一致性等。
 
 ## 测试点列表
 
@@ -24,18 +24,32 @@
 ## 运行方式
 
 ```bash
-# 运行所有质量评估与回答相关性测试
-pytest tests/test_h_quality.py -v
+# 运行所有 Chat Completions API 质量评估与回答相关性测试
+pytest tests/test_h_quality_chat_completions.py -v
+
+# 使用 marker 运行
+pytest -m h_quality_chat_completions -v
 
 # 运行特定测试
-pytest tests/test_h_quality.py::TestQuality::test_generation_quality -v
+pytest tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality -v
 
 # 运行 P0 优先级测试
-pytest tests/test_h_quality.py -m p0 -v
+pytest tests/test_h_quality_chat_completions.py -m p0 -v
 
 # 运行乱码检测
-pytest tests/test_h_quality.py::TestQuality::test_garbled_text_detection -v
+pytest tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_garbled_text_detection -v
 ```
+
+## 与 I 类测试的区别
+
+| 维度 | H. Chat Completions API 质量评估 | I. Completions API 质量评估 |
+|------|-------------------------------|---------------------------|
+| 接口 | `/v1/chat/completions` | `/v1/completions` |
+| 调用方式 | `api_client.chat_completion(messages)` | `api_client.completion(prompt)` |
+| 输入格式 | `messages` 列表（含 role） | `prompt` 字符串 |
+| 响应格式 | `choices[0].message.content` | `choices[0].text` |
+| 多轮对话 | 原生支持 messages 数组 | 通过拼接 prompt 模拟上下文 |
+| reasoning_content | 支持 | 不支持 |
 
 ## 核心检测逻辑
 
@@ -117,15 +131,14 @@ is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(questi
 | 测试点 | 通过阈值 | 说明 |
 |--------|---------|------|
 | 乱码检测 | < 20% | 乱码率阈值 |
-| 无意义回答 | < 20% | 无意义率阈值 |
-| 领域相关性 | >= 67% | 至少2/3通过 |
-| 回答具体性 | >= 67% | 至少2/3通过 |
+| 无意义回答 | <= 40% | 无意义率阈值 |
+| 领域相关性 | >= 50% | 至少半数通过 |
+| 回答具体性 | >= 50% | 至少半数通过 |
 
 ## 注意事项
 - 质量评估是主观性较强的测试
 - H1的量化质量损失测试需要在不同量化配置下对比
 - H3幻觉率测试使用简单问题作为基准
-- H6-H13原属J类测试，已合并至H类统一管理
 - 领域相关性检测基于关键词匹配，不适用于所有场景
 - H9/H10的容忍阈值允许少量异常，避免误报
 - 多语言问题可能影响关键词匹配准确性

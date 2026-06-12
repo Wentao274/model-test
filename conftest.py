@@ -476,7 +476,7 @@ def pytest_collection_modifyitems(config, items):
         elif "test_g_" in item.nodeid:
             item.add_marker(pytest.mark.g_api)
         elif "test_h_" in item.nodeid:
-            item.add_marker(pytest.mark.h_quality)
+            item.add_marker(pytest.mark.h_quality_chat_completions)
 
 
 def pytest_configure(config):
@@ -488,7 +488,14 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "e_performance: E类测试 - 性能指标")
     config.addinivalue_line("markers", "f_stability: F类测试 - 稳定性与边界")
     config.addinivalue_line("markers", "g_api: G类测试 - API兼容性")
-    config.addinivalue_line("markers", "h_quality: H类测试 - 质量评估与回答相关性")
+    config.addinivalue_line(
+        "markers",
+        "h_quality_chat_completions: H类测试 - Chat Completions API质量评估与回答相关性",
+    )
+    config.addinivalue_line(
+        "markers",
+        "i_quality_completions: I类测试 - Completions API质量评估与回答相关性",
+    )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
 

@@ -1,5 +1,5 @@
 """
-H. 质量评估与回答相关性测试
+H. Chat Completions API 质量评估与回答相关性测试
 
 测试点：
 - H1: 生成质量 - 质量对比
@@ -309,11 +309,11 @@ class ResponseRelevanceChecker:
         return False, ""
 
 
-class TestQuality(BaseTest, StreamingTestMixin):
-    """质量评估与回答相关性测试类"""
+class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
+    """Chat Completions API 质量评估与回答相关性测试类"""
 
     def get_test_category(self) -> str:
-        return "H. 质量评估与回答相关性"
+        return "H. Chat Completions API 质量评估与回答相关性"
 
     def _log_relevance_result(
         self, test_logger, question: str, answer: str, result: Dict[str, Any]
@@ -329,7 +329,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
             test_logger.warning(f"发现不相关关键词: {result['negative_keywords']}")
         test_logger.info(f"原因: {result['reason']}")
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     def test_generation_quality(self, api_client: ModelAPIClient, test_logger):
         """H1: 生成质量评分"""
@@ -368,7 +368,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         )
         assert pass_rate >= 0.5, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     def test_generation_consistency(self, api_client: ModelAPIClient, test_logger):
         """H2: 生成一致性 - 相同输入多次生成的稳定性"""
@@ -407,7 +407,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
             f"lengths: {[len(r) for r in responses]}"
         )
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p1
     def test_hallucination_detection(
         self, api_client: ModelAPIClient, test_logger, record_warning
@@ -447,7 +447,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
             f"Hallucination rate too high: {hallucination_rate * 100:.0f}%"
         )
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     def test_instruction_following(self, api_client: ModelAPIClient, test_logger):
         """H4: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度"""
@@ -484,7 +484,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
             )
             test_logger.info("JSON解析失败但包含关键词")
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     def test_response_relevance(self, api_client: ModelAPIClient, test_logger):
         """H5: 回答相关性"""
@@ -520,7 +520,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"Relevance rate: {relevance_rate * 100:.0f}%")
         assert relevance_rate >= 0.5, f"Low relevance: {relevance_rate * 100:.0f}%"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_response_relevance_programming(
@@ -585,7 +585,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"\n编程领域相关性通过率: {relevance_rate * 100:.0f}%")
         assert relevance_rate >= 0.5, f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_response_relevance_math(self, api_client: ModelAPIClient, test_logger):
@@ -645,7 +645,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"\n数学领域相关性通过率: {relevance_rate * 100:.0f}%")
         assert relevance_rate >= 0.5, f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p1
     def test_response_relevance_science(self, api_client: ModelAPIClient, test_logger):
         """H8: 科学领域回答相关性验证"""
@@ -702,7 +702,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"科学领域相关性通过率: {relevance_rate * 100:.0f}%")
         assert relevance_rate >= 0.5, f"科学领域相关性过低"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_garbled_text_detection(self, api_client: ModelAPIClient, test_logger):
@@ -745,7 +745,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         test_logger.info(f"\n乱码率: {garbled_rate * 100:.0f}%")
         assert garbled_rate < 0.2, f"乱码率过高: {garbled_rate * 100:.0f}%"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p1
     def test_nonsensical_response_detection(
         self, api_client: ModelAPIClient, test_logger
@@ -790,7 +790,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
             f"无意义回答率过高: {nonsensical_rate * 100:.0f}%"
         )
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p1
     @pytest.mark.parametrize(
         "domain,questions",
@@ -846,7 +846,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
         rate = passed_count / len(questions)
         assert rate >= 0.5, f"{domain}领域相关性过低: {rate * 100:.0f}%"
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p0
     def test_conversation_context_consistency(
         self, api_client: ModelAPIClient, test_logger
@@ -912,7 +912,7 @@ class TestQuality(BaseTest, StreamingTestMixin):
 
         test_logger.info("✓ 多轮对话上下文一致性验证通过")
 
-    @pytest.mark.h_quality
+    @pytest.mark.h_quality_chat_completions
     @pytest.mark.p2
     def test_response_specificity_check(self, api_client: ModelAPIClient, test_logger):
         """H13: 回答具体性检查 - 确保回答不是泛泛而谈"""

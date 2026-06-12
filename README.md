@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 8 大类共 83 个测试点。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 96 个测试点。
 
 ## 快速开始
 
@@ -78,9 +78,10 @@ pytest -v
 | E. 性能指标 | 12 | 延迟、吞吐、并发（已禁用） |
 | F. 稳定性与边界 | 8 | 异常输入、OOM恢复 |
 | G. API兼容性 | 8 | OpenAI 接口兼容 |
-| H. 质量评估与回答相关性 | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
+| H. Chat Completions API 质量评估与回答相关性 | 13 | Chat Completions API 生成质量、幻觉率、回答相关性、乱码检测 |
+| I. Completions API 质量评估与回答相关性 | 13 | Completions API 生成质量、幻觉率、回答相关性、乱码检测 |
 
-> 总计：83 个测试点
+> 总计：96 个测试点
 
 ## 按分类运行
 
@@ -91,7 +92,8 @@ pytest -m c_multimodal -v   # 多模态能力
 pytest -m d_long_context -v # 长上下文处理
 pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
-pytest -m h_quality -v          # 质量评估与回答相关性
+pytest -m h_quality_chat_completions -v  # Chat Completions API 质量评估
+pytest -m i_quality_completions -v  # Completions API 质量评估
 pytest -m p0 -v             # P0 优先级测试
 pytest -m smoke -v          # 冒烟测试
 ```
@@ -192,7 +194,8 @@ model-test/
 - [Allure 报告使用指南](docs/allure_report.md)
 - [A类测试说明](docs/test_a_basic_reasoning.md)
 - [B类测试说明](docs/test_b_advanced_generation.md)
-- [H类测试说明](docs/test_h_quality.md)
+- [H类测试说明](docs/test_h_quality_chat_completions.md)
+- [I类测试说明](docs/test_i_quality_completions.md)
 
 ## Jenkins Pipeline
 
@@ -210,7 +213,7 @@ model-test/
 | `BASE_URL` | string | `http://10.201.149.10:8080/v1` | API 地址（必填，需带 /v1 后缀） |
 | `API_KEY` | password | 空 | API Key（可选） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
-| `MARKER` | string | `all` | 测试标记（p0/p1/smoke 等，all 或空=全部） |
+| `MARKER` | choice | `all` | 测试标记（p0/p1/smoke/h_quality_chat_completions/i_quality_completions 等，all=全部） |
 | `RECIPIENTS` | text | `liwt@zetyun.com` | 邮件接收者（逗号分隔） |
 | `WORK_DIR` | string | `/dingofs/data1/...` | 远程测试仓库目录 |
 
@@ -258,8 +261,8 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 | 关键等级 | 分类 |
 |---------|------|
-| 关键 | A. 基础推理能力、H. 质量评估与回答相关性 |
-| 重要 | B. 高级生成功能、D. 长上下文处理、G. API兼容性 |
+| 关键 | A. 基础推理能力、H. Chat Completions API 质量评估与回答相关性 |
+| 重要 | B. 高级生成功能、D. 长上下文处理、G. API兼容性、I. Completions API 质量评估 |
 | 一般 | C. 多模态能力、E. 性能指标、F. 稳定性与边界 |
 
 ### 判定规则

@@ -13,7 +13,8 @@
 | [test_e_performance.md](test_e_performance.md) | E. 性能指标 | 12 |
 | [test_f_stability.md](test_f_stability.md) | F. 稳定性与边界 | 8 |
 | [test_g_api_compatibility.md](test_g_api_compatibility.md) | G. API兼容性 | 8 |
-| [test_h_quality.md](test_h_quality.md) | H. 质量评估与回答相关性 | 13 |
+| [test_h_quality_chat_completions.md](test_h_quality_chat_completions.md) | H. Chat Completions API 质量评估与回答相关性 | 13 |
+| [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
 
 ## 报告文档
 
@@ -35,7 +36,8 @@ pytest -m d_long_context -v # 长上下文处理
 pytest -m e_performance -v  # 性能指标
 pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
-pytest -m h_quality -v          # 质量评估与回答相关性
+pytest -m h_quality_chat_completions -v  # Chat Completions API 质量评估
+pytest -m i_quality_completions -v  # Completions API 质量评估
 
 # 按优先级运行
 pytest -m p0 -v  # P0 优先级测试

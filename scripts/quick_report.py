@@ -77,7 +77,9 @@ def main():
                     elif test_id.startswith("G"):
                         marker = "g_api"
                     elif test_id.startswith("H"):
-                        marker = "h_quality"
+                        marker = "h_quality_chat_completions"
+                    elif test_id.startswith("I"):
+                        marker = "i_quality_completions"
                     else:
                         marker = "unknown"
 

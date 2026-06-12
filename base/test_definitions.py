@@ -239,8 +239,8 @@ TEST_CATEGORIES = {
             ("G8", "Stream参数", "stream参数测试", "stream_parameter"),
         ],
     },
-    "h_quality": {
-        "name": "H. 质量评估与回答相关性",
+    "h_quality_chat_completions": {
+        "name": "H. Chat Completions API 质量评估与回答相关性",
         "criticality": "关键",
         "tests": [
             ("H1", "生成质量", "质量对比", "generation_quality"),
@@ -286,6 +286,65 @@ TEST_CATEGORIES = {
                 "conversation_context_consistency",
             ),
             ("H13", "回答具体性", "确保回答不是泛泛而谈", "response_specificity_check"),
+        ],
+    },
+    "i_quality_completions": {
+        "name": "I. Completions API 质量评估与回答相关性",
+        "criticality": "重要",
+        "tests": [
+            ("I1", "生成质量", "Completions API质量对比", "generation_quality"),
+            ("I2", "生成一致性", "Completions API多次生成", "generation_consistency"),
+            ("I3", "幻觉率", "Completions API事实错误", "hallucination_detection"),
+            ("I4", "指令遵循度", "Completions API格式/角色", "instruction_following"),
+            ("I5", "响应相关性", "Completions API问答相关性", "response_relevance"),
+            (
+                "I6",
+                "编程领域相关性",
+                "Completions API验证编程问题的回答相关性",
+                "response_relevance_programming",
+            ),
+            (
+                "I7",
+                "数学领域相关性",
+                "Completions API验证数学问题的回答相关性",
+                "response_relevance_math",
+            ),
+            (
+                "I8",
+                "科学领域相关性",
+                "Completions API验证科学问题的回答相关性",
+                "response_relevance_science",
+            ),
+            (
+                "I9",
+                "乱码检测",
+                "Completions API检测输出是否为乱码或无效字符",
+                "garbled_text_detection",
+            ),
+            (
+                "I10",
+                "无意义回答检测",
+                "Completions API检测回答是否与问题完全不相关",
+                "nonsensical_response_detection",
+            ),
+            (
+                "I11",
+                "跨领域相关性",
+                "Completions API天气/烹饪等领域相关性",
+                "cross_domain_relevance",
+            ),
+            (
+                "I12",
+                "上下文一致性",
+                "Completions API多轮对话中验证上下文一致性",
+                "conversation_context_consistency",
+            ),
+            (
+                "I13",
+                "回答具体性",
+                "Completions API确保回答不是泛泛而谈",
+                "response_specificity_check",
+            ),
         ],
     },
 }
