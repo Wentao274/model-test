@@ -294,6 +294,15 @@ class ResponseRelevanceChecker:
         return None, 0
 
     @staticmethod
+    def _extract_bigrams(text: str) -> set:
+        """提取文本的2字符滑动窗口集合，用于中文细粒度匹配"""
+        result = set()
+        cn_chars = re.findall(r"[\u4e00-\u9fff]", text)
+        for i in range(len(cn_chars) - 1):
+            result.add(cn_chars[i] + cn_chars[i + 1])
+        return result
+
+    @staticmethod
     def is_nonsensical_response(question: str, answer: str) -> Tuple[bool, str]:
         """
         检测无意义回答（与问题完全不相关）
@@ -315,21 +324,23 @@ class ResponseRelevanceChecker:
         if len(answer_lower) < 3:
             return True, "too_short"
 
-        question_words = set(
-            re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z]{3,}", question_lower)
+        q_bigrams = ResponseRelevanceChecker._extract_bigrams(question_lower)
+        a_bigrams = ResponseRelevanceChecker._extract_bigrams(answer_lower)
+
+        q_en_words = set(re.findall(r"[a-zA-Z]{3,}", question_lower))
+        a_en_words = set(re.findall(r"[a-zA-Z]{3,}", answer_lower))
+
+        cn_overlap = len(q_bigrams & a_bigrams) / max(len(q_bigrams), 1)
+        en_overlap = (
+            len(q_en_words & a_en_words) / max(len(q_en_words), 1)
+            if q_en_words
+            else 1.0
         )
-        answer_words = set(re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z]{3,}", answer_lower))
 
-        common_words = question_words & answer_words
+        has_cn_overlap = cn_overlap >= 0.2
+        has_en_overlap = en_overlap >= 0.2 or not q_en_words
 
-        if len(question_words) >= 2 and len(common_words) == 0:
-            overlap_ratio = 0
-        elif len(question_words) > 0:
-            overlap_ratio = len(common_words) / len(question_words)
-        else:
-            overlap_ratio = 1
-
-        if overlap_ratio < 0.05 and len(answer_lower) > 50:
+        if not has_cn_overlap and not has_en_overlap and len(answer_lower) > 50:
             return True, "no_keyword_overlap"
 
         q_domain, q_confidence = ResponseRelevanceChecker._detect_primary_domain(
@@ -344,7 +355,11 @@ class ResponseRelevanceChecker:
             and q_confidence > 0.3
             and a_confidence > 0.3
         ):
-            return True, f"domain_mismatch: question({q_domain}) vs answer({a_domain})"
+            if not has_cn_overlap and not has_en_overlap:
+                return (
+                    True,
+                    f"domain_mismatch: question({q_domain}) vs answer({a_domain})",
+                )
 
         return False, ""
 
