@@ -691,6 +691,7 @@ def pytest_runtest_logreport(report):
 
 def pytest_runtest_setup(item):
     """在每个测试函数运行前检查文件变化并输出分隔线"""
+    _test_warnings.clear()
     global _last_test_file
     try:
         from _pytest.config import get_plugin_manager

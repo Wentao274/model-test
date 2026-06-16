@@ -3,7 +3,7 @@
 
 # 全局配置
 global:
-  timeout: 120                    # 请求超时时间（秒）
+  timeout: 600                    # 请求超时时间（秒）
   retry_times: 3                  # 重试次数
   log_level: DEBUG                 # 日志级别
   output_dir: ./test_results      # 测试结果输出目录

@@ -196,6 +196,10 @@ class ResponseRelevanceChecker:
 
         text_clean = text.strip()
 
+        math_expression_pattern = r"^[\d\s\+\-\*/=<>±×÷≤≥≠≈∞√∫∑∏∂∇²³ⁿπ\u03b1-\u03c9\u0391-\u03a9\(\)\[\]\.,:;!?]+$"
+        if re.match(math_expression_pattern, text_clean):
+            return False, ""
+
         garbled_patterns = [
             (r"^[�]+$", "replacement_char_only"),
             (r"^[\u0000-\u001F\u007F-\u009F]+$", "control_chars_only"),
