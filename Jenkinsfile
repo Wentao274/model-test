@@ -42,8 +42,8 @@ git pull
 unset https_proxy
 unset http_proxy
 
-echo "=== 设置权限 ==="
-chmod -R 755 ./*
+#echo "=== 设置权限 ==="
+#chmod -R 755 ./*
 if [ ! -d "${params.WORK_DIR}/.venv" ]; then
     echo "创建虚拟环境..."
     cd ${params.WORK_DIR}
@@ -300,13 +300,14 @@ fi
         <div class="content">
             <h3>测试概要</h3>
             <table>
+                <tr><th>项目</th><td>值</td></tr>
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
                 <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
-                <tr><th>模型名称</th><td>${modelDisplayName}</td></tr>
                 <tr><th>推理框架</th><td>${params.INFRA}</td></tr>
+                <tr><th>模型名称</th><td>${modelDisplayName}</td></tr>
+                <tr><th>API 地址</th><td>${params.BASE_URL}</td></tr>
                 <tr><th>PD模式</th><td>${params.PD}</td></tr>
-                <tr><th>BASE_URL</th><td>${params.BASE_URL}</td></tr>
                 <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
