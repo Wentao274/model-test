@@ -4,19 +4,19 @@ I. Completions API 质量评估与回答相关性测试
 与 H 类测试用例一致，区别在于使用 /v1/completions 接口而非 /v1/chat/completions 接口。
 
 测试点：
-- I1: 生成质量 - 质量对比
-- I2: 生成一致性 - 多次生成一致性
-- I3: 幻觉率 - 事实错误检测
-- I4: 指令遵循度 - 格式/角色遵循
-- I5: 响应相关性 - 问答相关性评估
-- I6: 编程领域相关性 - 验证编程问题的回答相关性
-- I7: 数学领域相关性 - 验证数学问题的回答相关性
-- I8: 科学领域相关性 - 验证科学问题的回答相关性
-- I9: 乱码检测 - 检测输出是否为乱码或无效字符
-- I10: 无意义回答检测 - 检测回答是否与问题完全不相关
-- I11: 跨领域相关性 - 天气/烹饪等领域相关性验证
-- I12: 上下文一致性 - 多轮对话中验证上下文一致性（Completions API）
-- I13: 回答具体性 - 确保回答不是泛泛而谈
+- I1: 生成质量 - 质量对比 [P1]
+- I2: 生成一致性 - 多次生成一致性 [P1]
+- I3: 幻觉率 - 事实错误检测 [P1]
+- I4: 指令遵循度 - 格式/角色遵循 [P1]
+- I5: 响应相关性 - 问答相关性评估 [P1]
+- I6: 编程领域相关性 - 验证编程问题的回答相关性 [P1]
+- I7: 数学领域相关性 - 验证数学问题的回答相关性 [P1]
+- I8: 科学领域相关性 - 验证科学问题的回答相关性 [P1]
+- I9: 乱码检测 - 检测输出是否为乱码或无效字符 [P1]
+- I10: 无意义回答检测 - 检测回答是否与问题完全不相关 [P1]
+- I11: 跨领域相关性 - 天气/烹饪等领域相关性验证 [P1]
+- I12: 上下文一致性 - 多轮对话中验证上下文一致性（Completions API） [P1]
+- I13: 回答具体性 - 确保回答不是泛泛而谈 [P2]
 """
 
 import re
@@ -407,9 +407,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info(f"原因: {result['reason']}")
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_generation_quality(self, api_client: ModelAPIClient, test_logger):
-        """I1: 生成质量评分"""
+        """I1 [P1]: 生成质量评分"""
         test_logger.info("=== 测试开始: 生成质量 (Completions API) ===")
 
         test_cases = [
@@ -445,9 +445,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         assert pass_rate >= 0.5, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_generation_consistency(self, api_client: ModelAPIClient, test_logger):
-        """I2: 生成一致性 - 相同输入多次生成的稳定性"""
+        """I2 [P1]: 生成一致性 - 相同输入多次生成的稳定性"""
         test_logger.info("=== 测试开始: 生成一致性 (Completions API) ===")
 
         prompt = "请用一句话介绍北京"
@@ -531,9 +531,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_instruction_following(self, api_client: ModelAPIClient, test_logger):
-        """I4: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度"""
+        """I4 [P1]: 指令遵循度 - 复杂指令（格式、长度、角色）遵循程度"""
         test_logger.info("=== 测试开始: 指令遵循 (Completions API) ===")
 
         prompt = "请用JSON格式回答，包含name和age两个字段，不要有其他内容"
@@ -563,9 +563,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             test_logger.info("JSON解析失败但包含关键词")
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_response_relevance(self, api_client: ModelAPIClient, test_logger):
-        """I5: 回答相关性"""
+        """I5 [P1]: 回答相关性"""
         test_logger.info("=== 测试开始: 回答相关性 (Completions API) ===")
 
         test_cases = [
@@ -598,12 +598,12 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         assert relevance_rate >= 0.5, f"Low relevance: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.smoke
     def test_response_relevance_programming(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """I6: 编程领域回答相关性验证"""
+        """I6 [P1]: 编程领域回答相关性验证"""
         test_logger.info("=== 测试开始: 编程领域回答相关性 (Completions API) ===")
 
         test_cases = [
@@ -661,10 +661,10 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         assert relevance_rate >= 0.5, f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.smoke
     def test_response_relevance_math(self, api_client: ModelAPIClient, test_logger):
-        """I7: 数学领域回答相关性验证"""
+        """I7 [P1]: 数学领域回答相关性验证"""
         test_logger.info("=== 测试开始: 数学领域回答相关性 (Completions API) ===")
 
         test_cases = [
@@ -780,10 +780,10 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         assert relevance_rate >= 0.5, f"科学领域相关性过低"
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.smoke
     def test_garbled_text_detection(self, api_client: ModelAPIClient, test_logger):
-        """I9: 乱码检测 - 验证输出不是乱码"""
+        """I9 [P1]: 乱码检测 - 验证输出不是乱码"""
         test_logger.info("=== 测试开始: 乱码检测 (Completions API) ===")
 
         test_prompts = [
@@ -921,11 +921,11 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         assert rate >= 0.5, f"{domain}领域相关性过低: {rate * 100:.0f}%"
 
     @pytest.mark.i_quality_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_conversation_context_consistency(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """I12: 多轮对话上下文一致性验证（Completions API - 通过拼接 prompt 模拟）"""
+        """I12 [P1]: 多轮对话上下文一致性验证（Completions API - 通过拼接 prompt 模拟）"""
         test_logger.info("=== 测试开始: 多轮对话上下文一致性 (Completions API) ===")
 
         conversation = []

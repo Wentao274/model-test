@@ -212,3 +212,4 @@ builds/
 
 # Test Result
 test_reports/
+logs/

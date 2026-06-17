@@ -9,7 +9,7 @@
 |-----|--------|---------|---------|--------|
 | G1  | OpenAI Chat Completions | /v1/chat/completions 接口兼容 | 请求格式、返回格式完全兼容 | P0 |
 | G2  | OpenAI Completions | /v1/completions 接口兼容 | 传统 completion 格式支持 | P1 |
-| G3  | 模型列表 | /v1/models 返回可用模型 | 正确返回模型 ID 和元信息 | P1 |
+| G3  | 模型列表 | /v1/models 返回可用模型 | 正确返回模型 ID 和元信息 | P0 |
 | G4  | Usage 统计 | 返回中 usage 字段准确 | prompt_tokens + completion_tokens 准确 | P0 |
 | G5  | 错误码规范 | 400/401/404/429/500 错误码 | 符合 OpenAI 错误格式 | P1 |
 | G6  | 客户端 SDK 兼容 | Python openai / JS @openai/sdk | 无需修改代码直接调用 | P0 |

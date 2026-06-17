@@ -2,19 +2,19 @@
 H. Chat Completions API 质量评估与回答相关性测试
 
 测试点：
-- H1: 生成质量 - 质量对比
-- H2: 生成一致性 - 多次生成一致性
-- H3: 幻觉率 - 事实错误检测
-- H4: 指令遵循度 - 格式/角色遵循
-- H5: 响应相关性 - 问答相关性评估
-- H6: 编程领域相关性 - 验证编程问题的回答相关性
-- H7: 数学领域相关性 - 验证数学问题的回答相关性
-- H8: 科学领域相关性 - 验证科学问题的回答相关性
-- H9: 乱码检测 - 检测输出是否为乱码或无效字符
-- H10: 无意义回答检测 - 检测回答是否与问题完全不相关
-- H11: 跨领域相关性 - 天气/烹饪等领域相关性验证
-- H12: 上下文一致性 - 多轮对话中验证上下文一致性
-- H13: 回答具体性 - 确保回答不是泛泛而谈
+- H1: 生成质量 - 质量对比 [P0]
+- H2: 生成一致性 - 多次生成一致性 [P1]
+- H3: 幻觉率 - 事实错误检测 [P1]
+- H4: 指令遵循度 - 格式/角色遵循 [P0]
+- H5: 响应相关性 - 问答相关性评估 [P0]
+- H6: 编程领域相关性 - 验证编程问题的回答相关性 [P0]
+- H7: 数学领域相关性 - 验证数学问题的回答相关性 [P0]
+- H8: 科学领域相关性 - 验证科学问题的回答相关性 [P0]
+- H9: 乱码检测 - 检测输出是否为乱码或无效字符 [P0]
+- H10: 无意义回答检测 - 检测回答是否与问题完全不相关 [P1]
+- H11: 跨领域相关性 - 天气/烹饪等领域相关性验证 [P1]
+- H12: 上下文一致性 - 多轮对话中验证上下文一致性 [P0]
+- H13: 回答具体性 - 确保回答不是泛泛而谈 [P2]
 """
 
 import re
@@ -426,9 +426,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         assert pass_rate >= 0.5, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
 
     @pytest.mark.h_quality_chat_completions
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_generation_consistency(self, api_client: ModelAPIClient, test_logger):
-        """H2: 生成一致性 - 相同输入多次生成的稳定性"""
+        """H2 [P1]: 生成一致性 - 相同输入多次生成的稳定性"""
         test_logger.info("=== 测试开始: 生成一致性 ===")
 
         prompt = "请用一句话介绍北京"
@@ -714,9 +714,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         assert relevance_rate >= 0.5, f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
 
     @pytest.mark.h_quality_chat_completions
-    @pytest.mark.p1
+    @pytest.mark.p0
     def test_response_relevance_science(self, api_client: ModelAPIClient, test_logger):
-        """H8: 科学领域回答相关性验证"""
+        """H8 [P0]: 科学领域回答相关性验证"""
         test_logger.info("=== 测试开始: 科学领域回答相关性 ===")
 
         test_cases = [

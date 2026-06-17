@@ -7,18 +7,18 @@
 
 | ID | 测试点 | 测试内容 | 优先级 |
 |----|--------|---------|--------|
-| I1 | 生成质量 | Completions API 质量对比 | P0 |
-| I2 | 生成一致性 | Completions API 相同输入多次生成的稳定性 | P0 |
+| I1 | 生成质量 | Completions API 质量对比 | P1 |
+| I2 | 生成一致性 | Completions API 相同输入多次生成的稳定性 | P1 |
 | I3 | 幻觉率 | Completions API 生成内容中事实错误的比例 | P1 |
-| I4 | 指令遵循度 | Completions API 复杂指令（格式、长度、角色）遵循程度 | P0 |
-| I5 | 响应相关性 | Completions API 问答相关性评估 | P0 |
-| I6 | 编程领域相关性 | Completions API 验证编程问题的回答相关性 | P0 |
-| I7 | 数学领域相关性 | Completions API 验证数学问题的回答相关性 | P0 |
+| I4 | 指令遵循度 | Completions API 复杂指令（格式、长度、角色）遵循程度 | P1 |
+| I5 | 响应相关性 | Completions API 问答相关性评估 | P1 |
+| I6 | 编程领域相关性 | Completions API 验证编程问题的回答相关性 | P1 |
+| I7 | 数学领域相关性 | Completions API 验证数学问题的回答相关性 | P1 |
 | I8 | 科学领域相关性 | Completions API 验证科学问题的回答相关性 | P1 |
-| I9 | 乱码检测 | Completions API 检测输出是否为乱码或无效字符 | P0 |
+| I9 | 乱码检测 | Completions API 检测输出是否为乱码或无效字符 | P1 |
 | I10 | 无意义回答检测 | Completions API 检测回答是否与问题完全不相关 | P1 |
 | I11 | 跨领域相关性 | Completions API 天气/烹饪等领域相关性验证 | P1 |
-| I12 | 上下文一致性 | Completions API 多轮对话中验证上下文一致性 | P0 |
+| I12 | 上下文一致性 | Completions API 多轮对话中验证上下文一致性 | P1 |
 | I13 | 回答具体性 | Completions API 确保回答不是泛泛而谈 | P2 |
 
 ## 运行方式

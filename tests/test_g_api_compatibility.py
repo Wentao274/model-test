@@ -2,14 +2,14 @@
 G. API 兼容性测试
 
 测试点：
-- G1: OpenAI Chat Completions - /v1/chat/completions 接口兼容
-- G2: OpenAI Completions - /v1/completions 接口兼容
-- G3: 模型列表 - /v1/models 接口
-- G4: Usage 统计 - usage 字段准确性
-- G5: 错误码规范 - 400/401/404/429/500 错误码
-- G6: 客户端 SDK 兼容 - Python openai / JS @openai/sdk
-- G7: 响应格式变体 - response_format 参数测试
-- G8: Stream参数 - stream 参数测试
+- G1: OpenAI Chat Completions - /v1/chat/completions 接口兼容 [P0]
+- G2: OpenAI Completions - /v1/completions 接口兼容 [P1]
+- G3: 模型列表 - /v1/models 接口 [P0]
+- G4: Usage 统计 - usage 字段准确性 [P0]
+- G5: 错误码规范 - 400/401/404/429/500 错误码 [P1]
+- G6: 客户端 SDK 兼容 - Python openai / JS @openai/sdk [P0]
+- G7: 响应格式变体 - response_format 参数测试 [P2]
+- G8: Stream参数 - stream 参数测试 [P2]
 """
 
 import pytest
@@ -100,10 +100,10 @@ class TestAPICompatibility(BaseTest, StreamingTestMixin):
             pytest.skip(f"Completions API not supported: {e}")
 
     @pytest.mark.g_api
-    @pytest.mark.p1
+    @pytest.mark.p0
     @pytest.mark.smoke
     def test_models_list(self, api_client: ModelAPIClient, test_logger, record_warning):
-        """G3: 模型列表接口"""
+        """G3 [P0]: 模型列表接口"""
         test_logger.info("=== 测试开始: Models List ===")
 
         response = api_client.list_models()

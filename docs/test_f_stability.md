@@ -8,10 +8,10 @@
 | ID  | 测试点 | 测试内容 | 优先级 |
 |-----|--------|---------|--------|
 | F1  | 空输入 | 发送空 prompt 或空 messages | P0 |
-| F2  | 超大输入 | 超过 max_model_len 的输入 | P0 |
-| F3  | 非法参数 | temperature=-1, max_tokens=0 等 | P0 |
+| F2  | 超大输入 | 超过 max_model_len 的输入 | P1 |
+| F3  | 非法参数 | temperature=-1, max_tokens=0 等 | P2 |
 | F4  | 特殊字符注入 | SQL注入、Prompt注入、XSS payload | P0 |
-| F5  | 并发稳定性 | 200+ 并发持续运行 | P0 |
+| F5  | 并发稳定性 | 200+ 并发持续运行 | P1 |
 | F6  | OOM恢复 | 显存耗尽后的服务行为 | P1 |
 | F7  | 长时间运行 | 连续服务 24 小时 | P1 |
 | F8  | 请求超时处理 | 客户端超时断开 | P1 |

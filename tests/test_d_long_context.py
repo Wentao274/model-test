@@ -2,18 +2,18 @@
 D. 长上下文处理测试
 
 测试点：
-- D1: 短上下文基线 - input 1K tokens，验证正常推理
-- D2: 中等上下文 - input 8K-16K tokens，验证质量不降
-- D3: 长上下文 - input 32K-64K tokens，验证召回和推理
-- D4: 超长上下文 - input 128K+ tokens，验证不OOM且可用
-- D5: 大海捞针（NIAH）- 长文本中插入特定信息，验证召回率
-- D6: 上下文边界行为 - 输入恰好等于max_model_len
-- D7: 超出上下文截断 - 输入超过模型限制
-- D8: 长输出生成 - 要求生成4K-8K tokens的长文本
-- D9: 超长上下文（非流式） - 验证超长上下文请求的非流式输出
-- D10: 超长上下文（流式） - 验证超长上下文请求的流式输出
-- D11: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度
-- D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
+- D1: 短上下文基线 - input 1K tokens，验证正常推理 [P0]
+- D2: 中等上下文 - input 8K-16K tokens，验证质量不降 [P1]
+- D3: 长上下文 - input 32K-64K tokens，验证召回和推理 [P1]
+- D4: 超长上下文 - input 128K+ tokens，验证不OOM且可用 [P0]
+- D5: 大海捞针（NIAH）- 长文本中插入特定信息，验证召回率 [P0]
+- D6: 上下文边界行为 - 输入恰好等于max_model_len [P1]
+- D7: 超出上下文截断 - 输入超过模型限制 [P1]
+- D8: 长输出生成 - 要求生成4K-8K tokens的长文本 [P1]
+- D9: 超长上下文（非流式） - 验证超长上下文请求的非流式输出 [P1]
+- D10: 超长上下文（流式） - 验证超长上下文请求的流式输出 [P1]
+- D11: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度 [P1]
+- D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性 [P0]
 """
 
 import pytest
@@ -83,9 +83,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.d_long_context
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_medium_context(self, api_client: ModelAPIClient, test_logger):
-        """D2: 中等上下文 - input 8K-16K tokens"""
+        """D2 [P1]: 中等上下文 - input 8K-16K tokens"""
         test_logger.info("=== 测试开始: 中等上下文 ===")
 
         # 约4000字
@@ -118,9 +118,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.d_long_context
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_long_context(self, api_client: ModelAPIClient, test_logger):
-        """D3: 长上下文 - input 32K-64K tokens，验证召回和推理"""
+        """D3 [P1]: 长上下文 - input 32K-64K tokens，验证召回和推理"""
         test_logger.info("=== 测试开始: 长上下文 ===")
 
         # 约16000字
@@ -156,11 +156,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.d_long_context
-    @pytest.mark.p1
+    @pytest.mark.p0
     @pytest.mark.slow
     @pytest.mark.smoke
     def test_super_long_context(self, api_client: ModelAPIClient, test_logger):
-        """D4: 超长上下文 - input 128K+ tokens"""
+        """D4 [P0]: 超长上下文 - input 128K+ tokens"""
         test_logger.info("=== 测试开始: 超长上下文 ===")
 
         # 约32000字
@@ -454,11 +454,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             raise
 
     @pytest.mark.d_long_context
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_context_boundary_exact_limit(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """D11: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度"""
+        """D11 [P1]: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度"""
         test_logger.info("=== 测试开始: 上下文边界（二分法） ===")
 
         try:

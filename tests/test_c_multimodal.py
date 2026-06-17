@@ -2,14 +2,14 @@
 C. 多模态能力测试
 
 测试点：
-- C1: 单图理解 - 输入一张图片+文本提问，验证视觉理解
-- C2: 多图对比 - 输入多张图片，验证跨图比较和推理
-- C3: 高分辨率图片 - 4K分辨率图片，验证细节识别能力
-- C4: 图表/OCR - 表格截图、流程图、手写文字识别
-- C5: 视频理解 - 输入视频文件，验证时序理解和总结
-- C6: 代码截图→代码 - UI设计稿/代码截图，生成对应代码
-- C7: 多模态工具调用 - 基于图片内容触发工具调用
-- C8: 图片格式兼容性 - PNG/JPEG/WebP/GIF/Base64编码
+- C1: 单图理解 - 输入一张图片+文本提问，验证视觉理解 [P1]
+- C2: 多图对比 - 输入多张图片，验证跨图比较和推理 [P1]
+- C3: 高分辨率图片 - 4K分辨率图片，验证细节识别能力 [P2]
+- C4: 图表/OCR - 表格截图、流程图、手写文字识别 [P1]
+- C5: 视频理解 - 输入视频文件，验证时序理解和总结 [P2]
+- C6: 代码截图→代码 - UI设计稿/代码截图，生成对应代码 [P2]
+- C7: 多模态工具调用 - 基于图片内容触发工具调用 [P2]
+- C8: 图片格式兼容性 - PNG/JPEG/WebP/GIF/Base64编码 [P1]
 """
 
 import json
@@ -126,10 +126,10 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         return "C. 多模态能力"
 
     @pytest.mark.c_multimodal
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.smoke
     def test_single_image_understanding(self, api_client: ModelAPIClient, test_logger):
-        """C1: 单图理解 - 输入一张图片+文本提问"""
+        """C1 [P1]: 单图理解 - 输入一张图片+文本提问"""
         test_logger.info("=== 测试开始: 单图理解 ===")
 
         # 创建简单的红色图片
@@ -281,11 +281,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("Multi-image comparison completed")
 
     @pytest.mark.c_multimodal
-    @pytest.mark.p1
+    @pytest.mark.p2
     def test_high_resolution_image(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """C3: 高分辨率图片 - 4K分辨率图片"""
+        """C3 [P2]: 高分辨率图片 - 4K分辨率图片"""
         test_logger.info("=== 测试开始: 高分辨率图片 ===")
 
         # ========== 测试真实高清图片 ==========
@@ -382,9 +382,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info("High resolution image test completed")
 
     @pytest.mark.c_multimodal
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_chart_ocr(self, api_client: ModelAPIClient, test_logger):
-        """C4: 图表/OCR - 表格截图识别"""
+        """C4 [P1]: 图表/OCR - 表格截图识别"""
         test_logger.info("=== 测试开始: 图表/OCR ===")
 
         # 创建包含文字的图片
@@ -489,9 +489,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         test_logger.info(f"Real table OCR result: {content[:2000]}...")
 
     @pytest.mark.c_multimodal
-    @pytest.mark.p1
+    @pytest.mark.p2
     def test_video_understanding(self, api_client: ModelAPIClient, test_logger):
-        """C5: 视频理解 - 输入视频文件"""
+        """C5 [P2]: 视频理解 - 输入视频文件"""
         test_logger.info("=== 测试开始: 视频理解 ===")
 
         video_url = "http://10.201.132.50:9999/videos/water.mp4"

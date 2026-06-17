@@ -100,7 +100,7 @@ def record_warning(request):
         for marker, category in TEST_CATEGORIES.items():
             for test_info in category["tests"]:
                 if len(test_info) >= 4:
-                    test_idx, test_name, test_desc, test_func_name = test_info
+                    test_idx, test_name, test_desc, test_func_name = test_info[:4]
                 else:
                     test_idx, test_name, test_desc = test_info
                     test_func_name = test_name.replace("-", "_").replace(" ", "_")
@@ -665,7 +665,7 @@ def pytest_runtest_logreport(report):
 
             for test_info in category["tests"]:
                 if len(test_info) >= 4:
-                    test_idx, test_name, test_desc, test_func_name = test_info
+                    test_idx, test_name, test_desc, test_func_name = test_info[:4]
                 else:
                     test_idx, test_name, test_desc = test_info
                     test_func_name = test_name.replace("-", "_").replace(" ", "_")

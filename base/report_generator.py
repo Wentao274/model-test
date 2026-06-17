@@ -291,7 +291,15 @@ class TestReportGenerator:
         failure_reasons: Dict[str, str],
         test_warnings: Dict[str, List[str]],
     ) -> str:
-        """构建测试结论"""
+        """构建测试结论
+
+        结论判定按测试用例的优先级（P0/P1/P2）划分，分类关键性不再作为判定依据。
+        优先级映射：
+            P0 = 关键（Critical）
+            P1 = 重要（Important）
+            P2 = 一般（General）
+        SKIPPED（未测试）用例不参与结论判定。
+        """
         lines = []
         lines.append("## 测试结论")
         lines.append("")
@@ -303,76 +311,54 @@ class TestReportGenerator:
 
         for marker, category in TEST_CATEGORIES.items():
             category_name = category["name"]
-            criticality = category.get("criticality", "一般")
-            stats = category_stats.get(category_name, {})
-
-            category_failed = []
-            category_partial = []
-            category_warned = []
 
             for test_info in category["tests"]:
                 test_idx = test_info[0]
                 test_name = test_info[1]
+                priority = test_info[4] if len(test_info) >= 5 else "P1"
                 key = f"{marker}_{test_idx}"
                 status = test_results.get(key, "未运行")
+
+                if status == "SKIPPED" or status == "未运行":
+                    continue
 
                 if status == "FAILED":
                     reason = failure_reasons.get(key, "测试未通过")
                     _, detail = _split_reason(reason)
-                    category_failed.append((test_idx, test_name, detail))
+                    entry_item = (test_idx, test_name, priority, detail)
+                    if priority == "P0":
+                        critical_issues.append(entry_item)
+                    elif priority == "P1":
+                        important_issues.append(entry_item)
+                    else:
+                        general_issues.append(entry_item)
                 elif status == "PARTIAL":
                     reason = failure_reasons.get(key, "部分用例未通过")
                     _, detail = _split_reason(reason)
-                    category_partial.append((test_idx, test_name, detail))
+                    entry_item = (test_idx, test_name, priority, detail)
+                    if priority == "P0":
+                        critical_issues.append(entry_item)
+                    elif priority == "P1":
+                        important_issues.append(entry_item)
+                    else:
+                        general_issues.append(entry_item)
                 elif status == "PASSED":
                     warnings = test_warnings.get(key, [])
                     if warnings:
-                        category_warned.append(
-                            (test_idx, test_name, "; ".join(warnings))
+                        warning_issues.append(
+                            (
+                                test_idx,
+                                test_name,
+                                category_name,
+                                priority,
+                                "; ".join(warnings),
+                            )
                         )
-
-            if category_failed or category_partial:
-                all_issues = category_failed + category_partial
-                issue_type = (
-                    "未通过"
-                    if category_failed and not category_partial
-                    else (
-                        "部分通过"
-                        if category_partial and not category_failed
-                        else "未通过/部分通过"
-                    )
-                )
-                entry = {
-                    "category": category_name,
-                    "criticality": criticality,
-                    "type": issue_type,
-                    "failed": category_failed,
-                    "partial": category_partial,
-                }
-                if criticality == "关键":
-                    critical_issues.append(entry)
-                elif criticality == "重要":
-                    important_issues.append(entry)
-                else:
-                    general_issues.append(entry)
-
-            if category_warned:
-                warning_issues.append(
-                    {
-                        "category": category_name,
-                        "criticality": criticality,
-                        "warnings": category_warned,
-                    }
-                )
 
         has_critical_failure = len(critical_issues) > 0
         has_important_failure = len(important_issues) > 0
         has_general_failure = len(general_issues) > 0
         has_warnings = len(warning_issues) > 0
-        total_failed = sum(
-            len(i["failed"]) + len(i["partial"])
-            for i in critical_issues + important_issues + general_issues
-        )
 
         if (
             not has_critical_failure
@@ -383,71 +369,61 @@ class TestReportGenerator:
                 conclusion = "⚠️ 有条件通过"
                 lines.append(f"> **结论：{conclusion}**")
                 lines.append("")
-                lines.append("所有测试用例均已通过，但存在警告项需要关注：")
+                lines.append("所有已运行的测试用例均已通过，但存在警告项需要关注：")
             else:
                 conclusion = "✅ 通过"
                 lines.append(f"> **结论：{conclusion}**")
                 lines.append("")
-                lines.append("所有测试用例均已通过，测试结果可接受。")
+                lines.append("所有已运行的测试用例均已通过，测试结果可接受。")
         elif has_critical_failure:
             conclusion = "❌ 不通过"
             lines.append(f"> **结论：{conclusion}**")
             lines.append("")
             lines.append(
-                "关键分类存在未通过用例，测试结果不可接受，必须修复后重新测试。"
+                "存在 P0（关键）优先级用例未通过，测试结果不可接受，必须修复后重新测试。"
             )
         else:
             conclusion = "⚠️ 有条件通过"
             lines.append(f"> **结论：{conclusion}**")
             lines.append("")
             if has_important_failure:
-                lines.append("重要分类存在未通过用例，建议修复后重新测试。")
+                lines.append("存在 P1（重要）优先级用例未通过，建议修复后重新测试。")
             else:
-                lines.append("一般分类存在未通过用例，可酌情接受，建议后续修复。")
+                lines.append(
+                    "仅存在 P2（一般）优先级用例未通过，可酌情接受，建议后续修复。"
+                )
 
         lines.append("")
 
         if critical_issues:
-            lines.append("### 关键分类问题")
+            lines.append("### 关键(P0)优先级问题")
             lines.append("")
-            for entry in critical_issues:
-                lines.append(f"**{entry['category']}**（{entry['type']}）：")
-                for test_idx, test_name, detail in entry["failed"]:
-                    lines.append(f"- ❌ {test_idx} {test_name}：{detail}")
-                for test_idx, test_name, detail in entry["partial"]:
-                    lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
-                lines.append("")
+            for test_idx, test_name, priority, detail in critical_issues:
+                lines.append(f"- ❌ {test_idx} {test_name}（{priority}）：{detail}")
+            lines.append("")
 
         if important_issues:
-            lines.append("### 重要分类问题")
+            lines.append("### 重要(P1)优先级问题")
             lines.append("")
-            for entry in important_issues:
-                lines.append(f"**{entry['category']}**（{entry['type']}）：")
-                for test_idx, test_name, detail in entry["failed"]:
-                    lines.append(f"- ❌ {test_idx} {test_name}：{detail}")
-                for test_idx, test_name, detail in entry["partial"]:
-                    lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
-                lines.append("")
+            for test_idx, test_name, priority, detail in important_issues:
+                lines.append(f"- ❌ {test_idx} {test_name}（{priority}）：{detail}")
+            lines.append("")
 
         if general_issues:
-            lines.append("### 一般分类问题")
+            lines.append("### 一般(P2)优先级问题")
             lines.append("")
-            for entry in general_issues:
-                lines.append(f"**{entry['category']}**（{entry['type']}）：")
-                for test_idx, test_name, detail in entry["failed"]:
-                    lines.append(f"- ❌ {test_idx} {test_name}：{detail}")
-                for test_idx, test_name, detail in entry["partial"]:
-                    lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
-                lines.append("")
+            for test_idx, test_name, priority, detail in general_issues:
+                lines.append(f"- ❌ {test_idx} {test_name}（{priority}）：{detail}")
+            lines.append("")
 
         if warning_issues:
             lines.append("### 警告项")
             lines.append("")
-            for entry in warning_issues:
-                lines.append(f"**{entry['category']}**：")
-                for test_idx, test_name, detail in entry["warnings"]:
-                    lines.append(f"- ⚠️ {test_idx} {test_name}：{detail}")
-                lines.append("")
+            for test_idx, test_name, category_name, priority, detail in warning_issues:
+                lines.append(
+                    f"- ⚠️ {test_idx} {test_name}（{category_name}, {priority}）：{detail}"
+                )
+            lines.append("")
 
         return "\n".join(lines)
 

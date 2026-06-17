@@ -8,11 +8,11 @@
 | ID  | 测试点              | 测试内容                                    | 优先级 |
 |-----|-------------------|-----------------------------------------|-----|
 | B1  | 思考模式（Thinking） | 开启thinking mode，验证返回思考链+最终答案        | P0  |
-| B2  | 非思考模式（Instant） | 关闭thinking，验证无hidden thinking泄漏       | P0  |
+| B2  | 非思考模式（Instant） | 关闭thinking，验证无hidden thinking泄漏       | P1  |
 | B3  | 思考模式切换         | 同一会话内thinking↔non-thinking切换          | P1  |
 | B4  | 工具调用-单工具       | 定义单个function，验证模型正确调用并传参           | P0  |
-| B5  | 工具调用-多工具       | 定义多个function，验证模型选择正确的工具           | P0  |
-| B6  | 工具调用-并行调用      | 单次回复中并行调用多个工具                      | P1  |
+| B5  | 工具调用-多工具       | 定义多个function，验证模型选择正确的工具           | P1  |
+| B6  | 工具调用-并行调用      | 单次回复中并行调用多个工具                      | P2  |
 | B7  | 工具调用-多步链式      | 工具结果作为下一步输入，验证3+步链式执行            | P1  |
 | B8  | JSON Mode         | response_format=json_object，验证输出合法JSON  | P0  |
 | B9  | 结构化输出           | JSON Schema约束输出格式，验证字段完整性          | P0  |

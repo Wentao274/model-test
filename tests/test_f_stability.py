@@ -2,14 +2,14 @@
 F. 稳定性与边界测试
 
 测试点：
-- F1: 空输入 - 发送空 prompt 或空 messages
-- F2: 超大输入 - 超过 max_model_len 的输入
-- F3: 非法参数 - temperature=-1, max_tokens=0 等
-- F4: 特殊字符注入 - SQL注入、Prompt注入、XSS payload
-- F5: 并发稳定性 - 200+ 并发持续运行
-- F6: OOM恢复 - 显存耗尽后的服务行为
-- F7: 长时间运行 - 连续服务 24 小时
-- F8: 请求超时处理 - 客户端超时断开
+- F1: 空输入 - 发送空 prompt 或空 messages [P0]
+- F2: 超大输入 - 超过 max_model_len 的输入 [P1]
+- F3: 非法参数 - temperature=-1, max_tokens=0 等 [P2]
+- F4: 特殊字符注入 - SQL注入、Prompt注入、XSS payload [P0]
+- F5: 并发稳定性 - 200+ 并发持续运行 [P1]
+- F6: OOM恢复 - 显存耗尽后的服务行为 [P1]
+- F7: 长时间运行 - 连续服务 24 小时 [P1]
+- F8: 请求超时处理 - 客户端超时断开 [P1]
 """
 
 import pytest
@@ -52,9 +52,9 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
             ), f"Should return proper error for empty input, got: {e}"
 
     @pytest.mark.f_stability
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_oversized_input(self, api_client: ModelAPIClient, test_logger):
-        """F2: 超大输入 - 超过 max_model_len 的输入"""
+        """F2 [P1]: 超大输入 - 超过 max_model_len 的输入"""
         test_logger.info("=== 测试开始: 超大输入 ===")
 
         # 生成超长文本
@@ -96,9 +96,9 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
             ), f"Should return proper error for oversized input, got: {e}"
 
     @pytest.mark.f_stability
-    @pytest.mark.p0
+    @pytest.mark.p2
     def test_invalid_parameters(self, api_client: ModelAPIClient, test_logger):
-        """F3: 非法参数 - temperature=-1, max_tokens=0 等"""
+        """F3 [P2]: 非法参数 - temperature=-1, max_tokens=0 等"""
         test_logger.info("=== 测试开始: 非法参数 ===")
 
         messages = [{"role": "user", "content": "测试"}]
@@ -231,10 +231,10 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
         test_logger.info(f"Prompt injection response: {content[:2000]}")
 
     @pytest.mark.f_stability
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.slow
     def test_concurrent_stability(self, api_client: ModelAPIClient, test_logger):
-        """F5: 并发稳定性 - 200+ 并发持续运行"""
+        """F5 [P1]: 并发稳定性 - 200+ 并发持续运行"""
         test_logger.info("=== 测试开始: 并发稳定性 ===")
 
         messages = [{"role": "user", "content": "快速测试"}]

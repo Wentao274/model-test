@@ -2,16 +2,16 @@
 B. 高级生成功能测试
 
 测试点：
-- B1: 思考模式（Thinking）- 开启thinking mode，验证返回思考链+最终答案
-- B2: 非思考模式（Instant）- 关闭thinking，验证无hidden thinking泄漏
-- B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换
-- B4: 工具调用-单工具 - 定义单个function，验证模型正确调用并传参
-- B5: 工具调用-多工具 - 定义多个function，验证模型选择正确的工具
-- B6: 工具调用-并行调用 - 单次回复中并行调用多个工具
-- B7: 工具调用-多步链式 - 工具结果作为下一步输入，验证3+步链式执行
-- B8: JSON Mode - response_format=json_object，验证输出合法JSON
-- B9: 结构化输出 - JSON Schema约束输出格式，验证字段完整性
-- B10: Prefix / Suffix 约束 - 指定输出前缀或格式模板，验证遵循度
+- B1: 思考模式（Thinking）- 开启thinking mode，验证返回思考链+最终答案 [P0]
+- B2: 非思考模式（Instant）- 关闭thinking，验证无hidden thinking泄漏 [P1]
+- B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换 [P1]
+- B4: 工具调用-单工具 - 定义单个function，验证模型正确调用并传参 [P0]
+- B5: 工具调用-多工具 - 定义多个function，验证模型选择正确的工具 [P1]
+- B6: 工具调用-并行调用 - 单次回复中并行调用多个工具 [P2]
+- B7: 工具调用-多步链式 - 工具结果作为下一步输入，验证3+步链式执行 [P1]
+- B8: JSON Mode - response_format=json_object，验证输出合法JSON [P0]
+- B9: 结构化输出 - JSON Schema约束输出格式，验证字段完整性 [P0]
+- B10: Prefix / Suffix 约束 - 指定输出前缀或格式模板，验证遵循度 [P2]
 """
 
 import json
@@ -284,10 +284,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info("思考模式验证通过")
 
     @pytest.mark.b_advanced
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.smoke
     def test_non_thinking_mode(self, api_client: ModelAPIClient, test_logger):
-        """B2: 非思考模式（Instant）- 关闭thinking，无泄漏"""
+        """B2 [P1]: 非思考模式（Instant）- 关闭thinking，无泄漏"""
         test_logger.info("=== 测试开始: 非思考模式 ===")
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
@@ -669,10 +669,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.b_advanced
-    @pytest.mark.p0
+    @pytest.mark.p1
     @pytest.mark.smoke
     def test_multiple_tool_call(self, api_client: ModelAPIClient, test_logger):
-        """B5: 工具调用-多工具 - 定义多个function，验证模型选择正确的工具"""
+        """B5 [P1]: 工具调用-多工具 - 定义多个function，验证模型选择正确的工具"""
         test_logger.info("=== 测试开始: 多工具调用（5个工具） ===")
 
         tools = TOOLS_FIVE
@@ -731,9 +731,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info("多工具调用测试完成")
 
     @pytest.mark.b_advanced
-    @pytest.mark.p1
+    @pytest.mark.p2
     def test_parallel_tool_calls(self, api_client: ModelAPIClient, test_logger):
-        """B6: 工具调用-并行调用 - 单次回复中并行调用多个工具"""
+        """B6 [P2]: 工具调用-并行调用 - 单次回复中并行调用多个工具"""
         test_logger.info("=== 测试开始: 并行工具调用 ===")
 
         messages = [{"role": "user", "content": "请帮我查一下北京今天的天气和时间"}]
