@@ -883,7 +883,20 @@ def _fail_and_exit(msg: str, code: int = 2) -> None:
     使用 os._exit() 而非 pytest.exit()，是为了绕过 pytest 在
     pytest_sessionstart 阶段对 Exit 异常的双重 traceback 输出，
     确保错误信息只打印一次。
+
+    同时将失败原因写入标记文件（路径由 CONNECTIVITY_FAILED_FLAG
+    环境变量指定），供 Jenkinsfile 检测并在邮件中提示。
     """
+    flag_file = os.environ.get("CONNECTIVITY_FAILED_FLAG", "")
+    if flag_file:
+        try:
+            flag_dir = os.path.dirname(flag_file)
+            if flag_dir:
+                os.makedirs(flag_dir, exist_ok=True)
+            with open(flag_file, "w", encoding="utf-8") as f:
+                f.write(msg)
+        except Exception:
+            pass
     print(f"\n{msg}", file=sys.stderr)
     os._exit(code)
 

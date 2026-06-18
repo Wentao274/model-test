@@ -70,6 +70,9 @@ cd ${params.WORK_DIR}
 source .venv/bin/activate
 mkdir -p ${BUILD_OUTPUT_DIR}
 
+# 清理上一次可能残留的连通性检查失败标记
+rm -f ${BUILD_OUTPUT_DIR}/.connectivity_check_failed
+
 # 打印参数值
 echo "=== 参数信息 ==="
 echo "TESTER: ${params.TESTER}"
@@ -83,6 +86,7 @@ echo "MARKER: ${params.MARKER}"
 
 if [ "${params.THINKING_MODE}" = "true" ]; then
     if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
+        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
         pytest -v \\
             --base-url "${params.BASE_URL}" \\
             --api-key "${apiKey}" \\
@@ -95,6 +99,7 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
             --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
             --thinking-mode
     else
+        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
         pytest -v -m "${params.MARKER}" \\
             --base-url "${params.BASE_URL}" \\
             --api-key "${apiKey}" \\
@@ -109,6 +114,7 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
     fi
 else
     if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
+        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
         pytest -v \\
             --base-url "${params.BASE_URL}" \\
             --api-key "${apiKey}" \\
@@ -121,6 +127,7 @@ else
             --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
             --no-thinking-mode
     else
+        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
         pytest -v -m "${params.MARKER}" \\
             --base-url "${params.BASE_URL}" \\
             --api-key "${apiKey}" \\
@@ -233,6 +240,23 @@ fi
                         // 处理模型名中的路径分隔符
                         def modelDisplayName = params.MODEL.contains('/') ? params.MODEL.split('/')[-1] : params.MODEL
 
+                        // 检查 API 连通性是否失败（通过 conftest.py 写入的标记文件）
+                        def connectivityCheckFailed = false
+                        def connectivityFailureReason = ""
+                        try {
+                            def flagFile = "${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
+                            def flagContent = sh(
+                                script: "ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} \"cat ${flagFile} 2>/dev/null\"",
+                                returnStdout: true
+                            ).trim()
+                            if (flagContent) {
+                                connectivityCheckFailed = true
+                                connectivityFailureReason = flagContent
+                            }
+                        } catch (Exception e) {
+                            echo "检查连通性标记文件失败: ${e.message}"
+                        }
+
                         // 读取 Markdown 报告，提取统计信息
                         def reportFile = sh(script: "ls reports/${BUILD_NUMBER}/*.md 2>/dev/null | head -1", returnStdout: true).trim()
                         def summaryHtml = ""
@@ -274,6 +298,22 @@ fi
                             }
                         }
 
+                        // 构建连通性检查失败的提示 HTML（HTML 转义）
+                        def connectivityFailureHtml = ""
+                        if (connectivityCheckFailed) {
+                            def escapedReason = connectivityFailureReason
+                                .replace('&', '&amp;')
+                                .replace('<', '&lt;')
+                                .replace('>', '&gt;')
+                                .replace('\n', '<br/>')
+                            connectivityFailureHtml = """
+    <div style="background-color: #ffebee; border-left: 4px solid #d32f2f; padding: 12px 15px; margin-top: 15px; border-radius: 3px;">
+        <h3 style="color: #d32f2f; margin-top: 0; margin-bottom: 8px;">⚠️ 连通性检查未通过</h3>
+        <p style="margin-top: 0; margin-bottom: 8px;">本次测试未能正常执行用例，原因是 API 连通性检查失败：</p>
+        <pre style="background-color: #fff; padding: 10px; border-radius: 3px; overflow-x: auto; white-space: pre-wrap; margin: 0; font-family: Menlo, Consolas, monospace; font-size: 12px;">${escapedReason}</pre>
+    </div>"""
+                        }
+
                         def emailBody = """
 <html>
 <head>
@@ -313,6 +353,7 @@ fi
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>
             </table>
+            ${connectivityFailureHtml}
 
             ${summaryHtml ? "<h3>统计汇总</h3>" + summaryHtml : ""}
             ${categoryHtml ? "<h3>分类统计</h3>" + categoryHtml : ""}
