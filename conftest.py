@@ -877,6 +877,17 @@ def _resolve_connectivity_config(session) -> Dict[str, Any]:
     }
 
 
+def _fail_and_exit(msg: str, code: int = 2) -> None:
+    """打印错误消息并直接退出 Python
+
+    使用 os._exit() 而非 pytest.exit()，是为了绕过 pytest 在
+    pytest_sessionstart 阶段对 Exit 异常的双重 traceback 输出，
+    确保错误信息只打印一次。
+    """
+    print(f"\n{msg}", file=sys.stderr)
+    os._exit(code)
+
+
 def _run_connectivity_check(session) -> None:
     """在测试运行前执行模型 API 连通性检查
 
@@ -885,7 +896,7 @@ def _run_connectivity_check(session) -> None:
       2. POST {base_url}/chat/completions (messages=[hello])
 
     api_key 为空时不传 Authorization 头，否则自动添加 Bearer 鉴权。
-    检查失败直接调用 pytest.exit 中止测试，避免无效用例执行。
+    检查失败直接退出进程（exit code 2），避免无效用例执行。
     """
     info = _resolve_connectivity_config(session)
     base_url = info["base_url"]
@@ -916,16 +927,12 @@ def _run_connectivity_check(session) -> None:
     try:
         resp = requests.get(models_url, headers=headers, timeout=10)
     except requests.exceptions.RequestException as e:
-        pytest.exit(
-            f"ERROR: API 连通性检查失败, 无法访问 {models_url}: {e}",
-            returncode=2,
-        )
+        _fail_and_exit(f"ERROR: API 连通性检查失败, 无法访问 {models_url}: {e}")
 
     if resp.status_code != 200:
-        pytest.exit(
+        _fail_and_exit(
             f"ERROR: API 连通性检查失败, HTTP状态码: {resp.status_code}, URL: {models_url}\n"
-            f"响应内容: {resp.text[:500]}",
-            returncode=2,
+            f"响应内容: {resp.text[:500]}"
         )
     print(f"  [OK] /models 连通性检查通过, HTTP状态码: {resp.status_code}")
 
@@ -939,16 +946,14 @@ def _run_connectivity_check(session) -> None:
     try:
         resp = requests.post(chat_url, headers=headers, json=payload, timeout=30)
     except requests.exceptions.RequestException as e:
-        pytest.exit(
-            f"ERROR: Chat Completions 接口检查失败, 无法访问 {chat_url}: {e}",
-            returncode=2,
+        _fail_and_exit(
+            f"ERROR: Chat Completions 接口检查失败, 无法访问 {chat_url}: {e}"
         )
 
     if resp.status_code != 200:
-        pytest.exit(
+        _fail_and_exit(
             f"ERROR: Chat Completions 接口检查失败, HTTP状态码: {resp.status_code}\n"
-            f"响应内容: {resp.text[:500]}",
-            returncode=2,
+            f"响应内容: {resp.text[:500]}"
         )
     print(f"  [OK] /chat/completions 连通性检查通过, HTTP状态码: {resp.status_code}")
     print("=== API 连通性检查完成 ===\n")
