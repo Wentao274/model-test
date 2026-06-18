@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 import pytest
+import requests
 import yaml
 from typing import Dict, Any, List
 
@@ -830,3 +831,134 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         f"生成 Allure HTML 报告: allure generate {allure_results_dir} -o {allure_report_dir} --clean"
     )
     terminalreporter.write_line(f"打开 Allure 报告: allure open {allure_report_dir}")
+
+
+def _resolve_connectivity_config(session) -> Dict[str, Any]:
+    """解析连通性检查所需的 base_url / api_key / model_name
+
+    优先级：
+    - base_url: 命令行 --base-url > 环境变量 BASE_URL > config.yaml 启用的 chip
+    - api_key:  命令行 --api-key > 环境变量 API_KEY（可为空）
+    - model_name: 命令行 --model-name/--model > 环境变量 MODEL_NAME > config.yaml default_model
+    """
+    cfg = {}
+    try:
+        cfg = load_config()
+    except Exception as e:
+        print(f"[连通性检查] 警告: 加载 config.yaml 失败: {e}")
+
+    py_config = session.config
+
+    base_url = py_config.getoption("--base-url", default=None) or os.environ.get(
+        "BASE_URL"
+    )
+    if not base_url:
+        for name, chip_cfg in cfg.get("chips", {}).items():
+            if isinstance(chip_cfg, dict) and chip_cfg.get("enabled", False):
+                base_url = chip_cfg.get("base_url")
+                break
+            elif chip_cfg is True:
+                base_url = ""
+                break
+
+    cmd_api_key = py_config.getoption("--api-key", default=None)
+    api_key = cmd_api_key if cmd_api_key else os.environ.get("API_KEY", "")
+
+    cmd_model = py_config.getoption(
+        "--model-name", default=None
+    ) or py_config.getoption("--model", default=None)
+    env_model = os.environ.get("MODEL_NAME")
+    model_name = cmd_model or env_model or cfg.get("default_model", "qwen35")
+
+    return {
+        "base_url": (base_url or "").rstrip("/"),
+        "api_key": api_key or "",
+        "model_name": model_name,
+    }
+
+
+def _run_connectivity_check(session) -> None:
+    """在测试运行前执行模型 API 连通性检查
+
+    检查项：
+      1. GET {base_url}/models
+      2. POST {base_url}/chat/completions (messages=[hello])
+
+    api_key 为空时不传 Authorization 头，否则自动添加 Bearer 鉴权。
+    检查失败直接调用 pytest.exit 中止测试，避免无效用例执行。
+    """
+    info = _resolve_connectivity_config(session)
+    base_url = info["base_url"]
+    api_key = info["api_key"]
+    model_name = info["model_name"]
+
+    if not base_url:
+        print(
+            "\n[连通性检查] 跳过: 未配置 BASE_URL（命令行、环境变量、config.yaml 均无）"
+        )
+        return
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    print("\n=== API 连通性检查 ===")
+    print(f"  BASE_URL: {base_url}")
+    print(f"  MODEL: {model_name}")
+    if api_key:
+        masked = f"***{api_key[-4:]}" if len(api_key) > 4 else "***"
+        print(f"  API_KEY: {masked}")
+    else:
+        print("  API_KEY: (空, 不携带鉴权头)")
+
+    # 1. 检查 /models
+    models_url = f"{base_url}/models"
+    try:
+        resp = requests.get(models_url, headers=headers, timeout=10)
+    except requests.exceptions.RequestException as e:
+        pytest.exit(
+            f"ERROR: API 连通性检查失败, 无法访问 {models_url}: {e}",
+            returncode=2,
+        )
+
+    if resp.status_code != 200:
+        pytest.exit(
+            f"ERROR: API 连通性检查失败, HTTP状态码: {resp.status_code}, URL: {models_url}\n"
+            f"响应内容: {resp.text[:500]}",
+            returncode=2,
+        )
+    print(f"  [OK] /models 连通性检查通过, HTTP状态码: {resp.status_code}")
+
+    # 2. 检查 /chat/completions
+    chat_url = f"{base_url}/chat/completions"
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 10,
+    }
+    try:
+        resp = requests.post(chat_url, headers=headers, json=payload, timeout=30)
+    except requests.exceptions.RequestException as e:
+        pytest.exit(
+            f"ERROR: Chat Completions 接口检查失败, 无法访问 {chat_url}: {e}",
+            returncode=2,
+        )
+
+    if resp.status_code != 200:
+        pytest.exit(
+            f"ERROR: Chat Completions 接口检查失败, HTTP状态码: {resp.status_code}\n"
+            f"响应内容: {resp.text[:500]}",
+            returncode=2,
+        )
+    print(f"  [OK] /chat/completions 连通性检查通过, HTTP状态码: {resp.status_code}")
+    print("=== API 连通性检查完成 ===\n")
+
+
+def pytest_sessionstart(session):
+    """pytest 会话开始时执行 API 连通性检查
+
+    不在此处捕获异常: pytest.exit 内部抛出的 _pytest.outcomes.Exit 是
+    Exception 的子类，外层再包装一次会导致错误信息被打印两次。
+    任何真实的异常将由 pytest 自行输出 traceback。
+    """
+    _run_connectivity_check(session)
