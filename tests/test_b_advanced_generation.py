@@ -21,7 +21,7 @@ import urllib.parse
 import json as json_lib
 import pytest
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
@@ -247,27 +247,188 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             test_logger.info(f"思考内容: {thinking_content[:2000]}...")
         return has_reasoning_field or has_thinking_tags
 
+    def _chat_with_thinking_fallback(
+        self,
+        api_client: ModelAPIClient,
+        messages: List[Dict[str, Any]],
+        test_logger,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], str, bool]:
+        """
+        自动尝试多种思考模式参数格式（不依赖 config.yaml 配置）
+
+        策略顺序：
+            1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
+            2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
+            3. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
+
+        Args:
+            api_client: API 客户端
+            messages: 请求消息列表
+            test_logger: 测试日志器
+
+        Returns:
+            (response, used_params, strategy_name, has_thinking)
+            - response: 最后一次（成功的或最后一次失败的）响应
+            - used_params: 实际生效的参数
+            - strategy_name: 策略名称（如 'enable_thinking'）
+            - has_thinking: 是否成功获取到思考内容
+        """
+        strategies = [
+            ("enable_thinking", {"enable_thinking": True}),
+            (
+                "chat_template_kwargs.thinking",
+                {"chat_template_kwargs": {"thinking": True}},
+            ),
+            (
+                "thinking.type.enabled",
+                {"thinking": {"type": "enabled"}},
+            ),
+        ]
+
+        last_response = None
+        last_params = None
+        last_strategy = None
+
+        for idx, (strategy_name, params) in enumerate(strategies, 1):
+            test_logger.info(
+                f"[{idx}/{len(strategies)}] 尝试思考参数策略: "
+                f"{strategy_name} -> {params}"
+            )
+            try:
+                response = api_client.chat_completion(messages, extra_body=params)
+            except Exception as e:
+                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
+                last_strategy = strategy_name
+                last_params = params
+                continue
+
+            self.assert_response_success(response)
+            has_thinking = self._check_has_thinking(response, test_logger)
+
+            if has_thinking:
+                test_logger.info(f"策略 {strategy_name} 成功获取到思考内容")
+                return response, params, strategy_name, True
+
+            test_logger.warning(
+                f"策略 {strategy_name} 未获取到思考内容，将尝试下一策略"
+            )
+            last_response = response
+            last_params = params
+            last_strategy = strategy_name
+
+        return last_response, last_params, last_strategy, False
+
+    def _chat_without_thinking_fallback(
+        self,
+        api_client: ModelAPIClient,
+        messages: List[Dict[str, Any]],
+        test_logger,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], str, bool]:
+        """
+        自动尝试多种关闭思考模式的参数格式（不依赖 config.yaml 配置）
+
+        策略顺序：
+            1. {} - 不传 thinking 参数（依赖模型默认行为）
+            2. {"enable_thinking": False} - 顶层字段显式关闭
+            3. {"chat_template_kwargs": {"thinking": False}} - chat_template 方式
+            4. {"thinking": {"type": "disabled"}} - 顶层对象（DeepSeek/GLM 等）
+
+        任一策略无思考内容泄漏即返回；若全部仍泄漏，则 has_no_thinking=False。
+
+        Returns:
+            (response, used_params, strategy_name, has_no_thinking)
+        """
+        strategies = [
+            ("no_thinking_params", {}),
+            ("enable_thinking_false", {"enable_thinking": False}),
+            (
+                "chat_template_kwargs.thinking_false",
+                {"chat_template_kwargs": {"thinking": False}},
+            ),
+            (
+                "thinking.type.disabled",
+                {"thinking": {"type": "disabled"}},
+            ),
+        ]
+
+        last_response = None
+        last_params = None
+        last_strategy = None
+
+        for idx, (strategy_name, params) in enumerate(strategies, 1):
+            display_params = params if params else "(空)"
+            test_logger.info(
+                f"[{idx}/{len(strategies)}] 尝试非思考策略: "
+                f"{strategy_name} -> {display_params}"
+            )
+            try:
+                response = api_client.chat_completion(messages, extra_body=params)
+            except Exception as e:
+                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
+                last_strategy = strategy_name
+                last_params = params
+                continue
+
+            self.assert_response_success(response)
+            has_thinking = self._check_has_thinking(response, test_logger)
+
+            if not has_thinking:
+                test_logger.info(f"策略 {strategy_name} 成功获取到无思考泄漏的响应")
+                return response, params, strategy_name, True
+
+            test_logger.warning(
+                f"策略 {strategy_name} 检测到思考内容泄漏，将尝试下一策略"
+            )
+            last_response = response
+            last_params = params
+            last_strategy = strategy_name
+
+        return last_response, last_params, last_strategy, False
+
     @pytest.mark.b_advanced
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_thinking_mode(self, api_client: ModelAPIClient, test_logger):
-        """B1: 思考模式（Thinking）- 开启thinking mode"""
-        test_logger.info("=== 测试开始: 思考模式 ===")
+        """B1: 思考模式（Thinking）- 开启thinking mode
+
+        不依赖 config.yaml 配置，自动按以下顺序尝试参数格式：
+        1. enable_thinking=true (顶层字段)
+        2. chat_template_kwargs={"thinking": true}
+        3. thinking={"type": "enabled"} (DeepSeek/GLM 风格)
+        若三种方式均未获取到思考内容，则断言失败。
+        """
+        test_logger.info("=== 测试开始: 思考模式（自动回退） ===")
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
-        thinking_params = api_client.get_thinking_params(True)
-        TestLogger.log_request(test_logger, messages, thinking_params)
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "thinking_mode": (
+                    "auto-fallback on (enable_thinking "
+                    "-> chat_template_kwargs.thinking "
+                    "-> thinking.type=enabled)"
+                )
+            },
+        )
 
-        response = api_client.chat_completion(messages, extra_body=thinking_params)
-        TestLogger.log_response(test_logger, response, "思考模式响应")
-        self.log_full_response(test_logger, response, "B1-思考模式")
+        (
+            response,
+            used_params,
+            strategy,
+            has_thinking,
+        ) = self._chat_with_thinking_fallback(api_client, messages, test_logger)
+        TestLogger.log_response(
+            test_logger, response, f"思考模式响应 (策略: {strategy})"
+        )
+        self.log_full_response(test_logger, response, f"B1-思考模式 [{strategy}]")
 
-        self.assert_response_success(response)
         self.assert_content_not_empty(response)
 
-        has_thinking = self._check_has_thinking(response, test_logger)
         assert has_thinking, (
-            "Thinking mode should return reasoning content (reasoning field or thinking tags)"
+            "Thinking mode should return reasoning content (reasoning field or thinking tags). "
+            "Tried strategies: enable_thinking, chat_template_kwargs.thinking, "
+            f"thinking.type=enabled. Last params: {used_params}"
         )
 
         content = self.get_message_content(response)
@@ -281,52 +442,60 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             f"Thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
         )
 
-        test_logger.info("思考模式验证通过")
+        test_logger.info(f"思考模式验证通过 (使用策略: {strategy})")
 
     @pytest.mark.b_advanced
     @pytest.mark.p1
     @pytest.mark.smoke
     def test_non_thinking_mode(self, api_client: ModelAPIClient, test_logger):
-        """B2 [P1]: 非思考模式（Instant）- 关闭thinking，无泄漏"""
-        test_logger.info("=== 测试开始: 非思考模式 ===")
+        """B2 [P1]: 非思考模式（Instant）- 关闭thinking，无泄漏
+
+        不依赖 config.yaml 配置，自动按以下顺序尝试关闭思考模式：
+        1. 不传 thinking 参数（依赖模型默认行为）
+        2. enable_thinking=false (顶层字段)
+        3. chat_template_kwargs={"thinking": false}
+        4. thinking={"type": "disabled"} (DeepSeek/GLM 风格)
+        若四种方式均存在思考内容泄漏，则断言失败。
+        """
+        test_logger.info("=== 测试开始: 非思考模式（自动回退） ===")
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
-
-        thinking_params = api_client.get_thinking_params(False)
-        TestLogger.log_request(test_logger, messages, thinking_params)
-
-        response = api_client.chat_completion(messages, extra_body=thinking_params)
-        TestLogger.log_response(test_logger, response, "非思考模式响应")
-        self.log_full_response(test_logger, response, "B2-非思考模式")
-
-        self.assert_response_success(response)
-        self.assert_content_not_empty(response)
-
-        content = self.get_message_content(response)
-        reasoning = self.get_reasoning_content(response)
-
-        assert reasoning is None or reasoning == "", (
-            f"Thinking disabled but reasoning field is not empty: {reasoning[:500]}"
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "thinking_mode": (
+                    "auto-fallback off (no_params -> enable_thinking:false "
+                    "-> chat_template_kwargs.thinking:false "
+                    "-> thinking.type=disabled)"
+                )
+            },
         )
 
-        if content:
-            if "<think>" in content and "</think>" in content:
-                thinking_blocks = re.findall(
-                    r"<think>\s*(.*?)\s*</think>", content, re.DOTALL
-                )
-                for block in thinking_blocks:
-                    assert not block.strip(), (
-                        f"Thinking disabled but found thinking content: {block[:2000]}..."
-                    )
-            elif "</think>" in content and "<think>" not in content:
-                end = content.find("</think>")
-                potential_thinking = content[:end].strip()
-                assert not potential_thinking.strip(), (
-                    f"Thinking disabled but found thinking content before end tag: "
-                    f"{potential_thinking[:2000]}..."
-                )
+        (
+            response,
+            used_params,
+            strategy,
+            has_no_thinking,
+        ) = self._chat_without_thinking_fallback(api_client, messages, test_logger)
+        TestLogger.log_response(
+            test_logger, response, f"非思考模式响应 (策略: {strategy})"
+        )
+        self.log_full_response(test_logger, response, f"B2-非思考模式 [{strategy}]")
 
+        self.assert_content_not_empty(response)
+
+        assert has_no_thinking, (
+            "Non-thinking mode should not leak any reasoning content. "
+            "Tried strategies: no_thinking_params, enable_thinking:false, "
+            "chat_template_kwargs.thinking:false, thinking.type=disabled. "
+            f"Last params: {used_params}"
+        )
+
+        content = self.get_message_content(response)
         content_clean = self._strip_thinking_tags(content)
+        test_logger.info(f"最终回答内容: {content_clean[:2000]}...")
+
         assert len(content_clean.strip()) > 0, (
             "Non-thinking mode should still produce a content response"
         )
@@ -334,31 +503,54 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             f"Non-thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
         )
 
-        test_logger.info("非思考模式测试通过，无thinking泄漏")
+        test_logger.info(f"非思考模式测试通过 (使用策略: {strategy})，无thinking泄漏")
 
     @pytest.mark.b_advanced
     @pytest.mark.p1
     @pytest.mark.smoke
     def test_thinking_mode_switch(self, api_client: ModelAPIClient, test_logger):
-        """B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换"""
+        """B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换
+
+        开启部分采用自动回退策略：
+            enable_thinking=true -> chat_template_kwargs={"thinking": true}
+            -> thinking={"type": "enabled"}
+        关闭部分采用自动回退策略：
+            no_params -> enable_thinking=false -> chat_template_kwargs={"thinking": false}
+            -> thinking={"type": "disabled"}
+        """
         test_logger.info("=== 测试开始: 思考模式切换 ===")
 
         messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
 
-        test_logger.info("第1轮: 开启thinking模式")
-        thinking_params_on = api_client.get_thinking_params(True)
-        thinking_params_off = api_client.get_thinking_params(False)
+        test_logger.info("第1轮: 开启thinking模式（自动回退）")
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "thinking_mode": (
+                    "auto-fallback on (enable_thinking "
+                    "-> chat_template_kwargs.thinking "
+                    "-> thinking.type=enabled)"
+                )
+            },
+        )
 
-        TestLogger.log_request(test_logger, messages, thinking_params_on)
+        (
+            response1,
+            used_params1,
+            strategy1,
+            has_thinking1,
+        ) = self._chat_with_thinking_fallback(api_client, messages, test_logger)
+        TestLogger.log_response(
+            test_logger, response1, f"开启thinking响应 (策略: {strategy1})"
+        )
+        self.log_full_response(test_logger, response1, f"B3-开启thinking [{strategy1}]")
 
-        response1 = api_client.chat_completion(messages, extra_body=thinking_params_on)
-        TestLogger.log_response(test_logger, response1, "开启thinking响应")
-        self.log_full_response(test_logger, response1, "B3-开启thinking")
-
-        self.assert_response_success(response1)
-        has_thinking1 = self._check_has_thinking(response1, test_logger)
+        self.assert_content_not_empty(response1)
         assert has_thinking1, (
-            "First request with thinking=ON should have thinking content"
+            "First request with thinking=ON should have thinking content. "
+            "Tried strategies: enable_thinking, chat_template_kwargs.thinking, "
+            f"thinking.type=enabled. Last params: {used_params1}"
         )
 
         content1 = self.get_message_content(response1)
@@ -367,18 +559,36 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             "Thinking mode response should have final answer"
         )
 
-        test_logger.info("第2轮: 关闭thinking模式")
-        TestLogger.log_request(test_logger, messages, thinking_params_off)
+        test_logger.info("第2轮: 关闭thinking模式（自动回退）")
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "thinking_mode": (
+                    "auto-fallback off (no_params -> enable_thinking:false "
+                    "-> chat_template_kwargs.thinking:false "
+                    "-> thinking.type=disabled)"
+                )
+            },
+        )
 
-        response2 = api_client.chat_completion(messages, extra_body=thinking_params_off)
-        TestLogger.log_response(test_logger, response2, "关闭thinking响应")
-        self.log_full_response(test_logger, response2, "B3-关闭thinking")
+        (
+            response2,
+            used_params2,
+            strategy2,
+            has_no_thinking2,
+        ) = self._chat_without_thinking_fallback(api_client, messages, test_logger)
+        TestLogger.log_response(
+            test_logger, response2, f"关闭thinking响应 (策略: {strategy2})"
+        )
+        self.log_full_response(test_logger, response2, f"B3-关闭thinking [{strategy2}]")
 
-        self.assert_response_success(response2)
-
-        reasoning2 = self.get_reasoning_content(response2)
-        assert reasoning2 is None or reasoning2 == "", (
-            f"Thinking OFF should have no reasoning field, got: {reasoning2[:500]}"
+        self.assert_content_not_empty(response2)
+        assert has_no_thinking2, (
+            "Second request with thinking=OFF should have no thinking content. "
+            "Tried strategies: no_thinking_params, enable_thinking:false, "
+            "chat_template_kwargs.thinking:false, thinking.type=disabled. "
+            f"Last params: {used_params2}"
         )
 
         content2 = self.get_message_content(response2)
@@ -390,7 +600,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             f"Non-thinking mode should produce correct answer, got: {content2_clean[:500]}"
         )
 
-        test_logger.info("思考模式切换测试通过")
+        test_logger.info(
+            f"思考模式切换测试通过 (开启策略: {strategy1}, 关闭策略: {strategy2})"
+        )
 
     def _execute_tool(self, tool_name: str, arguments: dict) -> dict:
         """模拟工具执行"""
