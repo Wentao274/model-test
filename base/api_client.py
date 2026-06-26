@@ -21,6 +21,8 @@ class ModelAPIClient:
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        if self.base_url.endswith("/v1"):
+            self.base_url = self.base_url[:-3]
         self.model_name = model_name
         self.timeout = timeout
         self.config = config or {}
@@ -79,7 +81,7 @@ class ModelAPIClient:
                 messages, model, temperature, max_tokens, **kwargs
             )
 
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/v1/chat/completions"
         payload = {
             "model": model or self.model_name,
             "messages": messages,
@@ -119,7 +121,7 @@ class ModelAPIClient:
         **kwargs,
     ) -> Iterator[Dict[str, Any]]:
         """发送聊天完成请求（流式）"""
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/v1/chat/completions"
         payload = {
             "model": model or self.model_name,
             "messages": messages,
@@ -150,7 +152,7 @@ class ModelAPIClient:
 
     def list_models(self) -> Dict[str, Any]:
         """获取模型列表"""
-        url = f"{self.base_url}/models"
+        url = f"{self.base_url}/v1/models"
         response = self.session.get(url, timeout=self.timeout)
         response.raise_for_status()
         return response.json()
@@ -159,7 +161,7 @@ class ModelAPIClient:
         self, prompt: str, model: Optional[str] = None, **kwargs
     ) -> Dict[str, Any]:
         """传统Completion API"""
-        url = f"{self.base_url}/completions"
+        url = f"{self.base_url}/v1/completions"
         payload = {"model": model or self.model_name, "prompt": prompt, **kwargs}
         response = self.session.post(url, json=payload, timeout=self.timeout)
         response.raise_for_status()

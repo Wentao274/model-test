@@ -2,16 +2,16 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'TESTER', defaultValue: 'liwt', description: '测试人员名称 (必填)')
-        choice(name: 'INFRA', choices: ['vllm', 'sglang'], description: '推理框架')
+        string(name: 'TESTER', defaultValue: 'liwt', description: '测试人员名称（必填）')
+        choice(name: 'INFRA', choices: ['vllm', 'sglang'], description: '推理框架（必填）')
         choice(name: 'PD', choices: ['agg', 'disagg'], description: 'PD分离模式,agg 表示非 PD 分离, disagg 表示 PD 分离')
-        string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称')
-        string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称')
-        string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080/v1', description: 'API 地址（必填，请注意带有/v1后缀）')
+        string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称（必填）')
+        string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称 (必填)')
+        string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080', description: 'API 地址（必填）')
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
-        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试用例类型')
-        text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '邮件接收者（逗号分隔）')
+        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型')
+        text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
         string(name: 'WORK_DIR', defaultValue: '/dingofs/data1/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
     }
 

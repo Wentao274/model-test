@@ -11,16 +11,16 @@ global:
 chips:
   metax-c550:
     enabled: false
-    base_url: http://10.130.70.1:8000/v1
+    base_url: http://10.130.70.1:8000
   nvidia-h100:
     enabled: false
-    base_url: http://127.0.0.1:8080/v1
+    base_url: http://127.0.0.1:8080
   hygon-bw1000:
     enabled: true
-    base_url: http://10.212.16.23:8080/v1
+    base_url: http://10.212.16.23:8080
   kunlun-p800:
     enabled: false
-    base_url: http://127.0.0.1:8080/v1
+    base_url: http://127.0.0.1:8080
 
 # 模型配置 - 支持多模型测试
 models:

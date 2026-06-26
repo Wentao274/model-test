@@ -870,8 +870,12 @@ def _resolve_connectivity_config(session) -> Dict[str, Any]:
     env_model = os.environ.get("MODEL_NAME")
     model_name = cmd_model or env_model or cfg.get("default_model", "qwen35")
 
+    normalized_base_url = (base_url or "").rstrip("/")
+    if normalized_base_url.endswith("/v1"):
+        normalized_base_url = normalized_base_url[:-3]
+
     return {
-        "base_url": (base_url or "").rstrip("/"),
+        "base_url": normalized_base_url,
         "api_key": api_key or "",
         "model_name": model_name,
     }
@@ -936,7 +940,7 @@ def _run_connectivity_check(session) -> None:
         print("  API_KEY: (空, 不携带鉴权头)")
 
     # 1. 检查 /models
-    models_url = f"{base_url}/models"
+    models_url = f"{base_url}/v1/models"
     try:
         resp = requests.get(models_url, headers=headers, timeout=10)
     except requests.exceptions.RequestException as e:
@@ -950,7 +954,7 @@ def _run_connectivity_check(session) -> None:
     print(f"  [OK] /models 连通性检查通过, HTTP状态码: {resp.status_code}")
 
     # 2. 检查 /chat/completions
-    chat_url = f"{base_url}/chat/completions"
+    chat_url = f"{base_url}/v1/chat/completions"
     payload = {
         "model": model_name,
         "messages": [{"role": "user", "content": "hello"}],
