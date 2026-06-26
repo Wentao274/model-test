@@ -270,7 +270,7 @@ def generate_allure_summary_report(
     output_dir: str = "allure-report",
     model_name: Optional[str] = None,
     chip_name: Optional[str] = None,
-    infra: Optional[str] = None,
+    engine: Optional[str] = None,
     pd_mode: Optional[str] = None,
     tester: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
@@ -285,7 +285,7 @@ def generate_allure_summary_report(
         output_dir: 输出目录
         model_name: 模型名称
         chip_name: 芯片平台名称
-        infra: 推理框架
+        engine: 推理框架
         pd_mode: PD分离模式
         tester: 测试人员
         config: 配置
@@ -313,7 +313,7 @@ def generate_allure_summary_report(
     lines.append(f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"> 芯片平台：{chip_name}")
     lines.append(f"> 模型：{model_name}")
-    lines.append(f"> 推理框架：{infra or 'N/A'}")
+    lines.append(f"> 推理框架：{engine or 'N/A'}")
     lines.append(f"> PD模式：{pd_mode or 'N/A'}")
     lines.append(f"> 测试人员：{tester or 'N/A'}")
     lines.append("")

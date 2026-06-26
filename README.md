@@ -206,7 +206,7 @@ model-test/
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `TESTER` | string | `liwt` | 测试人员名称（必填） |
-| `INFRA` | choice | `vllm` | 推理框架（vllm / sglang） |
+| `ENGINE` | choice | `vllm` | 推理框架（vllm / sglang） |
 | `PD` | choice | `agg` | PD分离模式（agg=非分离 / disagg=PD分离） |
 | `CHIP` | string | `nvidia-h100` | 芯片平台名称 |
 | `MODEL` | string | `kimi-k2.5` | 模型名称 |

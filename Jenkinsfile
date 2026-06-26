@@ -3,10 +3,10 @@ pipeline {
 
     parameters {
         string(name: 'TESTER', defaultValue: 'liwt', description: '测试人员名称（必填）')
-        choice(name: 'INFRA', choices: ['vllm', 'sglang'], description: '推理框架（必填）')
-        choice(name: 'PD', choices: ['agg', 'disagg'], description: 'PD分离模式,agg 表示非 PD 分离, disagg 表示 PD 分离')
         string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称（必填）')
-        string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型名称 (必填)')
+        choice(name: 'ENGINE', choices: ['vllm', 'sglang'], description: '推理框架（必填）')
+        choice(name: 'PD', choices: ['agg', 'disagg'], description: 'PD分离模式（agg表示非PD分离，disagg表示PD分离）')
+        string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型服务名称 (必填)')
         string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080', description: 'API 地址（必填）')
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
@@ -76,7 +76,7 @@ rm -f ${BUILD_OUTPUT_DIR}/.connectivity_check_failed
 # 打印参数值
 echo "=== 参数信息 ==="
 echo "TESTER: ${params.TESTER}"
-echo "INFRA: ${params.INFRA}"
+echo "ENGINE: ${params.ENGINE}"
 echo "PD: ${params.PD}"
 echo "BASE_URL: ${params.BASE_URL}"
 echo "MODEL: ${params.MODEL}"
@@ -92,7 +92,7 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
             --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
-            --infra "${params.INFRA}" \\
+            --engine "${params.ENGINE}" \\
             --pd-mode "${params.PD}" \\
             --tester "${params.TESTER}" \\
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
@@ -105,7 +105,7 @@ if [ "${params.THINKING_MODE}" = "true" ]; then
             --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
-            --infra "${params.INFRA}" \\
+            --engine "${params.ENGINE}" \\
             --pd-mode "${params.PD}" \\
             --tester "${params.TESTER}" \\
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
@@ -120,7 +120,7 @@ else
             --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
-            --infra "${params.INFRA}" \\
+            --engine "${params.ENGINE}" \\
             --pd-mode "${params.PD}" \\
             --tester "${params.TESTER}" \\
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
@@ -133,7 +133,7 @@ else
             --api-key "${apiKey}" \\
             --model-name "${params.MODEL}" \\
             --chip "${params.CHIP}" \\
-            --infra "${params.INFRA}" \\
+            --engine "${params.ENGINE}" \\
             --pd-mode "${params.PD}" \\
             --tester "${params.TESTER}" \\
             --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
@@ -344,7 +344,7 @@ fi
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
                 <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
-                <tr><th>推理框架</th><td>${params.INFRA}</td></tr>
+                <tr><th>推理框架</th><td>${params.ENGINE}</td></tr>
                 <tr><th>模型名称</th><td>${modelDisplayName}</td></tr>
                 <tr><th>API 地址</th><td>${params.BASE_URL}</td></tr>
                 <tr><th>PD模式</th><td>${params.PD}</td></tr>

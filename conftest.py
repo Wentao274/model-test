@@ -433,7 +433,7 @@ def pytest_addoption(parser):
         help="Disable thinking mode",
     )
     parser.addoption(
-        "--infra",
+        "--engine",
         action="store",
         default=None,
         help="Inference framework (e.g., vllm, sglang)",
@@ -793,7 +793,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             summary_report_dir,
             model.get("name", "unknown"),
             chip_name,
-            config.getoption("--infra", default=None),
+            config.getoption("--engine", default=None),
             config.getoption("--pd-mode", default=None),
             config.getoption("--tester", default=None),
             cfg,
