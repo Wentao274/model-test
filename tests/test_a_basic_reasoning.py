@@ -247,6 +247,21 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             f"Last chunk finish_reason should be 'stop'/'eos'/'ended'/None, got '{last_finish}'"
         )
 
+        # 检测流式响应是否被服务端积攒后一次性返回（软告警）
+        is_buffered, duplicate_groups, stats = self.detect_buffered_streaming(result)
+        if stats.get("skipped"):
+            test_logger.info(f"[A4] 流式积攒检测跳过: {stats.get('skip_reason')}")
+        else:
+            test_logger.info(
+                f"[A4] 流式时间戳统计: 总chunk={stats['total_chunks']}, "
+                f"唯一时间戳={stats['unique_timestamps']}, "
+                f"重复chunk占比={stats['dup_ratio']:.2%}"
+            )
+            if is_buffered:
+                self.log_buffered_streaming_warning(
+                    test_logger, result, duplicate_groups, stats, context="A4"
+                )
+
         test_logger.info(
             f"Streaming validation passed: {len(result['chunks'])} chunks, "
             f"content length: {len(result['content'])}, last finish_reason: {last_finish}"

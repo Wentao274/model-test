@@ -3,8 +3,10 @@
 """
 
 import json
+import time
 import pytest
-from typing import Dict, Any, List, Optional
+from collections import defaultdict
+from typing import Dict, Any, List, Optional, Tuple
 from abc import ABC
 
 
@@ -154,13 +156,15 @@ class StreamingTestMixin:
     """流式测试Mixin"""
 
     def collect_stream_chunks(self, response_iterator) -> Dict[str, Any]:
-        """收集流式响应所有chunk"""
+        """收集流式响应所有chunk，并记录每个chunk到达的时间戳"""
         chunks = []
+        timestamps = []
         content_parts = []
         reasoning_parts = []
 
         for chunk in response_iterator:
             chunks.append(chunk)
+            timestamps.append(time.perf_counter())
             choices = chunk.get("choices", [])
             if not choices:
                 continue
@@ -172,9 +176,95 @@ class StreamingTestMixin:
 
         return {
             "chunks": chunks,
+            "timestamps": timestamps,
             "content": "".join(content_parts),
             "reasoning": "".join(reasoning_parts),
         }
+
+    def detect_buffered_streaming(
+        self,
+        result: Dict[str, Any],
+        dup_ratio_threshold: float = 0.3,
+        min_chunks: int = 5,
+    ) -> Tuple[bool, List[List[int]], Dict[str, Any]]:
+        """检测流式响应是否被服务端积攒后一次性返回
+
+        判定规则：当出现重复时间戳的chunk占比 >= dup_ratio_threshold 时，
+        视为服务端未真正流式发送（被积攒后一次性推回）。
+
+        Args:
+            result: collect_stream_chunks 返回的字典
+            dup_ratio_threshold: 重复chunk占比阈值，默认 0.3
+            min_chunks: chunk总数少于此值时不做检测（样本太少），默认 5
+
+        Returns:
+            (is_buffered, duplicate_groups, stats)
+            - is_buffered: 是否判定为积攒
+            - duplicate_groups: 每组重复时间戳对应的chunk索引列表
+            - stats: 检测统计信息（总数、唯一时间戳数、重复数、占比等）
+        """
+        timestamps = result.get("timestamps", [])
+        chunks = result.get("chunks", [])
+        total = len(timestamps)
+
+        stats = {
+            "total_chunks": total,
+            "unique_timestamps": 0,
+            "duplicate_chunks": 0,
+            "duplicate_groups": 0,
+            "dup_ratio": 0.0,
+            "skipped": False,
+            "skip_reason": "",
+        }
+
+        if total < min_chunks:
+            stats["skipped"] = True
+            stats["skip_reason"] = (
+                f"chunk总数({total}) < {min_chunks}，样本不足跳过检测"
+            )
+            return False, [], stats
+
+        groups: Dict[float, List[int]] = defaultdict(list)
+        for idx, ts in enumerate(timestamps):
+            groups[ts].append(idx)
+
+        duplicate_groups = [idxs for idxs in groups.values() if len(idxs) > 1]
+        duplicate_chunks = sum(len(g) for g in duplicate_groups)
+        dup_ratio = duplicate_chunks / total if total > 0 else 0.0
+
+        stats["unique_timestamps"] = len(groups)
+        stats["duplicate_chunks"] = duplicate_chunks
+        stats["duplicate_groups"] = len(duplicate_groups)
+        stats["dup_ratio"] = dup_ratio
+
+        is_buffered = dup_ratio >= dup_ratio_threshold
+        return is_buffered, duplicate_groups, stats
+
+    def log_buffered_streaming_warning(
+        self,
+        test_logger,
+        result: Dict[str, Any],
+        duplicate_groups: List[List[int]],
+        stats: Dict[str, Any],
+        context: str = "",
+    ):
+        """打印流式响应疑似被积攒的告警日志"""
+        prefix = f"[{context}] " if context else ""
+        test_logger.warning(
+            f"{prefix}检测到流式响应疑似被服务端积攒后一次性返回: "
+            f"共{stats['total_chunks']}个chunk，"
+            f"{stats['duplicate_groups']}组重复时间戳，"
+            f"重复chunk占比={stats['dup_ratio']:.2%} "
+            f"(阈值={0.3:.0%})"
+        )
+        test_logger.warning(f"{prefix}唯一时间戳数: {stats['unique_timestamps']}")
+
+        timestamps = result.get("timestamps", [])
+        for g in duplicate_groups:
+            test_logger.warning(
+                f"{prefix}  时间戳 {timestamps[g[0]]:.6f}s "
+                f"对应chunk索引: {g} (共{len(g)}个chunk)"
+            )
 
 
 class MultimodalTestMixin:
