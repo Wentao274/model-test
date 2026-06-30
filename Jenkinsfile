@@ -12,7 +12,7 @@ pipeline {
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
-        string(name: 'WORK_DIR', defaultValue: '/dingofs/data1/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
+        string(name: 'WORK_DIR', defaultValue: '/dingofs/data2/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
     }
 
     environment {
