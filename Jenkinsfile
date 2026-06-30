@@ -23,6 +23,28 @@ pipeline {
     }
 
     stages {
+        stage('打印测试参数') {
+            steps {
+                script {
+                    println("========================================")
+                    println("=== 测试参数信息 ===")
+                    println("========================================")
+                    println("测试人员:     ${params.TESTER}")
+                    println("芯片平台:     ${params.CHIP}")
+                    println("推理框架:     ${params.ENGINE}")
+                    println("PD分离模式:   ${params.PD}")
+                    println("模型服务名称: ${params.MODEL}")
+                    println("BASE_URL:     ${params.BASE_URL}")
+                    println("思考模式:     ${params.THINKING_MODE}")
+                    println("测试标记:     ${params.MARKER}")
+                    println("邮件接收者:   ${params.RECIPIENTS}")
+                    println("工作目录:     ${params.WORK_DIR}")
+                    println("构建编号:     #${BUILD_NUMBER}")
+                    println("========================================")
+                }
+            }
+        }
+
         stage('环境检查') {
             steps {
                 sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
@@ -72,17 +94,6 @@ mkdir -p ${BUILD_OUTPUT_DIR}
 
 # 清理上一次可能残留的连通性检查失败标记
 rm -f ${BUILD_OUTPUT_DIR}/.connectivity_check_failed
-
-# 打印参数值
-echo "=== 参数信息 ==="
-echo "TESTER: ${params.TESTER}"
-echo "ENGINE: ${params.ENGINE}"
-echo "PD: ${params.PD}"
-echo "BASE_URL: ${params.BASE_URL}"
-echo "MODEL: ${params.MODEL}"
-echo "CHIP: ${params.CHIP}"
-echo "THINKING_MODE: ${params.THINKING_MODE}"
-echo "MARKER: ${params.MARKER}"
 
 if [ "${params.THINKING_MODE}" = "true" ]; then
     if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
