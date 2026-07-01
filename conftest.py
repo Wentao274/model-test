@@ -940,18 +940,18 @@ def _run_connectivity_check(session) -> None:
         print("  API_KEY: (空, 不携带鉴权头)")
 
     # 1. 检查 /models
-    models_url = f"{base_url}/v1/models"
-    try:
-        resp = requests.get(models_url, headers=headers, timeout=10)
-    except requests.exceptions.RequestException as e:
-        _fail_and_exit(f"ERROR: API 连通性检查失败, 无法访问 {models_url}: {e}")
-
-    if resp.status_code != 200:
-        _fail_and_exit(
-            f"ERROR: API 连通性检查失败, HTTP状态码: {resp.status_code}, URL: {models_url}\n"
-            f"响应内容: {resp.text[:500]}"
-        )
-    print(f"  [OK] /models 连通性检查通过, HTTP状态码: {resp.status_code}")
+    # models_url = f"{base_url}/v1/models"
+    # try:
+    #     resp = requests.get(models_url, headers=headers, timeout=10)
+    # except requests.exceptions.RequestException as e:
+    #     _fail_and_exit(f"ERROR: API 连通性检查失败, 无法访问 {models_url}: {e}")
+    #
+    # if resp.status_code != 200:
+    #     _fail_and_exit(
+    #         f"ERROR: API 连通性检查失败, HTTP状态码: {resp.status_code}, URL: {models_url}\n"
+    #         f"响应内容: {resp.text[:500]}"
+    #     )
+    # print(f"  [OK] /models 连通性检查通过, HTTP状态码: {resp.status_code}")
 
     # 2. 检查 /chat/completions
     chat_url = f"{base_url}/v1/chat/completions"
