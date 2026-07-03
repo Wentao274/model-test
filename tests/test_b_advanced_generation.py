@@ -1215,7 +1215,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         messages = [
             {
                 "role": "system",
-                "content": "你是一个JSON生成器，请始终返回合法的JSON对象",
+                "content": "你是一个JSON生成器，请始终返回合法的JSON对象"
             },
             {"role": "user", "content": "请返回一个包含姓名和年龄的JSON对象"},
         ]
