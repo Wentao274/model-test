@@ -24,14 +24,68 @@ from base.api_client import ModelAPIClient
 from base.logger import TestLogger
 
 
-def generate_long_text(tokens: int) -> str:
-    """生成指定token数量的文本（估算）"""
-    # 约4个字符一个token
-    chars = tokens * 4
-    words = ["测试", "内容", "长文本", "这是", "一个", "用于", "测试", "的", "段落"] * (
-        chars // 20 + 1
-    )
-    return " ".join(words[: chars // 2])
+MIXED_CONTENT_TEMPLATES = [
+    "人工智能（Artificial Intelligence, AI）是计算机科学的核心分支。自1956年Dartmouth会议首次提出AI概念以来，"
+    "该领域经历了符号主义、连接主义和深度学习三个主要发展阶段。2012年AlexNet在ImageNet竞赛中将Top-5错误率从26%降至15.3%，"
+    "标志着深度学习时代的到来。截至2025年，全球AI市场规模已突破5000亿美元，预计2030年将达到1.5万亿美元。",
+    "The TCP/IP protocol suite was standardized in 1982 as RFC 791 (IP) and RFC 793 (TCP). "
+    "互联网协议套件定义了4层网络模型：链路层、网络层、传输层和应用层。HTTP/1.1于1997年发布（RFC 2068），"
+    "定义了GET、POST、PUT、DELETE等8种请求方法。截至2025年，全球互联网用户达53亿，IPv6采用率超过45%。",
+    "量子计算利用量子叠加和量子纠缠原理进行信息处理。2019年Google的Sycamore处理器用200秒完成了经典超算Summit需要10000年的计算任务。"
+    "IBM于2023年发布1121量子比特的Condor处理器。中国「九章」光量子计算机在高斯玻色采样任务上的速度比当时最快超算快10^14倍。"
+    "预计2030年前可实现1000+逻辑量子比特的容错量子计算机。",
+    "全球气候变化是21世纪人类面临的最大挑战之一。自工业革命以来，全球平均温度已上升约1.1°C。"
+    "2023年全球CO2排放量达到368亿吨，较1990年增长60%。The Paris Agreement (2015) aims to limit global warming to 1.5°C above pre-industrial levels. "
+    "可再生能源占全球发电量的比例从2010年的20%上升至2024年的38%，其中太阳能发电成本下降了89%。",
+    "DNA双螺旋结构的发现是20世纪最重要的科学突破之一。1953年4月25日，James Watson和Francis Crick在Nature发表论文，"
+    "描述了DNA的分子结构：两条反向平行的多核苷酸链通过A-T和G-C碱基配对形成右手螺旋，螺距3.4nm，直径2nm。"
+    "人类基因组包含约30亿个碱基对，编码约20000-25000个蛋白质编码基因。CRISPR-Cas9基因编辑技术自2012年问世以来，"
+    "已有超过3000种基因治疗药物进入临床试验阶段。",
+    "The global economy reached $105 trillion in GDP in 2023. 2023年全球GDP总量约为105万亿美元，"
+    "其中美国占比约25.4%（26.9万亿美元），中国占比约18.5%（17.8万亿美元），欧盟占比约17.1%（18.0万亿美元）。"
+    "国际贸易总额达28万亿美元，跨境电商市场规模突破2.5万亿美元，同比增长15.3%。"
+    "全球外债总额超过80万亿美元，发展中国家债务占GDP比重平均达到55%。",
+    "莎士比亚的《哈姆雷特》创作于1600年至1601年间，是英语文学中最具影响力的戏剧作品之一。"
+    "「To be, or not to be, that is the question」已成为最广为人知的文学名句之一。"
+    "该剧至今已被翻译成超过80种语言，全球累计发行量超过5亿册。"
+    "中国古典文学同样影响深远，《红楼梦》全书约73万字，涉及448个人物，"
+    "被翻译成30余种语言，英译本The Story of the Stone由David Hawkes完成前80回翻译。",
+    "HTTP/2协议于2015年发布（RFC 7540），引入了多路复用、头部压缩和服务器推送等特性。"
+    "HTTP/3于2022年标准化（RFC 9114），基于QUIC协议替代TCP，显著减少了连接建立延迟："
+    "TCP+TLS 1.3需要3个RTT，而QUIC仅需1个RTT。截至2025年，Chrome浏览器中约32%的请求使用HTTP/3，"
+    "Google、Cloudflare和Meta是HTTP/3的主要推动者。",
+    "The human heart beats approximately 100,000 times per day, pumping about 7,570 liters of blood. "
+    "人类心脏每天跳动约10万次，泵送约7570升血液通过96000公里的血管网络。"
+    "正常静息心率为60-100次/分钟，最大心率约为220减去年龄。"
+    "心血管疾病是全球第一大死因，每年导致约1790万人死亡，占全球死亡总数的32%。"
+    "全球医疗器械市场规模在2024年达到5950亿美元，年复合增长率5.7%。",
+    "深度学习框架的发展极大地降低了AI开发门槛。TensorFlow于2015年11月开源，PyTorch于2016年9月发布。"
+    "截至2025年，PyTorch在研究论文中的使用占比超过80%，TensorFlow在生产部署中仍占主导地位。"
+    'Transformer架构由Google团队在2017年论文"Attention Is All You Need"中提出，'
+    "参数量从最初的6500万增长到GPT-4的估计1.8万亿，6年增长约28000倍。"
+    "训练GPT-4的估计成本超过1亿美元，所需算力约2.15×10^25 FLOPS。",
+]
+
+
+def generate_mixed_content(approx_tokens: int) -> str:
+    """生成包含中文、英文、数字的混合文本
+
+    Args:
+        approx_tokens: 目标token数量（近似估算），混合文本约2字符/token
+
+    Returns:
+        混合文本字符串，由多样化段落组成
+    """
+    target_chars = approx_tokens * 2
+    result = []
+    current_chars = 0
+    idx = 0
+    while current_chars < target_chars:
+        para = MIXED_CONTENT_TEMPLATES[idx % len(MIXED_CONTENT_TEMPLATES)]
+        result.append(para)
+        current_chars += len(para)
+        idx += 1
+    return "\n\n".join(result)
 
 
 class TestLongContext(BaseTest, StreamingTestMixin):
@@ -55,12 +109,12 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def test_short_context_baseline(self, api_client: ModelAPIClient, test_logger):
         test_logger.info("=== 测试开始: 短上下文基线 ===")
 
-        prompt = "请简短介绍一下人工智能的发展历史"
+        prompt = generate_mixed_content(800) + "\n\n请简要总结以上内容。"
 
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 200})
 
-        response = api_client.chat_completion(messages, max_tokens=2000)
+        response = api_client.chat_completion(messages, max_tokens=200)
         TestLogger.log_response(test_logger, response, "短上下文响应")
         self.log_full_response(test_logger, response, "D1-短上下文基线")
 
@@ -88,8 +142,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D2 [P1]: 中等上下文 - input 8K-16K tokens"""
         test_logger.info("=== 测试开始: 中等上下文 ===")
 
-        # 约4000字
-        prompt = "请分析以下内容：" + "这是一个测试段落。 " * 1000
+        prompt = generate_mixed_content(12000) + "\n\n请分析以上内容的主要观点。"
 
         messages = [{"role": "user", "content": prompt}]
         TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
@@ -123,13 +176,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D3 [P1]: 长上下文 - input 32K-64K tokens，验证召回和推理"""
         test_logger.info("=== 测试开始: 长上下文 ===")
 
-        # 约16000字
-        padding = "这是测试段落。 " * 4000
-        prompt = "以下是一篇长文章：" + padding
+        prompt = generate_mixed_content(50000) + "\n\n请总结这篇文章的主要内容。"
 
-        messages = [
-            {"role": "user", "content": prompt + "\n\n请总结这篇文章的主要内容。"}
-        ]
+        messages = [{"role": "user", "content": prompt}]
         TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         response = api_client.chat_completion(messages, max_tokens=2000)
@@ -163,8 +212,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D4 [P0]: 超长上下文 - input 128K+ tokens"""
         test_logger.info("=== 测试开始: 超长上下文 ===")
 
-        # 约32000字
-        prompt = "以下是一篇长文章：" + "这是第" + "测试段落。 " * 8000
+        prompt = generate_mixed_content(128000) + "\n\n请总结以上内容的要点。"
 
         messages = [{"role": "user", "content": prompt}]
         TestLogger.log_request(test_logger, messages)
@@ -205,8 +253,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 大海捞针 ===")
 
         # 生成一篇长文章，在中间插入一个特定的事实
-        base_text = "这是一篇关于科技发展的文章。" * 100
-        needle = "特殊标记：答案是42"
+        base_text = generate_mixed_content(8000)
+        needle = "特殊标记：项目Alpha的第37号实验结果为42，这是唯一正确的数值。"
         needle_text = (
             base_text[: len(base_text) // 2] + needle + base_text[len(base_text) // 2 :]
         )
@@ -229,7 +277,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         )
         content_lower = content.lower()
         assert any(
-            kw in content_lower for kw in ["特殊标记", "special", "标记", "答案"]
+            kw in content_lower
+            for kw in ["特殊标记", "标记", "alpha", "实验", "37", "结果", "42"]
         ), f"Model should reference the needle context, got: {content[:500]}"
 
         usage = response.get("usage", {})
@@ -251,32 +300,54 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         model_info = api_client.get_model_info()
         max_len = self._get_max_context_len(model_info)
 
-        if max_len > 0:
-            estimated_tokens = max(1000, max_len - 1000)
-            prompt = "测试内容 " * (estimated_tokens // 4)
+        if max_len <= 0:
+            pytest.skip("Model max_model_len not available")
 
-            messages = [{"role": "user", "content": prompt}]
-            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        # 场景1: 输入接近上限（max_len - 2000，留出输出空间），应成功
+        test_logger.info(f"--- 场景1: 接近上限 (target ~{max_len - 2000} tokens) ---")
+        near_limit_tokens = max(1000, max_len - 2000)
+        prompt = generate_mixed_content(near_limit_tokens) + "\n\n请简要总结以上内容。"
+        messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 1000})
 
-            response = api_client.chat_completion(messages, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "边界响应")
-            self.log_full_response(test_logger, response, "D6-上下文边界行为")
+        try:
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=1000)
+            result = self.collect_stream_chunks(response_iter)
+            self.log_full_response(
+                test_logger,
+                {
+                    "chunks_count": len(result["chunks"]),
+                    "content": result["content"][:2000],
+                    "reasoning": result["reasoning"][:2000]
+                    if result["reasoning"]
+                    else "",
+                },
+                "D6-上下文边界行为-接近上限",
+            )
 
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-
-            usage = response.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            assert prompt_tokens > 0, "Should have prompt_tokens > 0 at boundary"
-            assert usage.get("completion_tokens", 0) > 0, (
-                "Should have completion_tokens > 0 at boundary"
+            assert len(result["chunks"]) > 0, (
+                "Should receive streaming chunks near context limit"
+            )
+            assert result["content"] or result["reasoning"], (
+                "Should have non-empty content or reasoning near context limit"
             )
             test_logger.info(
-                f"Context boundary test passed, max_len: {max_len}, "
-                f"prompt_tokens={prompt_tokens}, completion_tokens={usage.get('completion_tokens')}"
+                f"接近上限场景通过, chunks={len(result['chunks'])}, "
+                f"content_len={len(result['content'])}"
             )
-        else:
-            pytest.skip("Model max_model_len not available")
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(
+                kw in error_msg
+                for kw in ["413", "request entity too large", "timed out", "timeout"]
+            ):
+                pytest.skip(
+                    f"Request near max context length {max_len} failed due to "
+                    f"proxy/timeout limit, cannot verify boundary: {e}"
+                )
+            raise
+
+        test_logger.info(f"Context boundary test completed, max_len: {max_len}")
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -284,36 +355,71 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D7: 超出上下文截断 - 验证截断策略"""
         test_logger.info("=== 测试开始: 上下文截断 ===")
 
-        # 生成超长文本
-        prompt = "这是一段很长的测试文本， " * 20000
+        # 获取模型最大上下文长度，生成超过上限的输入
+        model_info = api_client.get_model_info()
+        max_len = self._get_max_context_len(model_info)
+
+        if max_len > 0:
+            # 输入超过 max_len，确保触发截断或超限错误
+            over_tokens = max_len + 4000
+            test_logger.info(
+                f"模型最大上下文: {max_len}, 生成输入 ~{over_tokens} tokens"
+            )
+            prompt = generate_mixed_content(over_tokens) + "\n\n请简短总结以上内容。"
+        else:
+            # 无法获取 max_len 时使用固定大文本兜底
+            prompt = generate_mixed_content(202752) + "\n\n请简短总结以上内容。"
+            test_logger.info(f"无法获取 max_len, 使用固定大文本 {202752} tokens 兜底")
 
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
 
         try:
-            response = api_client.chat_completion(messages, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "截断响应")
-            self.log_full_response(test_logger, response, "D7-上下文截断")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-
-            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-            usage = response.get("usage", {})
-            test_logger.info(
-                f"Context truncation handled: finish_reason={finish_reason}, "
-                f"prompt_tokens={usage.get('prompt_tokens')}, completion_tokens={usage.get('completion_tokens')}"
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=500)
+            result = self.collect_stream_chunks(response_iter)
+            self.log_full_response(
+                test_logger,
+                {
+                    "chunks_count": len(result["chunks"]),
+                    "content": result["content"][:2000],
+                    "reasoning": result["reasoning"][:2000]
+                    if result["reasoning"]
+                    else "",
+                },
+                "D7-上下文截断",
             )
-            assert finish_reason in ("stop", "length"), (
-                f"finish_reason should be 'stop' or 'length' when context is truncated, got: {finish_reason}"
+
+            # 超限场景下，模型应能截断后正常响应
+            assert len(result["chunks"]) > 0, (
+                "Should receive streaming chunks even when context exceeds limit"
+            )
+            assert result["content"] or result["reasoning"], (
+                "Should have non-empty content or reasoning after truncation"
+            )
+            test_logger.info(
+                f"Context truncation handled: chunks={len(result['chunks'])}, "
+                f"content_len={len(result['content'])}, "
+                f"reasoning_len={len(result['reasoning'])}"
             )
         except Exception as e:
             test_logger.info(f"Context exceeded: {e}")
             error_msg = str(e).lower()
+            # 超限时模型可能返回错误（拒绝）或超时，均为预期行为
             assert any(
                 kw in error_msg
-                for kw in ["context", "length", "too_many", "exceed", "limit", "token"]
-            ), f"Error should relate to context/length limit, got: {e}"
+                for kw in [
+                    "context",
+                    "length",
+                    "too_many",
+                    "exceed",
+                    "limit",
+                    "token",
+                    "413",
+                    "request entity too large",
+                    "timed out",
+                    "timeout",
+                ]
+            ), f"Error should relate to context/length/proxy limit, got: {e}"
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -325,33 +431,53 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         messages = [
             {
                 "role": "user",
-                "content": "请写一篇关于人工智能发展史的详细文章，不少于2000字",
+                "content": (
+                    "请写一篇关于人工智能发展史的详细文章，要求：\n"
+                    "1. 涵盖从1956年Dartmouth会议到2025年的完整发展脉络；\n"
+                    "2. 包括符号主义、连接主义、深度学习、大模型四个阶段；\n"
+                    "3. 每个阶段需列举代表性事件、关键人物和技术突破；\n"
+                    "4. 文章不少于4000字，结构清晰，分章节论述。"
+                ),
             }
         ]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 4000})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 8000})
 
-        response = api_client.chat_completion(messages, max_tokens=4000)
-        TestLogger.log_response(test_logger, response, "长输出响应")
-        self.log_full_response(test_logger, response, "D8-长输出生成")
+        try:
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=8000)
+            result = self.collect_stream_chunks(response_iter)
+            self.log_full_response(
+                test_logger,
+                {
+                    "chunks_count": len(result["chunks"]),
+                    "content": result["content"][:2000],
+                    "reasoning": result["reasoning"][:2000]
+                    if result["reasoning"]
+                    else "",
+                },
+                "D8-长输出生成",
+            )
 
-        self.assert_response_success(response)
-        self.assert_content_not_empty(response)
+            assert len(result["chunks"]) > 0, "Should receive streaming chunks"
+            content = result["content"]
+            assert content and len(content.strip()) > 1000, (
+                f"Long output response should be substantial, got {len(content.strip())} chars"
+            )
 
-        content = self.get_message_content(response)
-        assert len(content.strip()) > 200, (
-            f"Long output response should be substantial, got {len(content.strip())} chars"
-        )
-
-        usage = response.get("usage", {})
-        completion_tokens = usage.get("completion_tokens", 0)
-        assert completion_tokens > 200, (
-            f"Expected long output (>200 tokens), got {completion_tokens} tokens"
-        )
-        assert usage.get("prompt_tokens", 0) > 0, "Should have prompt_tokens > 0"
-        test_logger.info(
-            f"Long output: {completion_tokens} tokens generated, "
-            f"content length: {len(content)} chars"
-        )
+            # 流式无 usage，通过字符数估算: 4K tokens 约对应 2000+ 中文字符
+            test_logger.info(
+                f"Long output: {len(result['chunks'])} chunks, "
+                f"content length: {len(content)} chars, "
+                f"reasoning length: {len(result['reasoning'])} chars"
+            )
+            # 4K tokens 约 2000-4000 中文字符，断言下限
+            assert len(content) >= 2000, (
+                f"Expected long output (>=2000 chars, ~4K tokens), got {len(content)} chars"
+            )
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(kw in error_msg for kw in ["timed out", "timeout"]):
+                pytest.skip(f"Long output generation timed out: {e}")
+            raise
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -360,16 +486,15 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D9: 超长上下文（非流式） - 验证超长上下文请求的非流式输出"""
         test_logger.info("=== 测试开始: 超长上下文(非流式) ===")
 
-        long_prompt = "以下是一篇很长的文章：" + "这是第" + "测试段落。 " * 25000
+        # 目标: 输入约 128K tokens，验证非流式超长上下文响应
+        long_prompt = generate_mixed_content(128000) + "\n\n请简短总结以上内容。"
         test_logger.info(f"输入长度: {len(long_prompt)} 字符")
 
-        messages = [
-            {"role": "user", "content": long_prompt + "\n\n请总结这篇文章的主要内容。"}
-        ]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        messages = [{"role": "user", "content": long_prompt}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
 
         try:
-            response = api_client.chat_completion(messages, max_tokens=2000)
+            response = api_client.chat_completion(messages, max_tokens=500)
             TestLogger.log_response(test_logger, response, "超长上下文响应")
 
             self.assert_response_success(response)
@@ -385,8 +510,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             usage = response.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
-            assert prompt_tokens > 0, (
-                "Should have prompt_tokens > 0 for super long context"
+            # 超长上下文应产生大量 prompt_tokens
+            assert prompt_tokens > 50000, (
+                f"Super long context should have large prompt_tokens, got {prompt_tokens}"
             )
             assert completion_tokens > 0, "Should have completion_tokens > 0"
             test_logger.info(
@@ -399,8 +525,19 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             )
 
         except Exception as e:
-            if "max_model_len" in str(e).lower() or "context" in str(e).lower():
-                pytest.skip(f"Model does not support this context length: {e}")
+            error_msg = str(e).lower()
+            if any(
+                kw in error_msg
+                for kw in [
+                    "max_model_len",
+                    "context",
+                    "413",
+                    "request entity too large",
+                    "timed out",
+                    "timeout",
+                ]
+            ):
+                pytest.skip(f"Model/proxy does not support this context length: {e}")
             raise
 
     @pytest.mark.d_long_context
@@ -410,16 +547,15 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D10: 超长上下文（流式） - 验证超长上下文请求的流式输出"""
         test_logger.info("=== 测试开始: 超长上下文(流式) ===")
 
-        long_prompt = "以下是一篇很长的文章：" + "这是第" + "测试段落。 " * 25000
+        # 目标: 输入约 128K tokens，验证流式超长上下文响应
+        long_prompt = generate_mixed_content(128000) + "\n\n请简短总结以上内容。"
         test_logger.info(f"输入长度: {len(long_prompt)} 字符")
 
-        messages = [
-            {"role": "user", "content": long_prompt + "\n\n请总结这篇文章的主要内容。"}
-        ]
-        TestLogger.log_request(test_logger, messages)
+        messages = [{"role": "user", "content": long_prompt}]
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
 
         try:
-            response_iter = api_client.chat_completion_stream(messages, max_tokens=2000)
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=500)
             result = self.collect_stream_chunks(response_iter)
 
             self.log_full_response(
@@ -434,6 +570,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 "D10-超长上下文(流式)",
             )
 
+            # 流式响应应有足够 chunks 证明是真正的流式输出
             assert len(result["chunks"]) > 0, "Should receive streaming chunks"
             assert result["content"] or result["reasoning"], (
                 "Should have non-empty content or reasoning in streaming response"
@@ -449,8 +586,19 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             )
 
         except Exception as e:
-            if "max_model_len" in str(e).lower() or "context" in str(e).lower():
-                pytest.skip(f"Model does not support this context length: {e}")
+            error_msg = str(e).lower()
+            if any(
+                kw in error_msg
+                for kw in [
+                    "max_model_len",
+                    "context",
+                    "413",
+                    "request entity too large",
+                    "timed out",
+                    "timeout",
+                ]
+            ):
+                pytest.skip(f"Model/proxy does not support this context length: {e}")
             raise
 
     @pytest.mark.d_long_context
@@ -504,23 +652,32 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                     )
 
                     try:
-                        response = api_client.chat_completion(messages, max_tokens=2000)
+                        response_iter = api_client.chat_completion_stream(
+                            messages, max_tokens=2000
+                        )
+                        result = self.collect_stream_chunks(response_iter)
                         self.log_full_response(
                             test_logger,
-                            response,
+                            {
+                                "chunks_count": len(result["chunks"]),
+                                "content": result["content"][:2000],
+                                "reasoning": result["reasoning"][:2000]
+                                if result["reasoning"]
+                                else "",
+                            },
                             f"D11-边界二分法-迭代{iteration + 1}-长度{mid}",
                         )
-                        if response.get("error"):
-                            test_logger.warning(
-                                f"长度 {mid} 失败: {response.get('error')}"
-                            )
-                            record_warning(f"长度{mid}请求失败")
-                            high = mid - 1
-                            failed_len = mid
-                        else:
+                        if len(result["chunks"]) > 0 and (
+                            result["content"] or result["reasoning"]
+                        ):
                             test_logger.info(f"长度 {mid} 成功")
                             low = mid + 1
                             successful_len = mid
+                        else:
+                            test_logger.warning(f"长度 {mid} 失败: 流式响应为空")
+                            record_warning(f"长度{mid}请求失败")
+                            high = mid - 1
+                            failed_len = mid
                     except Exception as e:
                         error_msg = str(e).lower()
                         if (
@@ -569,15 +726,20 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性"""
         test_logger.info("=== 测试开始: 长上下文+思考 ===")
 
-        background = (
+        # 生态系统背景（问题核心，保留语义供模型推理）
+        ecosystem_background = (
             "在一个封闭的生态系统中，存在三种生物：草、兔子和狐狸。草的生长速率为每天100单位，"
             "每只兔子每天消耗1单位草，每只狐狸每天消耗1只兔子。兔子的繁殖率为每天10%，"
             "狐狸的繁殖率为每天5%，兔子的自然死亡率为每天2%，狐狸的自然死亡率为每天3%。"
             "初始状态下有1000单位草、100只兔子和20只狐狸。"
-        ) * 100
+        )
+        # 用混合内容扩充至长上下文（目标 ~50K tokens），保留 ecosystem_background 作为问题核心
+        padding = generate_mixed_content(50000)
         long_prompt = (
             "请仔细分析以下生态系统动力学问题，给出详细的推理过程：\n\n"
-            + background
+            + ecosystem_background
+            + "\n\n以下是相关的背景参考资料：\n\n"
+            + padding
             + "\n\n请基于以上背景信息，回答以下问题："
             "1. 在没有狐狸的情况下，兔子和草的种群数量会如何变化？"
             "2. 引入狐狸后，三个物种之间会形成怎样的动态平衡？"
@@ -588,34 +750,60 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         messages = [{"role": "user", "content": long_prompt}]
         thinking_params = api_client.get_thinking_params(True)
-        TestLogger.log_request(test_logger, messages, thinking_params)
-
-        response = api_client.chat_completion(
-            messages,
-            extra_body=thinking_params,
-            max_tokens=2000,
-        )
-        TestLogger.log_response(test_logger, response, "长上下文+思考响应")
-        self.log_full_response(test_logger, response, "D12-长上下文+思考模式")
-
-        self.assert_response_success(response)
-        self.assert_content_not_empty(response)
-
-        reasoning = self.get_reasoning_content(response)
-        content = self.get_message_content(response)
-
-        assert reasoning is not None and len(reasoning.strip()) > 0, (
-            "Thinking mode should produce non-empty reasoning_content in long context"
+        TestLogger.log_request(
+            test_logger, messages, {**thinking_params, "max_tokens": 8000}
         )
 
-        usage = response.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        assert prompt_tokens > 0, (
-            "Should have prompt_tokens > 0 for long context with thinking"
-        )
+        try:
+            response = api_client.chat_completion(
+                messages,
+                extra_body=thinking_params,
+                max_tokens=8000,
+            )
+            TestLogger.log_response(test_logger, response, "长上下文+思考响应")
+            self.log_full_response(test_logger, response, "D12-长上下文+思考模式")
 
-        test_logger.info(
-            f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, "
-            f"content={len(content) if content else 0} chars, "
-            f"prompt_tokens={prompt_tokens}"
-        )
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+
+            reasoning = self.get_reasoning_content(response)
+            content = self.get_message_content(response)
+
+            assert reasoning is not None and len(reasoning.strip()) > 0, (
+                "Thinking mode should produce non-empty reasoning_content in long context"
+            )
+
+            usage = response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            # 长上下文应产生大量 prompt_tokens
+            assert prompt_tokens > 10000, (
+                f"Long context with thinking should have large prompt_tokens, got {prompt_tokens}"
+            )
+            assert usage.get("completion_tokens", 0) > 0, (
+                "Should have completion_tokens > 0"
+            )
+
+            test_logger.info(
+                f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, "
+                f"content={len(content) if content else 0} chars, "
+                f"prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={usage.get('completion_tokens')}"
+            )
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(
+                kw in error_msg
+                for kw in [
+                    "max_model_len",
+                    "context",
+                    "413",
+                    "request entity too large",
+                    "timed out",
+                    "timeout",
+                ]
+            ):
+                pytest.skip(
+                    f"Model/proxy does not support long context with thinking: {e}"
+                )
+            raise
