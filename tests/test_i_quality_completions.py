@@ -650,7 +650,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         """I2 [P1]: 生成一致性 - 相同输入多次生成的稳定性"""
         test_logger.info("=== 测试开始: 生成一致性 (Completions API) ===")
 
-        prompt = "请用一句话介绍北京"
+        prompt = "请用一句话介绍长江"
         TestLogger.log_request(
             test_logger,
             [{"role": "user", "content": prompt}],
@@ -797,8 +797,8 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 回答相关性 (Completions API) ===")
 
         test_cases = [
-            ("Python中如何定义函数？", ["def", "函数", "定义"]),
-            ("水的化学式是什么？", ["H2O", "水", "化学"]),
+            ("什么是货币通货膨胀？", ["货币", "通胀", "价格", "上涨", "购买力"]),
+            ("如何提高英语口语水平？", ["英语", "口语", "练习", "发音", "语言"]),
         ]
 
         relevant_count = 0
@@ -816,15 +816,22 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             self.assert_content_not_empty(response)
             content = self.get_message_content(response).lower()
 
+            is_nonsensical, nonsensical_reason = (
+                ResponseRelevanceChecker.is_nonsensical_response(prompt, content)
+            )
+
             quality = ResponseRelevanceChecker.check_response_quality(
                 prompt, content, keywords
             )
             if (
-                any(kw.lower() in content for kw in keywords)
+                not is_nonsensical
+                and any(kw.lower() in content for kw in keywords)
                 and quality["quality_passed"]
             ):
                 relevant_count += 1
             else:
+                if is_nonsensical:
+                    test_logger.warning(f"无意义回答: {nonsensical_reason}")
                 if quality["issues"]:
                     test_logger.warning(f"质量问题: {quality['issues']}")
                 test_logger.warning(
@@ -1054,10 +1061,10 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 乱码检测 (Completions API) ===")
 
         test_prompts = [
-            "请介绍一下人工智能的发展历史",
+            "请介绍一下区块链技术的基本原理",
             "什么是机器学习？",
             "解释一下什么是深度学习",
-            "Python中的列表和元组有什么区别？",
+            "请用中文介绍中国的传统节日春节",
             "请用中文回答：What is an API?",
         ]
 
@@ -1107,11 +1114,11 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 无意义回答检测 (Completions API) ===")
 
         test_cases = [
-            "Python中如何定义一个函数？请给出示例代码",
-            "水的沸点是多少摄氏度？",
-            "请介绍一下北京的历史",
-            "什么是人工智能？请详细解释",
-            "1加1等于几？",
+            "如何写一封正式的英文邮件？请给出示例",
+            "珠穆朗玛峰的海拔高度大约是多少米？",
+            "请介绍一下丝绸之路的历史",
+            "什么是大数据技术？请详细解释",
+            "中国有多少个省级行政区？",
         ]
 
         nonsensical_count = 0
@@ -1159,7 +1166,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             (
                 "weather",
                 [
-                    "北京今天天气怎么样？",
+                    "上海今天天气怎么样？",
                     "明天会下雨吗？",
                 ],
             ),
