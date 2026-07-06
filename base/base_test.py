@@ -41,19 +41,29 @@ class BaseTest(ABC):
         )
 
     def get_message_content(
-        self, response: Dict[str, Any], strip_thinking: bool = False
+        self,
+        response: Dict[str, Any],
+        strip_thinking: bool = False,
+        strip_reasoning: bool = False,
     ) -> str:
         """获取消息内容
 
         Args:
             response: API响应
-            strip_thinking: 是否去除思考内容（</think>标签之间的内容）
+            strip_thinking: 是否去除思考内容（<think>标签之间的内容）
+            strip_reasoning: 是否去除独立的 reasoning_content 字段，仅返回纯 content。
+                当为 True 时直接取 message.content，不拼接 reasoning_content，
+                适用于垃圾内容检测、上下文拼接等只需正式回复的场景。
         """
-        content = self.get_response_content(response)
+        if strip_reasoning:
+            message = response.get("choices", [{}])[0].get("message", {})
+            content = message.get("content") or ""
+        else:
+            content = self.get_response_content(response)
         if strip_thinking:
             import re
 
-            content = re.sub(r"</think>.*?", "", content)
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
         return content
 
     def get_reasoning_content(self, response: Dict[str, Any]) -> Optional[str]:

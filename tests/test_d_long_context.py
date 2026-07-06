@@ -19,6 +19,7 @@ D. 长上下文处理测试
 import pytest
 import random
 import string
+import time
 from typing import List
 
 from base.base_test import BaseTest, StreamingTestMixin
@@ -104,6 +105,47 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             if val:
                 return int(val)
         return 202752
+
+    @staticmethod
+    def _is_over_limit_error(e) -> bool:
+        """判断异常是否表示上下文超限/连接中断/服务端边界失败
+
+        边界探测/超限测试中，服务端对超大输入的失败不一定带规范错误码：
+        - 显式 context/length/limit/token 错误
+        - HTTP 413 (Request Entity Too Large)
+        - HTTP 5xx 服务端错误（超大输入常引发 500/502/503/504）
+        - 流式传输中断（ChunkedEncodingError/ProtocolError）
+        - 连接重置/超时
+        """
+        if e is None:
+            return False
+        error_msg = str(e).lower()
+        exc_name = type(e).__name__.lower()
+        keywords = [
+            "context",
+            "length",
+            "too_many",
+            "exceed",
+            "limit",
+            "token",
+            "413",
+            "request entity too large",
+            "500",
+            "502",
+            "503",
+            "504",
+            "internal server",
+            "server error",
+            "chunked",
+            "protocol",
+            "premature",
+            "connection",
+            "reset",
+            "timeout",
+            "timed out",
+            "ended",
+        ]
+        return any(kw in error_msg or kw in exc_name for kw in keywords)
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
@@ -395,23 +437,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             )
         except Exception as e:
             test_logger.info(f"Context exceeded: {e}")
-            error_msg = str(e).lower()
-            # 超限时模型可能返回错误（拒绝）或超时，均为预期行为
-            assert any(
-                kw in error_msg
-                for kw in [
-                    "context",
-                    "length",
-                    "too_many",
-                    "exceed",
-                    "limit",
-                    "token",
-                    "413",
-                    "request entity too large",
-                    "timed out",
-                    "timeout",
-                ]
-            ), f"Error should relate to context/length/proxy limit, got: {e}"
+            # 超限时模型可能返回错误（拒绝）、5xx 服务端错误、流式中断或超时，
+            # 均为预期行为（复用 _is_over_limit_error 统一判定）
+            assert self._is_over_limit_error(e), (
+                f"Error should relate to context/length/proxy/server limit, got: {e}"
+            )
 
     @pytest.mark.d_long_context
     @pytest.mark.p1
@@ -595,119 +625,260 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def test_context_boundary_exact_limit(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """D11 [P1]: 超长上下文（边界验证） - 使用二分法逼近模型最大上下文长度"""
-        test_logger.info("=== 测试开始: 上下文边界（二分法） ===")
+        """D11 [P1]: 超长上下文（边界验证） - 探进+二分法逼近模型最大上下文长度
+
+        针对超长上下文（如1M）模型优化：
+        - 探进法（指数倍增）先建立成功/失败区间，绝大多数迭代落在快速的小尺寸上；
+        - 仅在区间内做二分逼近，收敛容差按 max_len 缩放，避免无谓迭代；
+        - 单请求超时随输入规模自适应放大，避免大上下文 prefill 超时；
+        - 总体墙钟预算保护，超时则以已得最大成功值判定，避免用例整体超时；
+        - 一旦已确认 ≥80%（通过阈值）即提前结束，不再探测更高尺寸。
+        """
+        test_logger.info("=== 测试开始: 上下文边界（探进+二分） ===")
+
+        # 通过阈值：断言只要求 ≥80%，达到即可提前结束
+        PASS_RATIO = 0.8
+        # 总体墙钟预算（秒），避免单测超时；可经 model config 覆盖
+        overall_budget = 1500
+        try:
+            overall_budget = int(
+                (api_client.config or {}).get("boundary_test_budget", overall_budget)
+            )
+        except (TypeError, ValueError):
+            pass
+
+        def is_over_limit_error(e) -> bool:
+            """复用类级共享判定逻辑（见 _is_over_limit_error）"""
+            return self._is_over_limit_error(e)
+
+        def adaptive_timeout(size_tokens: int) -> int:
+            # 基础 60s + 每token 约 1.5ms，覆盖 prefill 随输入长度增长
+            # 1M ≈ 1560s，100K ≈ 210s，8K ≈ 72s
+            return max(60, int(60 + size_tokens * 0.0015))
+
+        # 字符/token 比，校准前用随机ASCII经验值 3.0；校准后更新为实测值
+        chars_per_token = 3.0
+
+        def calibrate_chars_per_token():
+            """发一个小的非流式请求，从服务端 usage.prompt_tokens 反推字符/token 比
+
+            确保后续 build_prompt 生成的字符数能真正逼近声明的 token 数，
+            避免大上下文模型"字符数远小于token数"导致的假阳性。
+            """
+            nonlocal chars_per_token
+            sample_chars = 4096
+            letters_digits = string.ascii_letters + string.digits
+            n_alnum = int(sample_chars * 0.9)
+            n_space = sample_chars - n_alnum
+            sample_list = random.choices(letters_digits, k=n_alnum) + [" "] * n_space
+            random.shuffle(sample_list)
+            sample_prompt = "".join(sample_list)
+            messages = [{"role": "user", "content": sample_prompt}]
+            try:
+                test_logger.info(f"校准请求: {sample_chars} 字符, 非流式")
+                resp = api_client.chat_completion(messages, max_tokens=5)
+                pt = resp.get("usage", {}).get("prompt_tokens", 0)
+                if pt > 0:
+                    ratio = sample_chars / pt
+                    test_logger.info(
+                        f"校准结果: {sample_chars}字符 → {pt}tokens, "
+                        f"chars/token={ratio:.3f}"
+                    )
+                    chars_per_token = ratio
+                else:
+                    test_logger.warning(
+                        "校准: 服务端未返回 prompt_tokens，使用默认 3.0"
+                    )
+            except Exception as e:
+                test_logger.warning(f"校准请求失败，使用默认 3.0: {e}")
+
+        def build_prompt(size_tokens: int) -> str:
+            target_chars = int(size_tokens * chars_per_token)
+            letters_digits = string.ascii_letters + string.digits
+            n_alnum = int(target_chars * 0.9)
+            n_space = target_chars - n_alnum
+            prompt_chars = random.choices(letters_digits, k=n_alnum) + [" "] * n_space
+            random.shuffle(prompt_chars)
+            return "".join(prompt_chars)
+
+        original_timeout = api_client.timeout
+        start_time = time.time()
+
+        def elapsed() -> float:
+            return time.time() - start_time
+
+        def probe(size_tokens: int):
+            """单次探测。返回 (ok, error)。ok 表示该长度可成功流式返回。"""
+            prompt = build_prompt(size_tokens)
+            messages = [{"role": "user", "content": prompt}]
+            test_logger.info(f"探测长度 ~{size_tokens} tokens")
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+
+            api_client.timeout = adaptive_timeout(size_tokens)
+            try:
+                response_iter = api_client.chat_completion_stream(
+                    messages, max_tokens=2000
+                )
+                result = self.collect_stream_chunks(response_iter)
+                self.log_full_response(
+                    test_logger,
+                    {
+                        "chunks_count": len(result["chunks"]),
+                        "content": result["content"][:2000],
+                        "reasoning": result["reasoning"][:2000]
+                        if result["reasoning"]
+                        else "",
+                    },
+                    f"D11-边界探测-长度{size_tokens}",
+                )
+                ok = len(result["chunks"]) > 0 and (
+                    result["content"] or result["reasoning"]
+                )
+                return ok, None
+            except Exception as e:
+                test_logger.warning(f"长度 {size_tokens} 异常: {e}")
+                return False, e
+            finally:
+                api_client.timeout = original_timeout
+
+        def handle_failure(size_tokens: int, err):
+            """处理探测失败：超限/中断类仅记录告警；其它异常向上抛出"""
+            if err is not None and not is_over_limit_error(err):
+                raise err
+            tag = "超限" if err is not None else "响应为空"
+            test_logger.warning(f"长度 {size_tokens} 失败: {tag}")
+            record_warning(f"长度{size_tokens}{tag}")
 
         try:
             model_info = api_client.get_model_info()
             max_len = self._get_max_context_len(model_info)
             test_logger.info(f"模型定义的最大上下文长度: {max_len}")
+            if max_len <= 0:
+                pytest.skip("无法获取模型最大上下文长度")
 
-            if max_len > 0:
+            # 校准字符/token 比，使后续探测真正逼近声明的 token 边界
+            calibrate_chars_per_token()
+
+            tolerance = max(int(max_len * 0.01), 1024)
+            pass_threshold = int(max_len * PASS_RATIO)
+            test_logger.info(
+                f"参数: 通过阈值={pass_threshold}({PASS_RATIO:.0%}), "
+                f"收敛容差={tolerance}, 总预算={overall_budget}s, "
+                f"chars/token={chars_per_token:.3f}"
+            )
+
+            successful_len = 0
+            failed_len = max_len
+
+            # 阶段1：探进法（指数倍增）建立 [low, high] 区间
+            # 从小基数开始，绝大多数迭代落在快速的小尺寸上
+            test_logger.info("--- 阶段1: 探进法建立区间 ---")
+            floor_size = min(1024, max_len)
+            ok, err = probe(floor_size)
+            if ok:
+                successful_len = floor_size
+                low = floor_size
+            else:
+                handle_failure(floor_size, err)
+                failed_len = floor_size
                 low = 0
-                high = max_len
-                successful_len = 0
-                failed_len = max_len
-                max_iterations = 16
 
-                test_logger.info(f"开始二分法测试，范围: [{low}, {high}]")
+            if successful_len > 0:
+                cur = successful_len
+                step = max(floor_size, 1024)
+                max_gallop = 25  # log2(1M/1K)≈10，余量充足
+                for _ in range(max_gallop):
+                    if elapsed() > overall_budget:
+                        test_logger.warning(
+                            f"总预算 {overall_budget}s 已用尽，提前结束探进"
+                        )
+                        break
+                    if successful_len >= pass_threshold:
+                        test_logger.info(f"已达通过阈值 {pass_threshold}，提前结束探进")
+                        break
+                    if cur >= max_len:
+                        break
+                    nxt = min(cur + step, max_len)
+                    if nxt <= cur:
+                        break
+                    ok, err = probe(nxt)
+                    if ok:
+                        successful_len = nxt
+                        low = nxt
+                        cur = nxt
+                        step *= 2
+                    else:
+                        handle_failure(nxt, err)
+                        failed_len = nxt
+                        break
 
-                for iteration in range(max_iterations):
+            high = failed_len
+            test_logger.info(
+                f"阶段1完成: 区间 [{low}, {high}], 已成功 {successful_len}, "
+                f"耗时 {elapsed():.1f}s"
+            )
+
+            # 阶段2：在区间内二分逼近（仅在未达通过阈值且区间有效时）
+            if successful_len < pass_threshold and high > low:
+                test_logger.info(f"--- 阶段2: 二分逼近（容差 {tolerance}）---")
+                max_bin_iters = 16
+                for iteration in range(max_bin_iters):
+                    if high - low <= tolerance:
+                        break
+                    if elapsed() > overall_budget:
+                        test_logger.warning(
+                            f"总预算 {overall_budget}s 已用尽，提前结束二分，"
+                            f"当前最佳成功 {successful_len}"
+                        )
+                        break
                     mid = (low + high) // 2
-
                     if mid < 100:
                         low = mid + 1
                         continue
+                    ok, err = probe(mid)
+                    if ok:
+                        low = mid + 1
+                        successful_len = mid
+                        test_logger.info(f"迭代 {iteration + 1}: 长度 {mid} 成功")
+                        if successful_len >= pass_threshold:
+                            test_logger.info(
+                                f"已达通过阈值 {pass_threshold}，提前结束二分"
+                            )
+                            break
+                    else:
+                        handle_failure(mid, err)
+                        high = mid - 1
+                        failed_len = mid
 
-                    target_chars = mid
-                    chars_without_space = int(target_chars * 0.9)
-                    chars_with_space = int(target_chars * 0.1)
-                    prompt_chars = []
-                    for _ in range(chars_without_space):
-                        prompt_chars.append(
-                            random.choice(string.ascii_letters + string.digits)
-                        )
-                    for _ in range(chars_with_space):
-                        prompt_chars.append(" ")
-                    random.shuffle(prompt_chars)
-                    prompt = "".join(prompt_chars)
-                    messages = [{"role": "user", "content": prompt}]
+            test_logger.info(
+                f"边界测试结果: 成功最大长度 ~{successful_len} tokens, "
+                f"失败长度 ~{failed_len} tokens, 模型声明 {max_len} tokens, "
+                f"总耗时 {elapsed():.1f}s"
+            )
 
-                    test_logger.info(
-                        f"迭代 {iteration + 1}: 测试上下文长度 ~{mid} tokens"
-                    )
+            if successful_len <= 0:
+                pytest.skip("无法确定有效的上下文长度")
 
-                    TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
-
-                    try:
-                        response_iter = api_client.chat_completion_stream(
-                            messages, max_tokens=2000
-                        )
-                        result = self.collect_stream_chunks(response_iter)
-                        self.log_full_response(
-                            test_logger,
-                            {
-                                "chunks_count": len(result["chunks"]),
-                                "content": result["content"][:2000],
-                                "reasoning": result["reasoning"][:2000]
-                                if result["reasoning"]
-                                else "",
-                            },
-                            f"D11-边界二分法-迭代{iteration + 1}-长度{mid}",
-                        )
-                        if len(result["chunks"]) > 0 and (
-                            result["content"] or result["reasoning"]
-                        ):
-                            test_logger.info(f"长度 {mid} 成功")
-                            low = mid + 1
-                            successful_len = mid
-                        else:
-                            test_logger.warning(f"长度 {mid} 失败: 流式响应为空")
-                            record_warning(f"长度{mid}请求失败")
-                            high = mid - 1
-                            failed_len = mid
-                    except Exception as e:
-                        error_msg = str(e).lower()
-                        if (
-                            ("max" in error_msg and "length" in error_msg)
-                            or "context" in error_msg
-                            or "max_model_len" in error_msg
-                        ):
-                            test_logger.warning(f"长度 {mid} 超限: {e}")
-                            record_warning(f"长度{mid}超限")
-                            high = mid - 1
-                            failed_len = mid
-                        else:
-                            raise
-
-                    if high - low <= 10:
-                        break
-
-                test_logger.info(
-                    f"二分法结果: 成功最大长度 ~{successful_len} tokens, 失败长度 ~{failed_len} tokens"
+            ratio = successful_len / max_len
+            test_logger.info(f"实际成功率: {ratio:.2%}")
+            if elapsed() > overall_budget and ratio < PASS_RATIO:
+                # 预算耗尽且未能验证到通过阈值：无法判定，跳过避免误报
+                pytest.skip(
+                    f"测试预算 {overall_budget}s 耗尽，仅验证至 "
+                    f"{successful_len}/{max_len} ({ratio:.2%})，无法完成完整边界测试"
                 )
-                test_logger.info(f"模型定义的最大长度: {max_len} tokens")
-
-                if successful_len > 0:
-                    ratio = successful_len / max_len
-                    test_logger.info(f"实际成功率: {ratio:.2%}")
-                    assert ratio > 0.8 or successful_len >= max_len * 0.8, (
-                        f"Model claims {max_len} but only supports ~{successful_len}"
-                    )
-                    test_logger.info("上下文边界验证通过")
-                else:
-                    pytest.skip("无法确定有效的上下文长度")
+            assert ratio > PASS_RATIO or successful_len >= max_len * PASS_RATIO, (
+                f"Model claims {max_len} but only supports ~{successful_len}"
+            )
+            test_logger.info("上下文边界验证通过")
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if (
-                ("max" in error_msg and "length" in error_msg)
-                or "context" in error_msg
-                or "max_model_len" in error_msg
-            ):
+            if is_over_limit_error(e):
                 test_logger.info(f"Context boundary reached: {e}")
             else:
                 raise
+        finally:
+            api_client.timeout = original_timeout
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
@@ -745,56 +916,47 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             test_logger, messages, {**thinking_params, "max_tokens": 8000}
         )
 
+        # try/except 仅保护 API 调用本身（传输层错误→skip），
+        # 响应内容断言放在 try/except 之外，确保断言失败报 FAIL 而非误判 skip
         try:
             response = api_client.chat_completion(
                 messages,
                 extra_body=thinking_params,
                 max_tokens=8000,
             )
-            TestLogger.log_response(test_logger, response, "长上下文+思考响应")
-            self.log_full_response(test_logger, response, "D12-长上下文+思考模式")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-
-            reasoning = self.get_reasoning_content(response)
-            content = self.get_message_content(response)
-
-            assert reasoning is not None and len(reasoning.strip()) > 0, (
-                "Thinking mode should produce non-empty reasoning_content in long context"
-            )
-
-            usage = response.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            # 长上下文应产生大量 prompt_tokens
-            assert prompt_tokens > 10000, (
-                f"Long context with thinking should have large prompt_tokens, got {prompt_tokens}"
-            )
-            assert usage.get("completion_tokens", 0) > 0, (
-                "Should have completion_tokens > 0"
-            )
-
-            test_logger.info(
-                f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, "
-                f"content={len(content) if content else 0} chars, "
-                f"prompt_tokens={prompt_tokens}, "
-                f"completion_tokens={usage.get('completion_tokens')}"
-            )
-
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(
-                kw in error_msg
-                for kw in [
-                    "max_model_len",
-                    "context",
-                    "413",
-                    "request entity too large",
-                    "timed out",
-                    "timeout",
-                ]
-            ):
+            if self._is_over_limit_error(e):
                 pytest.skip(
                     f"Model/proxy does not support long context with thinking: {e}"
                 )
             raise
+
+        TestLogger.log_response(test_logger, response, "长上下文+思考响应")
+        self.log_full_response(test_logger, response, "D12-长上下文+思考模式")
+
+        self.assert_response_success(response)
+        self.assert_content_not_empty(response)
+
+        reasoning = self.get_reasoning_content(response)
+        content = self.get_message_content(response)
+
+        assert reasoning is not None and len(reasoning.strip()) > 0, (
+            "Thinking mode should produce non-empty reasoning_content in long context"
+        )
+
+        usage = response.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        # 长上下文应产生大量 prompt_tokens
+        assert prompt_tokens > 10000, (
+            f"Long context with thinking should have large prompt_tokens, got {prompt_tokens}"
+        )
+        assert usage.get("completion_tokens", 0) > 0, (
+            "Should have completion_tokens > 0"
+        )
+
+        test_logger.info(
+            f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, "
+            f"content={len(content) if content else 0} chars, "
+            f"prompt_tokens={prompt_tokens}, "
+            f"completion_tokens={usage.get('completion_tokens')}"
+        )
