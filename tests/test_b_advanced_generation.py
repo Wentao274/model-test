@@ -238,7 +238,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 has_thinking_tags = len(thinking_content) > 0
                 test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
         test_logger.info(
-            f"reasoning 字段: {reasoning[:2000] if reasoning else 'None'}..."
+            f"reasoning 字段: {reasoning[:2000] + '...' if reasoning else 'None'}"
         )
         test_logger.info(
             f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
@@ -953,13 +953,21 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 f"[测试{idx}] Tool arguments should be non-empty dict, got: {args}"
             )
 
-            self._execute_tool_call(api_client, messages, tool_calls[0], test_logger)
+            final_content, final_response = self._execute_tool_call(
+                api_client, messages, tool_calls[0], test_logger
+            )
+            self.assert_response_success(final_response)
+            assert len(final_content.strip()) > 0, (
+                f"[测试{idx}] Final response after tool execution should not be empty"
+            )
 
         test_logger.info("多工具调用测试完成")
 
     @pytest.mark.b_advanced
     @pytest.mark.p2
-    def test_parallel_tool_calls(self, api_client: ModelAPIClient, test_logger):
+    def test_parallel_tool_calls(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """B6 [P2]: 工具调用-并行调用 - 单次回复中并行调用多个工具"""
         test_logger.info("=== 测试开始: 并行工具调用 ===")
 
@@ -973,7 +981,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "B6-并行工具调用")
 
         self.assert_response_success(response)
-        tool_calls = self.get_tool_calls(response) or [] or []
+        tool_calls = self.get_tool_calls(response) or []
 
         test_logger.info(f"工具调用数量: {len(tool_calls)}")
         assert len(tool_calls) > 0, "Should have tool calls"
@@ -1008,6 +1016,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         if len(tool_calls) >= 2:
             test_logger.info("模型并行调用了多个工具")
+        else:
+            msg = (
+                f"并行工具调用测试：模型仅调用了 {len(tool_calls)} 个工具"
+                f"({called_tools})，未实现并行调用"
+            )
+            test_logger.warning(msg)
+            record_warning(msg)
 
         final_content, final_response = self._execute_parallel_tool_calls(
             api_client, messages, tool_calls, TOOLS_MULTIPLE, test_logger
@@ -1116,6 +1131,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         while step < max_steps:
             step += 1
             test_logger.info(f"第{step}步: 发送请求")
+            TestLogger.log_request(
+                test_logger, messages, {"step": step, "tools": "3 tools"}
+            )
 
             response = api_client.chat_completion(
                 messages, tools=tools, tool_choice="auto"
@@ -1128,6 +1146,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             if len(tool_calls) == 0:
                 test_logger.info(f"第{step}步: 模型未调用工具，链式调用结束")
                 break
+
+            # assistant 消息只 append 一次（包含全部 tool_calls），
+            # 之后逐条 append tool 结果，避免重复 assistant 消息破坏对话历史
+            messages.append(response["choices"][0]["message"])
 
             for tool_call in tool_calls:
                 function_name = tool_call.get("function", {}).get("name")
@@ -1147,7 +1169,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 called_tools.add(function_name)
                 tool_results_map[function_name] = tool_result
 
-                messages.append(response["choices"][0]["message"])
                 messages.append(
                     {
                         "role": "tool",
@@ -1215,7 +1236,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         messages = [
             {
                 "role": "system",
-                "content": "你是一个JSON生成器，请始终返回合法的JSON对象"
+                "content": "你是一个JSON生成器，请始终返回合法的JSON对象",
             },
             {"role": "user", "content": "请返回一个包含姓名和年龄的JSON对象"},
         ]
@@ -1368,9 +1389,17 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         age_value = json_data.get("age") or json_data.get("年龄")
         if age_value is not None:
-            assert isinstance(age_value, int), (
-                f"'age' field should be integer per schema, got {type(age_value).__name__}: {age_value}"
+            # schema 指定 integer，但部分模型/JSON库可能将整数解析为 float
+            # （如 25 -> 25.0），容错接受 float.is_integer() 的情况
+            assert isinstance(age_value, (int, float)) and not isinstance(
+                age_value, bool
+            ), (
+                f"'age' field should be numeric, got {type(age_value).__name__}: {age_value}"
             )
+            if isinstance(age_value, float):
+                assert age_value.is_integer(), (
+                    f"'age' field should be integer per schema, got float: {age_value}"
+                )
 
         name_value = json_data.get("name") or json_data.get("姓名")
         if name_value is not None:

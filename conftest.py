@@ -692,7 +692,13 @@ def pytest_runtest_logreport(report):
 
 def pytest_runtest_setup(item):
     """在每个测试函数运行前检查文件变化并输出分隔线"""
-    _test_warnings.clear()
+    # 仅清除当前测试的警告记录，保留其他测试已记录的警告。
+    # 之前使用 _test_warnings.clear() 会清除所有测试的警告，
+    # 导致非最后一个测试的警告在最终报告中丢失。
+    category_info = get_test_category_info(item.nodeid)
+    if category_info:
+        marker, test_idx = category_info[0], category_info[1]
+        _test_warnings.pop(f"{marker}_{test_idx}", None)
     global _last_test_file
     try:
         from _pytest.config import get_plugin_manager

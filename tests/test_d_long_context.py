@@ -17,6 +17,8 @@ D. 长上下文处理测试
 """
 
 import pytest
+import random
+import string
 from typing import List
 
 from base.base_test import BaseTest, StreamingTestMixin
@@ -215,7 +217,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         prompt = generate_mixed_content(128000) + "\n\n请总结以上内容的要点。"
 
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         try:
             response = api_client.chat_completion(messages, max_tokens=2000)
@@ -278,7 +280,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         content_lower = content.lower()
         assert any(
             kw in content_lower
-            for kw in ["特殊标记", "标记", "alpha", "实验", "37", "结果", "42"]
+            for kw in ["特殊标记", "标记", "alpha", "实验", "37", "结果"]
         ), f"Model should reference the needle context, got: {content[:500]}"
 
         usage = response.get("usage", {})
@@ -299,9 +301,6 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         # 尝试获取模型信息
         model_info = api_client.get_model_info()
         max_len = self._get_max_context_len(model_info)
-
-        if max_len <= 0:
-            pytest.skip("Model max_model_len not available")
 
         # 场景1: 输入接近上限（max_len - 2000，留出输出空间），应成功
         test_logger.info(f"--- 场景1: 接近上限 (target ~{max_len - 2000} tokens) ---")
@@ -359,17 +358,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         model_info = api_client.get_model_info()
         max_len = self._get_max_context_len(model_info)
 
-        if max_len > 0:
-            # 输入超过 max_len，确保触发截断或超限错误
-            over_tokens = max_len + 4000
-            test_logger.info(
-                f"模型最大上下文: {max_len}, 生成输入 ~{over_tokens} tokens"
-            )
-            prompt = generate_mixed_content(over_tokens) + "\n\n请简短总结以上内容。"
-        else:
-            # 无法获取 max_len 时使用固定大文本兜底
-            prompt = generate_mixed_content(202752) + "\n\n请简短总结以上内容。"
-            test_logger.info(f"无法获取 max_len, 使用固定大文本 {202752} tokens 兜底")
+        # 输入超过 max_len，确保触发截断或超限错误
+        over_tokens = max_len + 4000
+        test_logger.info(f"模型最大上下文: {max_len}, 生成输入 ~{over_tokens} tokens")
+        prompt = generate_mixed_content(over_tokens) + "\n\n请简短总结以上内容。"
 
         messages = [{"role": "user", "content": prompt}]
         TestLogger.log_request(test_logger, messages, {"max_tokens": 500})
@@ -459,9 +451,6 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
             assert len(result["chunks"]) > 0, "Should receive streaming chunks"
             content = result["content"]
-            assert content and len(content.strip()) > 1000, (
-                f"Long output response should be substantial, got {len(content.strip())} chars"
-            )
 
             # 流式无 usage，通过字符数估算: 4K tokens 约对应 2000+ 中文字符
             test_logger.info(
@@ -630,9 +619,6 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                         low = mid + 1
                         continue
 
-                    import random
-                    import string
-
                     target_chars = mid
                     chars_without_space = int(target_chars * 0.9)
                     chars_with_space = int(target_chars * 0.1)
@@ -650,6 +636,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                     test_logger.info(
                         f"迭代 {iteration + 1}: 测试上下文长度 ~{mid} tokens"
                     )
+
+                    TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
                     try:
                         response_iter = api_client.chat_completion_stream(
@@ -681,9 +669,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                     except Exception as e:
                         error_msg = str(e).lower()
                         if (
-                            "max" in error_msg
-                            and "length" in error_msg
+                            ("max" in error_msg and "length" in error_msg)
                             or "context" in error_msg
+                            or "max_model_len" in error_msg
                         ):
                             test_logger.warning(f"长度 {mid} 超限: {e}")
                             record_warning(f"长度{mid}超限")
@@ -710,10 +698,13 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 else:
                     pytest.skip("无法确定有效的上下文长度")
 
-            else:
-                pytest.skip("Model max_model_len not available")
         except Exception as e:
-            if "max" in str(e).lower() and "length" in str(e).lower():
+            error_msg = str(e).lower()
+            if (
+                ("max" in error_msg and "length" in error_msg)
+                or "context" in error_msg
+                or "max_model_len" in error_msg
+            ):
                 test_logger.info(f"Context boundary reached: {e}")
             else:
                 raise

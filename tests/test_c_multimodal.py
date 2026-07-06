@@ -85,7 +85,13 @@ PLACEHOLDER_KEYWORDS = [
 
 
 def check_multimodal_failure(content: str, media_type: str = "image") -> str | None:
-    """检查多模态响应是否包含识别失败的关键词"""
+    """检查多模态响应是否包含识别失败的关键词
+
+    当模型回复"看不到图片"等失败信息时返回匹配的关键词，用于判定多模态识别失败。
+    注意：positive_keywords 仅保留明确表示"已看到媒体内容"的短语，
+    避免使用"描述"/"显示"/"content"等过于宽泛的词——否则模型说
+    "我看不到图片，无法描述"会因含"描述"而误判为成功。
+    """
     if not content:
         return None
     content_lower = content.lower()
@@ -93,24 +99,29 @@ def check_multimodal_failure(content: str, media_type: str = "image") -> str | N
         if keyword in content_lower:
             return keyword
     keywords = NO_IMAGE_KEYWORDS if media_type == "image" else NO_VIDEO_KEYWORDS
-    positive_keywords = [
+    # 仅当响应中明确包含"已看到媒体内容"的短语时，才认为失败关键词是误报
+    positive_phrases = [
         "图片内容",
-        "图片描述",
         "图片中",
+        "图片里",
         "画面中",
+        "画面里",
         "图像中",
-        "描述",
-        "颜色",
-        "蓝色",
-        "红色",
-        "绿色",
+        "图像里",
+        "视频中",
+        "视频里",
         "可以看到",
         "呈现出",
-        "显示",
-        "content",
-        "description",
+        "图中",
+        "从图",
+        "in the image",
+        "in the picture",
+        "in the video",
+        "the image shows",
+        "the picture shows",
+        "the video shows",
     ]
-    has_positive = any(kw in content_lower for kw in positive_keywords)
+    has_positive = any(phrase in content_lower for phrase in positive_phrases)
     for keyword in keywords:
         if keyword in content_lower:
             if has_positive:
@@ -155,6 +166,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             }
         ]
         test_logger.info("请求: 单图理解")
+        TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "单图理解响应")
@@ -199,6 +211,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 }
             ]
             test_logger.info("请求: 实际图片理解")
+            TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages)
             TestLogger.log_response(test_logger, response, "实际图片理解响应")
@@ -250,13 +263,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         messages = [{"role": "user", "content": content_parts}]
         test_logger.info("请求: 多图对比")
+        TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, "多图对比响应")
         self.log_full_response(test_logger, response, "C2-多图对比")
-
-        if response.get("error"):
-            pytest.skip(f"Model does not support multi-image: {response.get('error')}")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -314,14 +325,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 }
             ]
             test_logger.info("请求: 真实高清图片理解")
+            TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages)
+            TestLogger.log_response(test_logger, response, "真实高清图片响应")
             self.log_full_response(test_logger, response, "C3-真实高清图")
-
-            if response.get("error"):
-                pytest.skip(
-                    f"Model does not support real high-res images: {response['error']}"
-                )
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -356,12 +364,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             }
         ]
         test_logger.info("请求: 4K高分辨率图片")
+        TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response, "4K高分辨率图片响应")
         self.log_full_response(test_logger, response, "C3-4K生成图")
-
-        if response.get("error"):
-            pytest.skip(f"Model does not support high-res images: {response['error']}")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -383,7 +390,7 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
     @pytest.mark.c_multimodal
     @pytest.mark.p1
-    def test_chart_ocr(self, api_client: ModelAPIClient, test_logger):
+    def test_chart_ocr(self, api_client: ModelAPIClient, test_logger, record_warning):
         """C4 [P1]: 图表/OCR - 表格截图识别"""
         test_logger.info("=== 测试开始: 图表/OCR ===")
 
@@ -413,12 +420,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             }
         ]
         test_logger.info("请求: OCR识别")
+        TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response, "OCR识别响应")
         self.log_full_response(test_logger, response, "C4-生成文字OCR")
-
-        if response.get("error"):
-            pytest.skip(f"Model does not support OCR: {response.get('error')}")
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -442,51 +448,49 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
         real_image_path = IMAGES_DIR / "table" / "bench_metrics.png"
 
         if not real_image_path.exists():
-            pytest.skip(f"测试图片不存在: {real_image_path}")
+            record_warning(f"真实表格测试图片不存在: {real_image_path}")
+            test_logger.warning(f"测试图片不存在，跳过真实表格OCR: {real_image_path}")
+        else:
+            with open(real_image_path, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-        with open(real_image_path, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "请读取并分析这张表格图片中的所有数据内容",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        },
+                    ],
+                }
+            ]
+            test_logger.info("请求: 真实表格OCR识别")
+            TestLogger.log_request(test_logger, messages)
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "请读取并分析这张表格图片中的所有数据内容",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
-                    },
-                ],
-            }
-        ]
-        test_logger.info("请求: 真实表格OCR识别")
+            response = api_client.chat_completion(messages)
+            TestLogger.log_response(test_logger, response, "真实表格OCR响应")
+            self.log_full_response(test_logger, response, "C4-真实表格OCR")
 
-        response = api_client.chat_completion(messages)
-        self.log_full_response(test_logger, response, "C4-真实表格OCR")
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
 
-        if response.get("error"):
-            pytest.skip(
-                f"Model does not support real table OCR: {response.get('error')}"
+            content = self.get_message_content(response)
+            failed_keyword = check_multimodal_failure(content, "image")
+            if failed_keyword:
+                pytest.fail(
+                    f"Model failed to recognize table image. Response contains: '{failed_keyword}'"
+                )
+
+            assert len(content.strip()) > 30, (
+                f"Table OCR response should be detailed, got {len(content.strip())} chars"
             )
 
-        self.assert_response_success(response)
-        self.assert_content_not_empty(response)
-
-        content = self.get_message_content(response)
-        failed_keyword = check_multimodal_failure(content, "image")
-        if failed_keyword:
-            pytest.fail(
-                f"Model failed to recognize table image. Response contains: '{failed_keyword}'"
-            )
-
-        assert len(content.strip()) > 30, (
-            f"Table OCR response should be detailed, got {len(content.strip())} chars"
-        )
-
-        test_logger.info(f"Real table OCR result: {content[:2000]}...")
+            test_logger.info(f"Real table OCR result: {content[:2000]}...")
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
@@ -571,14 +575,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 }
             ]
             test_logger.info("请求: 识别Flask代码截图")
+            TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages)
+            TestLogger.log_response(test_logger, response, "Flask代码识别响应")
             self.log_full_response(test_logger, response, "C6-Flask代码识别")
-
-            if response.get("error"):
-                pytest.skip(
-                    f"Model does not support screenshot to code: {response.get('error')}"
-                )
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -627,14 +628,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 }
             ]
             test_logger.info("请求: UI设计图生成登录代码")
+            TestLogger.log_request(test_logger, messages)
 
             response = api_client.chat_completion(messages)
+            TestLogger.log_response(test_logger, response, "UI登录代码响应")
             self.log_full_response(test_logger, response, "C6-UI登录代码")
-
-            if response.get("error"):
-                pytest.skip(
-                    f"Model does not support UI to code: {response.get('error')}"
-                )
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -759,14 +757,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             }
         ]
         test_logger.info("请求: 多模态工具调用")
+        TestLogger.log_request(test_logger, messages, {"tools": "4 tools"})
 
         response = api_client.chat_completion(messages, tools=tools, tool_choice="auto")
+        TestLogger.log_response(test_logger, response, "多模态工具调用响应")
         self.log_full_response(test_logger, response, "C7-多模态工具调用")
-
-        if response.get("error"):
-            pytest.skip(
-                f"Model does not support multimodal tool call: {response.get('error')}"
-            )
 
         self.assert_response_success(response)
 
@@ -813,6 +808,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
                 assert isinstance(args, dict), (
                     f"Tool '{tool_name}' arguments should be dict"
                 )
+                assert len(args) > 0, (
+                    f"Tool '{tool_name}' arguments should be non-empty, got: {args}"
+                )
                 called_tool_names.append(tool_name)
 
             assert len(called_tool_names) > 0, "Should have at least one tool call"
@@ -853,14 +851,11 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             }
         ]
         test_logger.info(f"请求: {format}格式图片")
+        TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response, f"{format}格式图片响应")
         self.log_full_response(test_logger, response, f"C8-{format}格式")
-
-        if response.get("error"):
-            pytest.skip(
-                f"Model does not support {format} format: {response.get('error')}"
-            )
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)

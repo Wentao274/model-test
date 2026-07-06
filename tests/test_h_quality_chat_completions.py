@@ -20,7 +20,7 @@ H. Chat Completions API 质量评估与回答相关性测试
 import re
 import json
 import pytest
-from typing import List, Dict, Any, Set, Tuple
+from typing import List, Dict, Any, Set, Tuple, Optional
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
@@ -228,6 +228,154 @@ class ResponseRelevanceChecker:
         return False, ""
 
     @staticmethod
+    def detect_spam_content(text: str) -> Tuple[bool, str]:
+        """检测SEO垃圾内容、关键词堆砌和重复内容
+
+        返回: (是否垃圾内容, 垃圾类型描述)
+        """
+        if not text or len(text.strip()) == 0:
+            return True, "empty_text"
+
+        text_clean = text.strip()
+        from collections import Counter
+
+        # 1. 检测重复句子（同一句子出现3次以上）
+        sentences = re.split(r"[。！？\n.!?]", text_clean)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 5]
+
+        if sentences:
+            sentence_counts = Counter(sentences)
+            for sent, count in sentence_counts.items():
+                if count >= 3:
+                    return True, f"repeated_sentence: '{sent[:30]}...' x{count}"
+
+        # 2. 检测关键词堆砌（同一中文词组出现频率过高）
+        for ngram_len in range(2, 7):
+            cn_words = re.findall(
+                rf"[\u4e00-\u9fff]{{{ngram_len},{ngram_len}}}", text_clean
+            )
+            if cn_words:
+                word_counts = Counter(cn_words)
+                total_words = len(cn_words)
+                for word, count in word_counts.items():
+                    if count > 5 and count / total_words > 0.05:
+                        return (
+                            True,
+                            f"keyword_stuffing: '{word}' x{count} ({count / total_words:.0%})",
+                        )
+
+        # 3. 检测SEO式内容（大量短行包含相似关键词）
+        lines = [l.strip() for l in text_clean.split("\n") if l.strip()]
+        if len(lines) > 15:
+            short_lines = [l for l in lines if len(l) < 30]
+            if len(short_lines) > len(lines) * 0.6:
+                return (
+                    True,
+                    f"seo_style_content: {len(short_lines)}/{len(lines)} short lines",
+                )
+
+        # 4. 检测重复模式（高相似度句子过多）
+        if len(sentences) > 10:
+            similar_count = 0
+            for i in range(len(sentences)):
+                for j in range(i + 1, min(i + 10, len(sentences))):
+                    set_i = set(sentences[i])
+                    set_j = set(sentences[j])
+                    if set_i and set_j:
+                        overlap = len(set_i & set_j) / max(len(set_i | set_j), 1)
+                        if overlap > 0.7 and len(sentences[i]) > 10:
+                            similar_count += 1
+                if similar_count > 5:
+                    break
+
+            if similar_count > 5:
+                return (
+                    True,
+                    f"repetitive_pattern: {similar_count} similar sentence pairs",
+                )
+
+        return False, ""
+
+    @staticmethod
+    def check_sentence_relevance(
+        answer: str, keywords: List[str], min_ratio: float = 0.15
+    ) -> Dict[str, Any]:
+        """检查句子级别的相关性 - 有多少比例的句子包含相关关键词"""
+        sentences = re.split(r"[。！？\n.!?]", answer)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 3]
+
+        if not sentences:
+            return {
+                "relevant": False,
+                "ratio": 0.0,
+                "total_sentences": 0,
+                "relevant_sentences": 0,
+                "reason": "no_valid_sentences",
+            }
+
+        relevant_sentences = 0
+        for s in sentences:
+            if any(kw.lower() in s.lower() for kw in keywords):
+                relevant_sentences += 1
+
+        ratio = relevant_sentences / len(sentences)
+
+        return {
+            "relevant": ratio >= min_ratio,
+            "ratio": ratio,
+            "total_sentences": len(sentences),
+            "relevant_sentences": relevant_sentences,
+            "reason": f"{relevant_sentences}/{len(sentences)} sentences ({ratio:.0%})",
+        }
+
+    @staticmethod
+    def check_response_quality(
+        question: str, answer: str, expected_keywords: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """综合质量检查 - 检查垃圾内容、相关性和长度适当性"""
+        issues = []
+
+        # 1. 垃圾内容检测
+        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(answer)
+        if is_spam:
+            issues.append(f"spam: {spam_reason}")
+
+        # 2. 乱码检测
+        is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
+            answer
+        )
+        if is_garbled:
+            issues.append(f"garbled: {garbled_type}")
+
+        # 3. 句子级相关性检查
+        sentence_relevance = None
+        if expected_keywords:
+            sentence_relevance = ResponseRelevanceChecker.check_sentence_relevance(
+                answer, expected_keywords, min_ratio=0.15
+            )
+            if not sentence_relevance["relevant"]:
+                issues.append(f"low_sentence_relevance: {sentence_relevance['reason']}")
+
+        # 4. 响应长度适当性检查
+        # 对于简短问题，响应不应过长且答案不在前部
+        if len(question) < 30 and len(answer) > 3000 and expected_keywords:
+            first_portion = answer[:500]
+            has_early_answer = any(
+                kw.lower() in first_portion.lower() for kw in expected_keywords
+            )
+            if not has_early_answer:
+                issues.append("answer_not_in_early_portion")
+
+        return {
+            "quality_passed": len(issues) == 0,
+            "issues": issues,
+            "is_spam": is_spam,
+            "spam_reason": spam_reason if is_spam else "",
+            "is_garbled": is_garbled,
+            "sentence_relevance": sentence_relevance,
+        }
+
+    @staticmethod
     def check_domain_relevance(
         question: str, answer: str, domain: str
     ) -> Dict[str, Any]:
@@ -239,6 +387,18 @@ class ResponseRelevanceChecker:
 
         question_lower = question.lower()
         answer_lower = answer.lower()
+
+        # 垃圾内容检测 - 垃圾内容直接0分
+        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(answer)
+        if is_spam:
+            return {
+                "relevant": False,
+                "score": 0.0,
+                "matched_keywords": [],
+                "negative_keywords": [],
+                "reason": f"spam_content: {spam_reason}",
+                "is_spam": True,
+            }
 
         matched_positive = []
         for kw in domain_info.get("keywords", []):
@@ -257,6 +417,15 @@ class ResponseRelevanceChecker:
 
         score = max(0, positive_score - negative_penalty)
 
+        # 句子级相关性调节 - 如果大部分句子不含领域关键词，降低分数
+        all_keywords = domain_info.get("keywords", [])
+        if all_keywords and len(answer) > 100:
+            sent_rel = ResponseRelevanceChecker.check_sentence_relevance(
+                answer, all_keywords, min_ratio=0.0
+            )
+            if sent_rel["total_sentences"] > 0:
+                score = score * (0.4 + 0.6 * sent_rel["ratio"])
+
         is_relevant = score >= 0.1 and len(matched_negative) == 0
 
         reason = f"matched {len(matched_positive)}/{len(domain_info.get('keywords', []))} positive keywords"
@@ -269,6 +438,7 @@ class ResponseRelevanceChecker:
             "matched_keywords": matched_positive,
             "negative_keywords": matched_negative,
             "reason": reason,
+            "is_spam": False,
         }
 
     @staticmethod
@@ -326,6 +496,11 @@ class ResponseRelevanceChecker:
         if len(answer_lower) < 3:
             return True, "too_short"
 
+        # 垃圾内容检测 - SEO堆砌、关键词重复等视为无意义
+        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(answer)
+        if is_spam:
+            return True, f"spam_content: {spam_reason}"
+
         q_bigrams = ResponseRelevanceChecker._extract_bigrams(question_lower)
         a_bigrams = ResponseRelevanceChecker._extract_bigrams(answer_lower)
 
@@ -339,11 +514,31 @@ class ResponseRelevanceChecker:
             else 1.0
         )
 
-        has_cn_overlap = cn_overlap >= 0.2
-        has_en_overlap = en_overlap >= 0.2 or not q_en_words
+        has_cn_overlap = cn_overlap >= 0.15
+        # 只有当问题本身包含英文单词时，英文重叠才有意义
+        # 纯中文问题不应该因为"没有英文可匹配"就自动通过
+        has_en_overlap = bool(q_en_words) and en_overlap >= 0.2
 
-        if not has_cn_overlap and not has_en_overlap and len(answer_lower) > 50:
-            return True, "no_keyword_overlap"
+        if not has_cn_overlap and not has_en_overlap:
+            if len(answer_lower) > 50:
+                return True, "no_keyword_overlap"
+            if len(answer_lower) > 10:
+                return True, "no_keyword_overlap_short"
+
+        # 对于简短问题和长回答，检查是否有任何句子与问题相关
+        if len(question) < 50 and len(answer) > 1000 and q_bigrams:
+            answer_sentences = re.split(r"[。！？\n.!?]", answer)
+            answer_sentences = [
+                s.strip() for s in answer_sentences if len(s.strip()) > 5
+            ]
+            has_relevant_sentence = False
+            for sent in answer_sentences:
+                sent_bigrams = ResponseRelevanceChecker._extract_bigrams(sent)
+                if len(q_bigrams & sent_bigrams) > 0:
+                    has_relevant_sentence = True
+                    break
+            if not has_relevant_sentence:
+                return True, "long_response_no_question_relevance"
 
         q_domain, q_confidence = ResponseRelevanceChecker._detect_primary_domain(
             question
@@ -402,7 +597,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, prompt in enumerate(test_cases):
             test_logger.info(f"测试: {prompt}")
             messages = [{"role": "user", "content": prompt}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, f"质量测试响应")
@@ -413,7 +608,10 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             content = self.get_message_content(response)
 
             min_length = 20
-            passed = len(content.strip()) >= min_length
+            is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
+            passed = len(content.strip()) >= min_length and not is_spam
+            if is_spam:
+                test_logger.warning(f"检测到垃圾内容: {spam_reason}")
             quality_scores.append(passed)
             test_logger.info(
                 f"响应长度: {len(content)}, 通过: {passed} (最低要求: {min_length})"
@@ -421,7 +619,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
 
         pass_rate = sum(quality_scores) / len(test_cases)
         test_logger.info(
-            f"质量通过率: {pass_rate * 100:.0f}%, 平均响应长度: {sum(quality_scores) / len(quality_scores):.1f}"
+            f"质量通过率: {pass_rate * 100:.0f}%, 通过: {sum(quality_scores)}/{len(test_cases)}"
         )
         assert pass_rate >= 0.5, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
 
@@ -433,13 +631,18 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
 
         prompt = "请用一句话介绍北京"
         messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages)
+        TestLogger.log_request(
+            test_logger, messages, {"max_tokens": 2000, "temperature": 0}
+        )
 
         responses = []
         for i in range(3):
             test_logger.info(f"第{i + 1}次请求")
             response = api_client.chat_completion(
                 messages, max_tokens=2000, temperature=0
+            )
+            TestLogger.log_response(
+                test_logger, response, f"生成一致性-第{i + 1}次响应"
             )
             self.log_full_response(test_logger, response, f"H2-生成一致性-第{i + 1}次")
             self.assert_response_success(response)
@@ -458,10 +661,18 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         )
 
         common_chars = set(responses[0]) & set(responses[1]) & set(responses[2])
+        similarity = len(common_chars) / max(
+            len(set(responses[0]) | set(responses[1]) | set(responses[2])), 1
+        )
         test_logger.info(
             f"Consistency test: {len(responses)} responses collected, "
             f"common chars: {len(common_chars)}, "
+            f"char-level similarity: {similarity:.2%}, "
             f"lengths: {[len(r) for r in responses]}"
+        )
+        assert similarity > 0.3, (
+            f"Responses should be consistent at temperature=0, "
+            f"char-level similarity too low: {similarity:.2%}"
         )
 
     @pytest.mark.h_quality_chat_completions
@@ -481,7 +692,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, (question, expected) in enumerate(test_facts):
             test_logger.info(f"测试问题: {question}")
             messages = [{"role": "user", "content": question}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "幻觉检测响应")
@@ -495,6 +706,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
                 ResponseRelevanceChecker.is_nonsensical_response(question, content)
             )
             expected_found = expected.lower() in content.lower()
+            is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
 
             if not expected_found:
                 hallucination_count += 1
@@ -508,6 +720,12 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
                     f"幻觉: 回答与问题不相关({nonsensical_reason}), 期望包含'{expected}', 实际: {content[:500]}"
                 )
                 record_warning(f"幻觉: 回答与问题不相关({nonsensical_reason})")
+            elif is_spam:
+                hallucination_count += 1
+                test_logger.warning(
+                    f"幻觉: 检测到垃圾内容({spam_reason}), 实际: {content[:500]}"
+                )
+                record_warning(f"幻觉: 检测到垃圾内容({spam_reason})")
 
         hallucination_rate = hallucination_count / len(test_facts)
         test_logger.info(f"Hallucination rate: {hallucination_rate * 100:.0f}%")
@@ -527,7 +745,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
                 "content": "请用JSON格式回答，包含name和age两个字段，不要有其他内容",
             }
         ]
-        TestLogger.log_request(test_logger, messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
         response = api_client.chat_completion(messages, max_tokens=2000)
         TestLogger.log_response(test_logger, response, "指令遵循响应")
@@ -567,7 +785,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, (prompt, keywords) in enumerate(test_cases):
             test_logger.info(f"测试问题: {prompt}")
             messages = [{"role": "user", "content": prompt}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "相关性响应")
@@ -577,9 +795,17 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             self.assert_content_not_empty(response)
             content = self.get_message_content(response).lower()
 
-            if any(kw.lower() in content for kw in keywords):
+            quality = ResponseRelevanceChecker.check_response_quality(
+                prompt, content, keywords
+            )
+            if (
+                any(kw.lower() in content for kw in keywords)
+                and quality["quality_passed"]
+            ):
                 relevant_count += 1
             else:
+                if quality["issues"]:
+                    test_logger.warning(f"质量问题: {quality['issues']}")
                 test_logger.warning(
                     f"回答不相关: 期望关键词{keywords}, 内容: {content[:500]}"
                 )
@@ -619,16 +845,13 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
             self.log_full_response(test_logger, response, f"H6-编程领域-{idx + 1}")
 
             self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            self.assert_content_not_empty(response)
-            self.assert_content_not_empty(response)
             self.assert_content_not_empty(response)
             content = self.get_message_content(response)
             test_logger.info(f"回答: {content[:2000]}...")
@@ -644,8 +867,14 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             self._log_relevance_result(test_logger, case["question"], content, result)
 
             if result["relevant"] and result["score"] >= 0.1:
-                passed_count += 1
-                test_logger.info("✓ 相关性验证通过")
+                quality = ResponseRelevanceChecker.check_response_quality(
+                    case["question"], content, case["expected_keywords"]
+                )
+                if quality["quality_passed"]:
+                    passed_count += 1
+                    test_logger.info("✓ 相关性验证通过")
+                else:
+                    test_logger.warning(f"✗ 质量问题: {quality['issues']}")
             else:
                 test_logger.warning(f"✗ 相关性验证失败: {result['reason']}")
 
@@ -682,12 +911,16 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for case in test_cases:
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
+            self.log_full_response(
+                test_logger, response, f"H7-数学领域-{test_cases.index(case) + 1}"
+            )
 
             self.assert_response_success(response)
+            self.assert_content_not_empty(response)
             content = self.get_message_content(response)
             test_logger.info(f"回答: {content[:2000]}...")
 
@@ -701,12 +934,18 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             )
             self._log_relevance_result(test_logger, case["question"], content, result)
 
-            if result["relevant"] or any(
-                kw in content for kw in case["expected_keywords"]
-            ):
+            quality = ResponseRelevanceChecker.check_response_quality(
+                case["question"], content, case["expected_keywords"]
+            )
+            if (
+                result["relevant"]
+                or any(kw in content for kw in case["expected_keywords"])
+            ) and quality["quality_passed"]:
                 passed_count += 1
                 test_logger.info("✓ 相关性验证通过")
             else:
+                if quality["issues"]:
+                    test_logger.warning(f"质量问题: {quality['issues']}")
                 test_logger.warning(f"✗ 相关性验证失败")
 
         relevance_rate = passed_count / len(test_cases)
@@ -741,7 +980,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "API 响应")
@@ -760,10 +999,17 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             )
             self._log_relevance_result(test_logger, case["question"], content, result)
 
-            if result["relevant"] or any(kw in content for kw in case["expected"]):
+            quality = ResponseRelevanceChecker.check_response_quality(
+                case["question"], content, case["expected"]
+            )
+            if (
+                result["relevant"] or any(kw in content for kw in case["expected"])
+            ) and quality["quality_passed"]:
                 passed_count += 1
                 test_logger.info("✓ 相关性验证通过")
             else:
+                if quality["issues"]:
+                    test_logger.warning(f"质量问题: {quality['issues']}")
                 test_logger.warning("✗ 相关性验证失败")
 
         relevance_rate = passed_count / len(test_cases)
@@ -789,10 +1035,13 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for prompt in test_prompts:
             test_logger.info(f"\n测试: {prompt}")
             messages = [{"role": "user", "content": prompt}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
+            self.log_full_response(
+                test_logger, response, f"H9-乱码检测-{test_prompts.index(prompt) + 1}"
+            )
 
             self.assert_response_success(response)
             content = self.get_message_content(response)
@@ -801,11 +1050,16 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
                 content
             )
+            is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
 
             if is_garbled:
                 garbled_count += 1
                 test_logger.error(f"✗ 检测到乱码: {garbled_type}")
                 test_logger.error(f"乱码内容: {content[:2000]}...")
+            elif is_spam:
+                garbled_count += 1
+                test_logger.error(f"✗ 检测到垃圾内容: {spam_reason}")
+                test_logger.error(f"垃圾内容: {content[:2000]}...")
             else:
                 test_logger.info(f"✓ 内容正常，无乱码")
 
@@ -833,10 +1087,15 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for question in test_cases:
             test_logger.info(f"\n问题: {question}")
             messages = [{"role": "user", "content": question}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
             response = api_client.chat_completion(messages, max_tokens=2000)
             TestLogger.log_response(test_logger, response, "响应")
+            self.log_full_response(
+                test_logger,
+                response,
+                f"H10-无意义检测-{test_cases.index(question) + 1}",
+            )
 
             self.assert_response_success(response)
             content = self.get_message_content(response)
@@ -889,8 +1148,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, question in enumerate(questions):
             test_logger.info(f"\n问题: {question}")
             messages = [{"role": "user", "content": question}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
             response = api_client.chat_completion(messages, max_tokens=2000)
+            TestLogger.log_response(test_logger, response, "响应")
             self.log_full_response(test_logger, response, f"H11-{domain}领域-{idx + 1}")
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -900,6 +1160,8 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
             assert not is_garbled, f"检测到乱码"
+            is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
+            assert not is_spam, f"检测到垃圾内容: {spam_reason}"
 
             result = ResponseRelevanceChecker.check_domain_relevance(
                 question, content, domain
@@ -927,7 +1189,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         q1 = "我喜欢吃苹果"
         test_logger.info(f"第1轮: {q1}")
         messages.append({"role": "user", "content": q1})
-        r1 = api_client.chat_completion(messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        r1 = api_client.chat_completion(messages, max_tokens=2000)
+        TestLogger.log_response(test_logger, r1, "响应")
         self.log_full_response(test_logger, r1, "H12-上下文一致性-第1轮")
         self.assert_response_success(r1)
         self.assert_content_not_empty(r1)
@@ -938,7 +1202,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         q2 = "我刚才说我喜欢吃什么水果？"
         test_logger.info(f"第2轮: {q2}")
         messages.append({"role": "user", "content": q2})
-        r2 = api_client.chat_completion(messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        r2 = api_client.chat_completion(messages, max_tokens=2000)
+        TestLogger.log_response(test_logger, r2, "响应")
         self.log_full_response(test_logger, r2, "H12-上下文一致性-第2轮")
         self.assert_response_success(r2)
         self.assert_content_not_empty(r2)
@@ -952,7 +1218,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         q3 = "除了苹果，我还喜欢香蕉，请记住这个"
         test_logger.info(f"第3轮: {q3}")
         messages.append({"role": "user", "content": q3})
-        r3 = api_client.chat_completion(messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        r3 = api_client.chat_completion(messages, max_tokens=2000)
+        TestLogger.log_response(test_logger, r3, "响应")
         self.log_full_response(test_logger, r3, "H12-上下文一致性-第3轮")
         self.assert_response_success(r3)
         self.assert_content_not_empty(r3)
@@ -963,7 +1231,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         q4 = "我刚才说了我喜欢哪两种水果？"
         test_logger.info(f"第4轮: {q4}")
         messages.append({"role": "user", "content": q4})
-        r4 = api_client.chat_completion(messages)
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+        r4 = api_client.chat_completion(messages, max_tokens=2000)
+        TestLogger.log_response(test_logger, r4, "响应")
         self.log_full_response(test_logger, r4, "H12-上下文一致性-第4轮")
         self.assert_response_success(r4)
         self.assert_content_not_empty(r4)
@@ -977,6 +1247,9 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
 
         is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(c4)
         assert not is_garbled, "检测到乱码"
+
+        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(c4)
+        assert not is_spam, f"检测到垃圾内容: {spam_reason}"
 
         test_logger.info("✓ 多轮对话上下文一致性验证通过")
 
@@ -1015,7 +1288,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
             messages = [{"role": "user", "content": case["question"]}]
-            TestLogger.log_request(test_logger, messages)
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 800})
 
             response = api_client.chat_completion(messages, max_tokens=800)
             TestLogger.log_response(test_logger, response, "API 响应")
@@ -1034,11 +1307,14 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             details_ok = any(
                 detail.lower() in content.lower() for detail in case["expected_details"]
             )
+            is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
 
-            if length_ok and details_ok:
+            if length_ok and details_ok and not is_spam:
                 passed_count += 1
                 test_logger.info(f"✓ {case['question']}... - 回答具体")
             else:
+                if is_spam:
+                    test_logger.warning(f"检测到垃圾内容: {spam_reason}")
                 test_logger.warning(f"✗ {case['question']}... - 回答不够具体")
                 test_logger.warning(
                     f"  长度: {len(content)}/{case['min_length']}, 详细程度: {details_ok}"
