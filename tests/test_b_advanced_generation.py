@@ -742,18 +742,38 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             }
         return {}
 
-    def _execute_tool_call(self, api_client, messages, tool_call, test_logger):
-        tool_call_id = tool_call.get("id")
-        function_name = tool_call.get("function", {}).get("name")
-        function_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+    def _execute_tool_call(
+        self, api_client, messages, tool_call, test_logger, max_rounds=5
+    ):
+        """执行工具调用并获取最终响应。
 
-        tool_result = self._execute_tool(function_name, function_args)
-        test_logger.info(f"工具 [{function_name}] 执行结果: {tool_result}")
+        支持多轮工具调用：模型在收到工具结果后可能再次发起工具调用，
+        本方法会循环执行直至模型返回文本内容或达到最大轮数。
+        """
+        pending_tool_calls = [tool_call]
+        final_response = None
+        final_content = ""
 
-        messages.append(
-            {
-                "role": "assistant",
-                "tool_calls": [
+        round_idx = 0
+        while pending_tool_calls and round_idx < max_rounds:
+            round_idx += 1
+
+            assistant_tool_calls = []
+            tool_messages = []
+            for tc in pending_tool_calls:
+                tool_call_id = tc.get("id")
+                function_name = tc.get("function", {}).get("name")
+                try:
+                    function_args = json.loads(
+                        tc.get("function", {}).get("arguments", "{}")
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    function_args = {}
+
+                tool_result = self._execute_tool(function_name, function_args)
+                test_logger.info(f"工具 [{function_name}] 执行结果: {tool_result}")
+
+                assistant_tool_calls.append(
                     {
                         "id": tool_call_id,
                         "type": "function",
@@ -762,23 +782,33 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                             "arguments": json.dumps(function_args),
                         },
                     }
-                ],
-            }
-        )
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": json.dumps(tool_result),
-            }
-        )
+                )
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": json.dumps(tool_result),
+                    }
+                )
 
-        final_response = api_client.chat_completion(messages)
-        self.log_full_response(
-            test_logger, final_response, f"工具[{function_name}]最终响应"
-        )
-        final_content = self.get_message_content(final_response)
-        test_logger.info(f"模型最终响应: {final_content}")
+            messages.append({"role": "assistant", "tool_calls": assistant_tool_calls})
+            messages.extend(tool_messages)
+
+            final_response = api_client.chat_completion(messages)
+            self.log_full_response(
+                test_logger, final_response, f"工具轮次{round_idx}最终响应"
+            )
+            final_content = self.get_message_content(final_response)
+            test_logger.info(f"模型最终响应(轮次{round_idx}): {final_content}")
+
+            if final_content and final_content.strip():
+                return final_content, final_response
+
+            pending_tool_calls = self.get_tool_calls(final_response) or []
+            if not pending_tool_calls:
+                return final_content, final_response
+
+        test_logger.warning(f"达到最大工具调用轮数({max_rounds})，仍未获得文本响应")
         return final_content, final_response
 
     def _execute_parallel_tool_calls(
