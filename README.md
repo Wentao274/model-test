@@ -26,46 +26,118 @@ uv pip install -r requirements.txt
 ```bash
 # 运行 P0 测试 + 生成 Allure 报告（推荐）
 pytest -v -m p0 \
-  --base-url http://127.0.0.1:8080/v1 \
+  --base-url http://127.0.0.1:8080 \
   --api-key abc123 \
   --model-name minimax-m2.5 \
-  --chip hygon-bw1000 && \
-allure generate allure-results/hygon-bw1000/minimax-m2.5 -o allure-report/hygon-bw1000/minimax-m2.5 --clean && \
-allure open allure-report/hygon-bw1000/minimax-m2.5
+  --chip hygon-bw1000 \
+  --thinking-mode \
+  --alluredir=allure-results/local \
+  --summary-report-dir=allure-report/local && \
+allure generate allure-results/local -o allure-report/local --clean && \
+allure open allure-report/local
 ```
 
-### 3. 基础运行命令
+> **注意**：`--base-url` 无需带 `/v1` 后缀，框架会自动拼接。若带 `/v1` 也会自动去除。
+
+### 3. 本地运行测试
+
+测试运行有三种配置方式，优先级：**命令行参数 > 环境变量 > config.yaml**。
+
+#### 方式一：命令行参数（推荐）
 
 ```bash
-# 使用 config.yaml 配置运行
+# 最简命令（仅必填参数）
+pytest -v \
+  --base-url http://10.201.149.10:8080 \
+  --model-name kimi-k2.5 \
+  --thinking-mode
+
+# 完整参数
+pytest -v \
+  --base-url http://10.201.149.10:8080 \
+  --api-key your-api-key \
+  --model-name kimi-k2.5 \
+  --chip nvidia-h100 \
+  --engine vllm \
+  --pd-mode agg \
+  --thinking-mode
+```
+
+无需鉴权时省略 `--api-key`（框架不发送 Authorization 头）。
+
+#### 方式二：环境变量
+
+```bash
+# Linux/macOS
+export BASE_URL=http://10.201.149.10:8080
+export API_KEY=your-api-key
+export MODEL_NAME=kimi-k2.5
+export CHIP=nvidia-h100
+export THINKING_MODE=true
 pytest -v
 
-# 使用命令行参数运行
-pytest -v \
-  --base-url http://127.0.0.1:8080/v1 \
-  --api-key abc123 \
-  --model-name minimax-m2.5 \
-  --chip hygon-bw1000
-
-# 使用环境变量运行
-export BASE_URL=http://127.0.0.1:8080/v1
-export API_KEY=abc123
-export MODEL_NAME=minimax-m2.5
-export CHIP=hygon-bw1000
+# Windows PowerShell
+$env:BASE_URL="http://10.201.149.10:8080"
+$env:MODEL_NAME="kimi-k2.5"
+$env:THINKING_MODE="true"
 pytest -v
 ```
 
-### 4. 参数说明
+#### 方式三：修改 config.yaml
 
-| 参数 | 环境变量 | 说明 |
-|------|---------|------|
-| `--base-url` | `BASE_URL` | API 基础地址 |
-| `--api-key` | `API_KEY` | API 密钥 |
-| `--model-name` | `MODEL_NAME` | 模型名称 |
-| `--chip` | `CHIP` | 芯片平台名称（自动转小写，用于日志/报告目录） |
-| `--thinking-mode` | `THINKING_MODE` | 启用思考模式（不指定则使用 config.yaml 配置） |
+编辑 `config.yaml`，启用一个芯片和一个模型，之后直接 `pytest -v` 即可：
 
-**优先级**：命令行参数 > 环境变量 > config.yaml
+```yaml
+chips:
+  my-chip:
+    enabled: true
+    base_url: http://10.201.149.10:8080
+
+models:
+  my-model:
+    name: kimi-k2.5
+    api_key: your-api-key
+    enabled: true
+    thinking_mode: true
+```
+
+### 4. 运行指定测试
+
+```bash
+# 按分类运行
+pytest -v -m a_basic --base-url http://10.201.149.10:8080 --model-name kimi-k2.5 --thinking-mode
+
+# 按优先级运行（P0 冒烟测试）
+pytest -v -m "p0 and smoke" --base-url http://10.201.149.10:8080 --model-name kimi-k2.5 --thinking-mode
+
+# 运行单个测试文件
+pytest -v tests/test_a_basic_reasoning.py --base-url http://10.201.149.10:8080 --model-name kimi-k2.5 --thinking-mode
+
+# 运行单个测试用例
+pytest -v tests/test_a_basic_reasoning.py::TestBasicReasoning::test_single_turn_conversation \
+  --base-url http://10.201.149.10:8080 --model-name kimi-k2.5 --thinking-mode
+
+# 关闭思考模式
+pytest -v -m a_basic --base-url http://10.201.149.10:8080 --model-name kimi-k2.5 --no-thinking-mode
+```
+
+### 5. 参数说明
+
+| 参数 | 环境变量 | 必填 | 说明 |
+|------|---------|------|------|
+| `--base-url` | `BASE_URL` | 是 | API 地址（无需带 `/v1`，框架自动拼接） |
+| `--model-name` | `MODEL_NAME` | 是 | 模型服务名称（如 `kimi-k2.5`、`glm5`） |
+| `--api-key` | `API_KEY` | 否 | API 密钥（省略则不携带鉴权头） |
+| `--chip` | `CHIP` | 否 | 芯片平台名称（仅用于日志/报告目录标识） |
+| `--thinking-mode` | `THINKING_MODE=true` | 否 | 启用思考模式 |
+| `--no-thinking-mode` | — | 否 | 显式关闭思考模式 |
+| `--engine` | — | 否 | 推理框架（vllm / sglang，仅用于报告标识） |
+| `--pd-mode` | — | 否 | PD分离模式（agg / disagg，仅用于报告标识） |
+| `--tester` | — | 否 | 测试人员名称（仅用于报告标识） |
+| `--alluredir` | — | 否 | Allure 结果输出目录（不指定则自动按芯片/模型/时间戳生成） |
+| `--summary-report-dir` | — | 否 | Markdown 汇总报告输出目录（默认 `allure-report`） |
+
+> **连通性检查**：测试启动前会自动向 `{base_url}/v1/chat/completions` 发送一个最小请求验证连通性，失败则直接退出，不会执行用例。
 
 ## 测试分类
 

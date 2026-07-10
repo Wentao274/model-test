@@ -356,7 +356,7 @@ fi
             <table>
                 <tr><th>项目</th><td>值</td></tr>
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
-                <tr><th>模型服务描述</th><td>#${BUILD_NUMBER}</td></tr>
+                <tr><th>模型服务描述</th><td>${params.SERVE_DESC}</td></tr>
                 <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
                 <tr><th>推理框架</th><td>${params.ENGINE}</td></tr>
