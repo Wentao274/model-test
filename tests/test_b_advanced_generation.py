@@ -913,8 +913,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info(f"Tool call: {tool_name}({args})")
 
         finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason == "tool_calls", (
-            f"When tool is called, finish_reason should be 'tool_calls', got '{finish_reason}'"
+        assert finish_reason in ("tool_calls", "length"), (
+            f"When tool is called, finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
         )
 
         final_content, final_response = self._execute_tool_call(

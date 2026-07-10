@@ -292,47 +292,87 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
+    @pytest.mark.slow
     def test_niah_needle_in_a_haystack(self, api_client: ModelAPIClient, test_logger):
-        """D5: 大海捞针（NIAH）- 长文本中插入特定信息，验证召回率"""
+        """D5: 大海捞针（NIAH）- 长文本中插入特定信息，验证召回率
+
+        包含两个场景：
+        - 场景1 (8K tokens): 基线大海捞针，验证基本召回能力
+        - 场景2 (512K tokens): 超长上下文大海捞针，验证超长文本中的召回能力
+        """
         test_logger.info("=== 测试开始: 大海捞针 ===")
 
-        # 生成一篇长文章，在中间插入一个特定的事实
-        base_text = generate_mixed_content(8000)
         needle = "特殊标记：项目Alpha的第37号实验结果为42，这是唯一正确的数值。"
-        needle_text = (
-            base_text[: len(base_text) // 2] + needle + base_text[len(base_text) // 2 :]
-        )
 
-        prompt = needle_text + "\n\n请问文章中的特殊标记是什么？"
+        def run_niah_scenario(context_tokens: int, scenario_name: str):
+            """执行单个大海捞针场景
 
-        messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+            在生成的长文本中间插入needle，验证模型能否正确召回。
+            """
+            test_logger.info(f"--- {scenario_name}: ~{context_tokens} tokens ---")
 
-        response = api_client.chat_completion(messages, max_tokens=2000)
-        TestLogger.log_response(test_logger, response, "大海捞针响应")
-        self.log_full_response(test_logger, response, "D5-大海捞针")
+            base_text = generate_mixed_content(context_tokens)
+            needle_text = (
+                base_text[: len(base_text) // 2]
+                + needle
+                + base_text[len(base_text) // 2 :]
+            )
 
-        self.assert_response_success(response)
-        self.assert_content_not_empty(response)
-        content = self.get_message_content(response)
+            prompt = needle_text + "\n\n请问文章中的特殊标记是什么？"
 
-        assert "42" in content, (
-            f"Model should recall the needle '42', got: {content[:500]}"
-        )
-        content_lower = content.lower()
-        assert any(
-            kw in content_lower
-            for kw in ["特殊标记", "标记", "alpha", "实验", "37", "结果"]
-        ), f"Model should reference the needle context, got: {content[:500]}"
+            messages = [{"role": "user", "content": prompt}]
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
 
-        usage = response.get("usage", {})
-        assert usage.get("prompt_tokens", 0) > 0, (
-            "Should have prompt_tokens > 0 for NIAH test"
-        )
-        test_logger.info(
-            f"NIAH test passed, prompt_tokens={usage.get('prompt_tokens')}, "
-            f"completion_tokens={usage.get('completion_tokens')}, response: {content[:2000]}"
-        )
+            response = api_client.chat_completion(messages, max_tokens=2000)
+            TestLogger.log_response(test_logger, response, f"{scenario_name}响应")
+            self.log_full_response(test_logger, response, f"D5-{scenario_name}")
+
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+            content = self.get_message_content(response)
+
+            assert "42" in content, (
+                f"[{scenario_name}] Model should recall the needle '42', "
+                f"got: {content[:500]}"
+            )
+            content_lower = content.lower()
+            assert any(
+                kw in content_lower
+                for kw in ["特殊标记", "标记", "alpha", "实验", "37", "结果"]
+            ), (
+                f"[{scenario_name}] Model should reference the needle context, "
+                f"got: {content[:500]}"
+            )
+
+            usage = response.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            assert prompt_tokens > 0, (
+                f"[{scenario_name}] Should have prompt_tokens > 0 for NIAH test"
+            )
+            test_logger.info(
+                f"[{scenario_name}] NIAH passed, prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={usage.get('completion_tokens')}, "
+                f"response: {content[:2000]}"
+            )
+
+        # 场景1: 8K tokens（基线）
+        run_niah_scenario(8000, "8K基线")
+
+        # 场景2: 512K tokens（超长上下文大海捞针）
+        # 512K prefill 耗时较长，自适应放大超时，结束后恢复原值
+        original_timeout = api_client.timeout
+        api_client.timeout = max(original_timeout, 600)
+        try:
+            run_niah_scenario(512000, "512K超长")
+        except Exception as e:
+            if self._is_over_limit_error(e):
+                test_logger.warning(
+                    f"512K场景: 模型/proxy不支持该上下文长度，跳过: {e}"
+                )
+            else:
+                raise
+        finally:
+            api_client.timeout = original_timeout
 
     @pytest.mark.d_long_context
     @pytest.mark.p1

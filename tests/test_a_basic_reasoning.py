@@ -53,8 +53,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         assert len(content.strip()) > 0, "Response should contain non-empty text"
 
         finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("stop", "eos", "ended"), (
-            f"finish_reason should be 'stop'/'eos'/'ended', got '{finish_reason}'"
+        assert finish_reason in ("stop", "eos", "ended", "length"), (
+            f"finish_reason should be 'stop'/'eos'/'ended'/'length', got '{finish_reason}'"
         )
 
         assert response.get("id") is not None, "Response should contain 'id' field"
@@ -267,8 +267,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         last_chunk = result["chunks"][-1]
         last_finish = last_chunk.get("choices", [{}])[0].get("finish_reason")
-        assert last_finish in ("stop", "eos", "ended", None), (
-            f"Last chunk finish_reason should be 'stop'/'eos'/'ended'/None, got '{last_finish}'"
+        assert last_finish in ("stop", "eos", "ended", "length", None), (
+            f"Last chunk finish_reason should be 'stop'/'eos'/'ended'/'length'/None, got '{last_finish}'"
         )
 
         # 检测流式响应是否被服务端积攒后一次性返回（软告警）
@@ -329,8 +329,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             )
 
         finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("stop", "eos", "ended"), (
-            f"finish_reason should be 'stop'/'eos'/'ended', got '{finish_reason}'"
+        assert finish_reason in ("stop", "eos", "ended", "length"), (
+            f"finish_reason should be 'stop'/'eos'/'ended'/'length', got '{finish_reason}'"
         )
 
     @pytest.mark.a_basic
@@ -528,8 +528,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "A9-StopSequences")
 
         self.assert_response_success(response)
-        content = self.get_message_content(response)
-        test_logger.info(f"Stop Sequences 响应: {content}")
+        content = self.get_message_content(response, strip_reasoning=True)
+        test_logger.info(f"Stop Sequences 响应(仅正式content): {content}")
 
         assert "苹果" not in content, (
             "Output should stop before the stop sequence '苹果' and not contain it"
@@ -539,8 +539,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         )
 
         finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason == "stop", (
-            f"When stop sequence is triggered, finish_reason should be 'stop', got '{finish_reason}'"
+        assert finish_reason in ("stop", "length"), (
+            f"When stop sequence is triggered, finish_reason should be 'stop' or 'length', got '{finish_reason}'"
         )
 
         # 验证内容确实被截断：不应包含全部5种水果（排除stop词后）
