@@ -81,6 +81,8 @@ class ModelAPIClient:
                 messages, model, temperature, max_tokens, **kwargs
             )
 
+        extra_body = kwargs.pop("extra_body", None)
+
         url = f"{self.base_url}/v1/chat/completions"
         payload = {
             "model": model or self.model_name,
@@ -90,6 +92,8 @@ class ModelAPIClient:
             "stream": False,
             **kwargs,
         }
+        if extra_body:
+            payload.update(extra_body)
 
         response = self.session.post(url, json=payload, timeout=self.timeout)
 
@@ -121,6 +125,8 @@ class ModelAPIClient:
         **kwargs,
     ) -> Iterator[Dict[str, Any]]:
         """发送聊天完成请求（流式）"""
+        extra_body = kwargs.pop("extra_body", None)
+
         url = f"{self.base_url}/v1/chat/completions"
         payload = {
             "model": model or self.model_name,
@@ -130,6 +136,8 @@ class ModelAPIClient:
             "stream": True,
             **kwargs,
         }
+        if extra_body:
+            payload.update(extra_body)
 
         response = self.session.post(
             url, json=payload, timeout=self.timeout, stream=True

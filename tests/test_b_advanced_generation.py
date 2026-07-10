@@ -257,6 +257,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         自动尝试多种思考模式参数格式（不依赖 config.yaml 配置）
 
         策略顺序：
+            0. {} - 不传 thinking 参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
             1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
             2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
             3. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
@@ -276,6 +277,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             - has_thinking: 是否成功获取到思考内容
         """
         strategies = [
+            ("default", {}),
             ("enable_thinking", {"enable_thinking": True}),
             (
                 "chat_template_kwargs.thinking",
@@ -401,11 +403,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         """B1: 思考模式（Thinking）- 开启thinking mode
 
         不依赖 config.yaml 配置，自动按以下顺序尝试参数格式：
+        0. 不传参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
         1. enable_thinking=true (顶层字段)
         2. chat_template_kwargs={"thinking": true}
         3. thinking={"type": "enabled"} (DeepSeek/GLM 风格)
         4. chat_template_kwargs.thinking=true + reasoning_effort=high
-        若四种方式均未获取到思考内容，则断言失败。
+        若所有方式均未获取到思考内容，则断言失败。
         """
         test_logger.info("=== 测试开始: 思考模式（自动回退） ===")
 
@@ -429,6 +432,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             strategy,
             has_thinking,
         ) = self._chat_with_thinking_fallback(api_client, messages, test_logger)
+        if response is None:
+            pytest.fail(
+                f"All thinking strategies failed with API errors. "
+                f"Last strategy: {strategy}, params: {used_params}"
+            )
         TestLogger.log_response(
             test_logger, response, f"思考模式响应 (策略: {strategy})"
         )
@@ -490,6 +498,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             strategy,
             has_no_thinking,
         ) = self._chat_without_thinking_fallback(api_client, messages, test_logger)
+        if response is None:
+            pytest.fail(
+                f"All non-thinking strategies failed with API errors. "
+                f"Last strategy: {strategy}, params: {used_params}"
+            )
         TestLogger.log_response(
             test_logger, response, f"非思考模式响应 (策略: {strategy})"
         )
@@ -524,7 +537,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         """B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换
 
         开启部分采用自动回退策略：
-            enable_thinking=true -> chat_template_kwargs={"thinking": true}
+            default -> enable_thinking=true -> chat_template_kwargs={"thinking": true}
             -> thinking={"type": "enabled"}
             -> chat_template_kwargs.thinking=true + reasoning_effort=high
         关闭部分采用自动回退策略：
@@ -555,6 +568,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             strategy1,
             has_thinking1,
         ) = self._chat_with_thinking_fallback(api_client, messages, test_logger)
+        if response1 is None:
+            pytest.fail(
+                f"All thinking strategies failed with API errors. "
+                f"Last strategy: {strategy1}, params: {used_params1}"
+            )
         TestLogger.log_response(
             test_logger, response1, f"开启thinking响应 (策略: {strategy1})"
         )
@@ -593,6 +611,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             strategy2,
             has_no_thinking2,
         ) = self._chat_without_thinking_fallback(api_client, messages, test_logger)
+        if response2 is None:
+            pytest.fail(
+                f"All non-thinking strategies failed with API errors. "
+                f"Last strategy: {strategy2}, params: {used_params2}"
+            )
         TestLogger.log_response(
             test_logger, response2, f"关闭thinking响应 (策略: {strategy2})"
         )

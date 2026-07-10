@@ -1,5 +1,7 @@
 pipeline {
-    agent any
+    agent {
+        label 'master'
+    }
 
     parameters {
         string(name: 'TESTER', defaultValue: 'liwt', description: '测试人员名称（必填）')
@@ -13,6 +15,7 @@ pipeline {
         choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
         string(name: 'WORK_DIR', defaultValue: '/dingofs/data2/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
+        string(name: 'SERVE_DESC', defaultValue: '', description: '模型服务的描述信息')
     }
 
     environment {
@@ -353,6 +356,7 @@ fi
             <table>
                 <tr><th>项目</th><td>值</td></tr>
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
+                <tr><th>模型服务描述</th><td>#${BUILD_NUMBER}</td></tr>
                 <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
                 <tr><th>推理框架</th><td>${params.ENGINE}</td></tr>
