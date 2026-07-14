@@ -13,9 +13,9 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型')
+        string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
         string(name: 'WORK_DIR', defaultValue: '/dingofs/data2/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
-        string(name: 'SERVE_DESC', defaultValue: '', description: '模型服务的描述信息')
     }
 
     environment {
@@ -40,6 +40,7 @@ pipeline {
                     println("BASE_URL:     ${params.BASE_URL}")
                     println("思考模式:     ${params.THINKING_MODE}")
                     println("测试标记:     ${params.MARKER}")
+                    println("模型描述:     ${params.DESCRIPTION}")
                     println("邮件接收者:   ${params.RECIPIENTS}")
                     println("工作目录:     ${params.WORK_DIR}")
                     println("构建编号:     #${BUILD_NUMBER}")
@@ -356,7 +357,7 @@ fi
             <table>
                 <tr><th>项目</th><td>值</td></tr>
                 <tr><th>构建编号</th><td>#${BUILD_NUMBER}</td></tr>
-                <tr><th>模型服务描述</th><td>${params.SERVE_DESC}</td></tr>
+                <tr><th>模型服务描述</th><td>${params.DESCRIPTION}</td></tr>
                 <tr><th>测试人员</th><td>${params.TESTER}</td></tr>
                 <tr><th>芯片平台</th><td>${params.CHIP}</td></tr>
                 <tr><th>推理框架</th><td>${params.ENGINE}</td></tr>
