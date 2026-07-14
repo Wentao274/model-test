@@ -7,6 +7,33 @@ import time
 from typing import Dict, Any, List, Optional, Iterator, Union
 import requests
 
+try:
+    import allure
+    from allure_commons.types import AttachmentType
+
+    ALLURE_AVAILABLE = True
+except ImportError:
+    ALLURE_AVAILABLE = False
+
+
+def _attach_api_error(status_code: int, response_text: str, payload: dict):
+    """将非200响应的状态码与响应体作为附件挂到 Allure，便于在报告中直接查看"""
+    if not ALLURE_AVAILABLE:
+        return
+    try:
+        content = (
+            f"HTTP Status: {status_code}\n\n"
+            f"Response Body:\n{response_text}\n\n"
+            f"Request Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+        allure.attach(
+            content,
+            name=f"API Error: {status_code}",
+            attachment_type=AttachmentType.TEXT,
+        )
+    except Exception:
+        pass
+
 
 class ModelAPIClient:
     """模型API客户端，封装OpenAI兼容的API调用"""
@@ -99,6 +126,7 @@ class ModelAPIClient:
 
         # 检查响应状态
         if response.status_code != 200:
+            _attach_api_error(response.status_code, response.text, payload)
             raise Exception(
                 f"API request failed with status {response.status_code}: {response.text}"
             )
@@ -145,6 +173,7 @@ class ModelAPIClient:
 
         # 检查响应状态
         if response.status_code != 200:
+            _attach_api_error(response.status_code, response.text, payload)
             raise Exception(
                 f"API request failed with status {response.status_code}: {response.text[:500]}"
             )
