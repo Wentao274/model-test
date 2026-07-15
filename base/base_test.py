@@ -84,6 +84,10 @@ class BaseTest(ABC):
                 delta = chunk["choices"][0]["delta"]
                 if delta.get("content"):
                     tokens.append(delta["content"])
+                # 思考模型可能仅输出 reasoning，无 content
+                reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                if reasoning:
+                    tokens.append(reasoning)
         assert len(tokens) > 0, "No tokens received in streaming response"
         return "".join(tokens)
 
@@ -181,8 +185,11 @@ class StreamingTestMixin:
             delta = choices[0].get("delta", {})
             if delta.get("content"):
                 content_parts.append(delta["content"])
-            if delta.get("reasoning_content"):
-                reasoning_parts.append(delta["reasoning_content"])
+            # 同时支持 reasoning 和 reasoning_content 字段，与非流式
+            # get_reasoning_content 保持一致（glm 系列使用 reasoning）
+            reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+            if reasoning:
+                reasoning_parts.append(reasoning)
 
         return {
             "chunks": chunks,

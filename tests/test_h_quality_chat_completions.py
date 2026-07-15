@@ -297,12 +297,18 @@ class ResponseRelevanceChecker:
         # 1. 检测重复句子（同一句子出现3次以上）
         # 注意：过滤掉纯markdown格式行（代码围栏```、分隔线---等），
         # 避免将编程回答中多个代码块的```python标记误判为重复句子。
-        sentences = re.split(r"[。！？\n.!?]", text_clean)
+        # 同样需过滤代码注释行（#、//、; 等）：编程回答中多个示例常含
+        # 相同注释（如 "# 调用函数"），属于正常代码文档，不应判为堆砌。
+        # 额外：先剥离代码块内容再做散文句子分析——代码块中的重复语句
+        # （如多个示例中的 "import json"）是正常代码，不是散文堆砌。
+        prose_text = re.sub(r"```[^\n]*\n.*?```", "", text_clean, flags=re.DOTALL)
+        sentences = re.split(r"[。！？\n.!?]", prose_text)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 5]
         sentences = [
             s
             for s in sentences
             if not re.match(r"^(?:```+[\w]*|---+|===+|\*\*\*+|___+)\s*$", s)
+            and not re.match(r"^(?:#{1,6}\s+|//|;|/\*|<!--)", s)
         ]
 
         if sentences:
@@ -371,15 +377,19 @@ class ResponseRelevanceChecker:
                         )
 
         # 4. 检测重复模式（高相似度句子过多）
-        if len(sentences) > 10:
+        # 注意：排除含内联代码(backticks)的行——这类结构化对比行
+        # （如 "传统：`GET /api/...`" vs "RESTful：`GET /api/...`"）
+        # 格式相似但属正常技术对比，不应判为重复模式。
+        prose_sentences = [s for s in sentences if "`" not in s]
+        if len(prose_sentences) > 10:
             similar_count = 0
-            for i in range(len(sentences)):
-                for j in range(i + 1, min(i + 10, len(sentences))):
-                    set_i = set(sentences[i])
-                    set_j = set(sentences[j])
+            for i in range(len(prose_sentences)):
+                for j in range(i + 1, min(i + 10, len(prose_sentences))):
+                    set_i = set(prose_sentences[i])
+                    set_j = set(prose_sentences[j])
                     if set_i and set_j:
                         overlap = len(set_i & set_j) / max(len(set_i | set_j), 1)
-                        if overlap > 0.7 and len(sentences[i]) > 10:
+                        if overlap > 0.7 and len(prose_sentences[i]) > 10:
                             similar_count += 1
                 if similar_count > 5:
                     break
@@ -509,7 +519,13 @@ class ResponseRelevanceChecker:
         positive_score = len(matched_positive) / max(
             len(domain_info.get("keywords", [])), 1
         )
-        negative_penalty = len(matched_negative) * 0.3
+        # 负向词惩罚：单个负向词常出现在类比/举例中（如用"电影院"解释递归），
+        # 不应直接否定整段领域回答。按命中比例扣分，仅当负向词较多时才显著降分。
+        negative_count = len(matched_negative)
+        negative_ratio = negative_count / max(
+            len(domain_info.get("negative_keywords", [])), 1
+        )
+        negative_penalty = negative_ratio * 0.5
 
         score = max(0, positive_score - negative_penalty)
 
@@ -522,7 +538,13 @@ class ResponseRelevanceChecker:
             if sent_rel["total_sentences"] > 0:
                 score = score * (0.4 + 0.6 * sent_rel["ratio"])
 
-        is_relevant = score >= 0.1 and len(matched_negative) == 0
+        # 仅当负向词数量较多（>=2）或超过正向词数量时才判不相关；
+        # 单个负向词通常只是举例/类比，不应否定整段领域回答。
+        is_relevant = (
+            score >= 0.1
+            and negative_count < 2
+            and negative_count <= len(matched_positive)
+        )
 
         reason = f"matched {len(matched_positive)}/{len(domain_info.get('keywords', []))} positive keywords"
         if matched_negative:
