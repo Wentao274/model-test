@@ -107,6 +107,18 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         return 202752
 
     @staticmethod
+    def _has_explicit_max_context_len(model_info: dict) -> bool:
+        """判断模型信息是否显式声明了最大上下文长度
+
+        与 _get_max_context_len 不同，此方法在未找到任何上下文长度字段时
+        返回 False（而非回退默认值），用于区分"真实声明"与"回退默认值"。
+        """
+        for key in ("max_model_len", "context-length", "context_length"):
+            if model_info.get(key):
+                return True
+        return False
+
+    @staticmethod
     def _is_over_limit_error(e) -> bool:
         """判断异常是否表示上下文超限/连接中断/服务端边界失败
 
@@ -359,6 +371,24 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         run_niah_scenario(8000, "8K基线")
 
         # 场景2: 512K tokens（超长上下文大海捞针）
+        # 先判断模型是否支持512K上下文长度：若模型显式声明的最大上下文 < 512K，
+        # 则跳过该场景；若模型信息未声明最大上下文长度，则正常测试并根据结果断言
+        model_info = api_client.get_model_info()
+        if self._has_explicit_max_context_len(model_info):
+            max_len = self._get_max_context_len(model_info)
+            if max_len < 512000:
+                test_logger.info(
+                    f"512K场景: 模型最大上下文长度 {max_len} < 512000，跳过512K场景"
+                )
+                return
+            test_logger.info(
+                f"512K场景: 模型最大上下文长度 {max_len} >= 512000，执行512K测试"
+            )
+        else:
+            test_logger.info(
+                "512K场景: 模型信息未声明最大上下文长度，正常执行512K测试并根据结果断言"
+            )
+
         # 512K prefill 耗时较长，自适应放大超时，结束后恢复原值
         original_timeout = api_client.timeout
         api_client.timeout = max(original_timeout, 600)

@@ -82,6 +82,14 @@ NO_IMAGE_KEYWORDS = [
     "as a text model",
     "as a language model",
     "text-based ai",
+    # 模型自述为纯文本模型（受 positive_phrases 保护，正常描述含"纯文本"时不会误判）
+    "纯文本",
+    # "无法直接看到/查看/识别" 等带修饰词的变体
+    "无法直接看到",
+    "无法直接查看",
+    "无法直接识别",
+    # "没有视觉" 原子词（受 positive_phrases 保护）
+    "没有视觉",
 ]
 
 NO_VIDEO_KEYWORDS = [
@@ -132,6 +140,17 @@ NO_VIDEO_KEYWORDS = [
     "as a text model",
     "as a language model",
     "text-based ai",
+    # 模型自述为纯文本模型（受 positive_phrases 保护，正常描述含"纯文本"时不会误判）
+    "纯文本",
+    # "无法直接看到/查看/识别" 等带修饰词的变体
+    "无法直接看到",
+    "无法直接查看",
+    "无法直接识别",
+    # "观看" 是视频专属动词（模型常以"无法观看/无法直接观看视频"拒绝）
+    "无法观看",
+    "无法直接观看",
+    # "没有视觉" 原子词（受 positive_phrases 保护）
+    "没有视觉",
 ]
 
 PLACEHOLDER_KEYWORDS = [
@@ -141,6 +160,71 @@ PLACEHOLDER_KEYWORDS = [
     "image_placeholder",
     "video_placeholder",
     "<|",
+]
+
+# 强拒绝关键词：模型明确声明无法处理图片/视频输入。出现即判定多模态不支持，
+# 不受 positive_phrases 影响。用于避免模型在拒绝后追加"例如图片中有什么"
+# 等澄清性提问，导致 positive_phrases 误判为已识别图片。
+# 仅收录明确表达"无能力/纯文本"的短语，避免误伤正常图片描述。
+STRONG_REFUSAL_COMMON = [
+    "无法看到或处理",
+    # "查看/直接" 变体：模型常以"无法直接查看或处理您上传的图片"明确拒绝，
+    # 属于强拒绝，须绕过 positive_phrases，避免拒绝后提及"图片中显示"等措辞
+    # 导致 has_positive 误判为已识别而漏检。
+    "无法查看或处理",
+    "无法直接看到或处理",
+    "无法直接查看或处理",
+    "作为纯文本",
+    "作为一个纯文本",
+    "纯文本模型",
+    "纯文本ai",
+    "纯文本的人工智能",
+    # "基于文本的AI/模型" 自述（明确声明自身为文本模型）
+    "基于文本",
+    "没有多模态",
+    "没有多模态输入",
+    "没有多模态能力",
+    # "不具备多模态" 变体（与"没有多模态"等价，模型常以"不具备多模态输入能力"拒绝）
+    "不具备多模态",
+    "不具备多模态输入",
+    "不具备多模态能力",
+    "没有视觉能力",
+    "没有视觉处理能力",
+    "没有图像识别能力",
+    "没有图片识别能力",
+    "text-only",
+    "text-based ai",
+    "no visual capability",
+    "no multimodal",
+    "unable to see",
+    "unable to analyze",
+]
+
+STRONG_REFUSAL_IMAGE = [
+    "无法处理图片",
+    "无法处理图像",
+    "无法看到图片",
+    "无法查看图片",
+    "无法分析图片",
+    "无法分析图像",
+    "cannot process image",
+    "unable to process image",
+    "cannot analyze image",
+]
+
+STRONG_REFUSAL_VIDEO = [
+    "无法处理视频",
+    "无法看到视频",
+    "无法查看视频",
+    "无法分析视频",
+    # "观看" 是视频专属动词，模型常以"无法观看视频"/"无法直接观看或处理...视频"拒绝
+    "无法观看视频",
+    "无法观看或处理",
+    "无法直接观看或处理",
+    "无法直接观看",
+    "cannot process video",
+    "unable to process video",
+    "cannot analyze video",
 ]
 
 
@@ -162,6 +246,16 @@ def check_multimodal_failure(response: dict, media_type: str = "image") -> str |
         return None
     content_lower = content.lower()
     for keyword in PLACEHOLDER_KEYWORDS:
+        if keyword in content_lower:
+            return keyword
+    # 强拒绝关键词优先：模型明确声明无法处理图片/视频输入时直接判定失败，
+    # 不受 positive_phrases 影响。
+    strong_keywords = STRONG_REFUSAL_COMMON[:]
+    if media_type == "image":
+        strong_keywords += STRONG_REFUSAL_IMAGE
+    else:
+        strong_keywords += STRONG_REFUSAL_VIDEO
+    for keyword in strong_keywords:
         if keyword in content_lower:
             return keyword
     keywords = NO_IMAGE_KEYWORDS if media_type == "image" else NO_VIDEO_KEYWORDS
@@ -441,6 +535,16 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             self.assert_content_not_empty(response)
 
             content = self.get_message_content(response)
+            failed_keyword = check_multimodal_failure(response, "image")
+            if failed_keyword:
+                test_logger.warning(
+                    f"模型可能不支持多模态（未能识别真实高清图片）。Response contains: '{failed_keyword}'"
+                )
+                pytest.skip(
+                    f"Model may not support multimodal (real high-res image recognition failed). "
+                    f"Response contains: '{failed_keyword}'"
+                )
+
             assert len(content) > 20, (
                 f"Response should be detailed for high-res image, got {len(content)} chars"
             )
@@ -1011,7 +1115,9 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
             )
 
         content_lower = content.lower()
-        assert any(kw in content_lower for kw in ["蓝", "blue", "颜色", "color"]), (
+        # 仅接受表示具体颜色"蓝"的关键词，不接受"颜色"/"color"等泛化词——
+        # 拒绝回复常含"无法看到图片的颜色"等措辞，泛化词会导致误判通过。
+        assert any(kw in content_lower for kw in ["蓝", "blue"]), (
             f"Model should identify the {format} image color as blue, got: {content[:500]}"
         )
 
