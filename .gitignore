@@ -210,6 +210,9 @@ __marimo__/
 # build dir
 builds/
 
+# claude dir
+.claude/
+
 # Test Result
 test_reports/
 logs/
