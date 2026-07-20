@@ -249,7 +249,7 @@ class ResponseRelevanceChecker:
 
         text_clean = text.strip()
 
-        math_expression_pattern = r"^[\d\s\+\-\*/=<>±×÷≤≥≠≈∞√∫∑∏∂∇²³ⁿπ\u03b1-\u03c9\u0391-\u03a9\(\)\[\]\.,:;!?]+$"
+        math_expression_pattern = r"^[\d\s\+\-\*/=<>±×÷≤≥≠≈∞√∫∑∏∂∇²³ⁿπ\u03b1-\u03c9\u0391-\u03a9\u3000-\u303f\uff00-\uffef\(\)\[\]\.,:;!?]+$"
         if re.match(math_expression_pattern, text_clean):
             return False, ""
 
