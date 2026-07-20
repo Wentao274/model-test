@@ -12,7 +12,7 @@
 | A3  | System Prompt  | 设置系统角色，验证模型遵循程度           | P0  |
 | A4  | 流式输出           | stream=true，验证SSE逐token返回 | P0  |
 | A5  | 非流式输出          | stream=false，验证完整返回       | P0  |
-| A6  | Temperature 控制 | temp=0 vs temp=1.0，验证输出差异 | P0  |
+| A6  | Temperature 控制 | temp=0 vs temp=1.0，验证输出差异 | P1  |
 | A7  | Top-p/Top-k 采样 | 不同top_p/top_k值，验证多样性控制    | P1  |
 | A8  | Max Tokens 限制  | 设置max_tokens，验证输出不超限      | P0  |
 | A9  | Stop Sequences | 设置stop token，验证在stop处截断   | P1  |

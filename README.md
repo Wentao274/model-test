@@ -35,7 +35,7 @@
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 
-> 总计：96 个测试点（P0: 37 / P1: 48 / P2: 11）
+> 总计：96 个测试点（P0: 36 / P1: 49 / P2: 11）
 
 ---
 
@@ -423,7 +423,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | P1 | 重要 | 推荐指标，失败建议修复 |
 | P2 | 一般 | 增强指标，失败可酌情接受 |
 
-每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 96 项）：P0 = 37，P1 = 48，P2 = 11。
+每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 96 项）：P0 = 36，P1 = 49，P2 = 11。
 
 ### 判定规则
 

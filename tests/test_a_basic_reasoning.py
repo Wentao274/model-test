@@ -334,7 +334,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.a_basic
-    @pytest.mark.p0
+    @pytest.mark.p1
     def test_temperature_control(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):

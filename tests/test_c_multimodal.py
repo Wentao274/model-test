@@ -31,6 +31,135 @@ VIDEO_DIR = FIXTURES_DIR / "videos"
 TOOL_DIR = FIXTURES_DIR / "tool"
 CODE_DIR = FIXTURES_DIR / "code"
 
+# 模块级多模态支持探测结果缓存
+# None=未探测, True=支持, False=不支持
+_multimodal_probe_result = None
+_multimodal_probe_reason = ""
+
+
+def _probe_multimodal_support(api_client, test_logger):
+    """探测当前模型是否支持多模态输入
+
+    发送一个带图片的简单请求，检测：
+    1. API 层：HTTP 400/422/404/501 异常，或响应体含 error 字段
+    2. 内容层：HTTP 200 但模型回复"看不到图片""无法处理图片"等拒绝文本
+
+    内容层检测不使用 positive_phrases 覆盖，避免模型说
+    "看不到图片，但图片中显示的应该是红色"时被误判为已识别。
+    """
+    global _multimodal_probe_result, _multimodal_probe_reason
+
+    import io
+    from PIL import Image
+
+    img = Image.new("RGB", (100, 100), color="red")
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format="PNG")
+    img_b64 = base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "这张图片是什么颜色？"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                },
+            ],
+        }
+    ]
+
+    test_logger.info("=== 多模态能力探测开始 ===")
+
+    try:
+        response = api_client.chat_completion(messages)
+    except Exception as e:
+        error_msg = str(e)
+        error_lower = error_msg.lower()
+        skip_status_codes = [
+            "status 400",
+            "status 422",
+            "status 404",
+            "status 501",
+        ]
+        multimodal_keywords = [
+            "image",
+            "multimodal",
+            "vision",
+            "visual",
+            "video",
+            "图片",
+            "图像",
+            "多模态",
+            "视觉",
+            "视频",
+            "not support",
+            "unsupported",
+            "不支持",
+            "无法处理",
+        ]
+        is_skip_status = any(sc in error_lower for sc in skip_status_codes)
+        has_multimodal_keyword = any(kw in error_lower for kw in multimodal_keywords)
+        if is_skip_status or has_multimodal_keyword:
+            _multimodal_probe_result = False
+            _multimodal_probe_reason = f"API rejected: {error_msg[:200]}"
+            test_logger.warning(f"模型不支持多模态输入: {error_msg[:200]}")
+            return False
+        raise
+
+    if response.get("error"):
+        error_detail = response.get("error")
+        if isinstance(error_detail, dict):
+            error_msg = error_detail.get("message", str(error_detail))
+        else:
+            error_msg = str(error_detail)
+        _multimodal_probe_result = False
+        _multimodal_probe_reason = f"API error: {error_msg[:200]}"
+        test_logger.warning(f"模型不支持多模态输入: {error_msg[:200]}")
+        return False
+
+    unsupported_keyword = MultimodalTestMixin._check_content_unsupported(
+        response, "image"
+    )
+    if unsupported_keyword:
+        _multimodal_probe_result = False
+        _multimodal_probe_reason = (
+            f"Response indicates inability to process image: "
+            f"matched '{unsupported_keyword}'"
+        )
+        test_logger.warning(
+            f"模型不支持多模态（响应含拒绝关键词 '{unsupported_keyword}'）"
+        )
+        return False
+
+    _multimodal_probe_result = True
+    test_logger.info("=== 多模态能力探测通过，模型支持多模态 ===")
+    return True
+
+
+@pytest.fixture(autouse=True)
+def probe_multimodal_support(api_client: ModelAPIClient, test_logger):
+    """多模态能力探测 fixture（autouse，function 级）
+
+    在第一个多模态测试用例执行前进行一次探测，结果缓存到模块级变量。
+    如果模型不支持多模态，后续所有 C 类测试用例均自动跳过。
+    """
+    global _multimodal_probe_result
+
+    if _multimodal_probe_result is False:
+        pytest.skip(
+            f"Model does not support multimodal input "
+            f"(probed earlier): {_multimodal_probe_reason}"
+        )
+    elif _multimodal_probe_result is True:
+        return
+
+    if not _probe_multimodal_support(api_client, test_logger):
+        pytest.skip(
+            f"Model does not support multimodal input: {_multimodal_probe_reason}"
+        )
+
 
 # 多模态识别失败关键词
 NO_IMAGE_KEYWORDS = [

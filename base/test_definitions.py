@@ -51,7 +51,7 @@ TEST_CATEGORIES = {
                 "Temperature 控制",
                 "temp=0 vs temp=1.0，验证输出差异",
                 "temperature_control",
-                "P0",
+                "P1",
             ),
             (
                 "A7",

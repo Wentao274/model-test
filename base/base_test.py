@@ -287,6 +287,168 @@ class StreamingTestMixin:
 class MultimodalTestMixin:
     """多模态测试Mixin"""
 
+    _UNSUPPORTED_STRONG = [
+        "作为纯文本",
+        "作为一个纯文本",
+        "纯文本模型",
+        "纯文本ai",
+        "纯文本的人工智能",
+        "基于文本",
+        "text-only",
+        "text-based ai",
+        "没有多模态",
+        "没有多模态输入",
+        "没有多模态能力",
+        "不具备多模态",
+        "不具备多模态输入",
+        "不具备多模态能力",
+        "没有视觉能力",
+        "没有视觉处理能力",
+        "没有图像识别能力",
+        "没有图片识别能力",
+        "no visual capability",
+        "no multimodal",
+        "unable to see",
+        "unable to analyze",
+        "无法看到或处理",
+        "无法查看或处理",
+        "无法直接看到或处理",
+        "无法直接查看或处理",
+        "无法处理图片",
+        "无法处理图像",
+        "无法看到图片",
+        "无法查看图片",
+        "无法分析图片",
+        "无法分析图像",
+        "cannot process image",
+        "unable to process image",
+        "cannot analyze image",
+        "无法处理视频",
+        "无法看到视频",
+        "无法查看视频",
+        "无法分析视频",
+        "无法观看视频",
+        "无法观看或处理",
+        "无法直接观看或处理",
+        "无法直接观看",
+        "cannot process video",
+        "unable to process video",
+        "cannot analyze video",
+    ]
+
+    _UNSUPPORTED_IMAGE = [
+        "看不到图片",
+        "看不到图像",
+        "看不到上传的图",
+        "无法看到图片",
+        "无法看到图像",
+        "没有上传图片",
+        "没有收到图片",
+        "没有任何图片",
+        "没有任何图像",
+        "没有图片",
+        "请上传图片",
+        "请提供图片",
+        "请发送图片",
+        "请重新上传",
+        "未上传图片",
+        "i don't see any image",
+        "i don't see the image",
+        "i cannot see the image",
+        "i can't see the image",
+        "i am unable to see",
+        "no image",
+        "don't see any image",
+        "cannot see the image",
+        "haven't seen",
+        "unable to process",
+        "cannot process",
+        "as an ai",
+        "as a text model",
+        "as a language model",
+    ]
+
+    _UNSUPPORTED_VIDEO = [
+        "看不到视频",
+        "看不到上传的视频",
+        "无法看到视频",
+        "无法观看视频",
+        "没有上传视频",
+        "没有收到视频",
+        "没有任何视频",
+        "没有视频",
+        "请上传视频",
+        "请提供视频",
+        "请发送视频",
+        "未上传视频",
+        "i don't see any video",
+        "i don't see the video",
+        "i cannot see the video",
+        "i can't see the video",
+        "no video",
+        "don't see any video",
+        "cannot see the video",
+        "haven't seen",
+        "unable to process",
+        "cannot process",
+        "as an ai",
+        "as a text model",
+        "as a language model",
+    ]
+
+    @staticmethod
+    def _infer_media_type(messages):
+        """从消息内容推断媒体类型 (image/video)"""
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        ptype = part.get("type", "")
+                        if "video" in ptype:
+                            return "video"
+                        if "image" in ptype:
+                            return "image"
+        return "image"
+
+    @staticmethod
+    def _check_content_unsupported(response, media_type="image"):
+        """检查响应内容是否表明模型不支持多模态
+
+        与 test_c_multimodal.py 中的 check_multimodal_failure 不同，
+        此方法不使用 positive_phrases 覆盖——只要检测到拒绝关键词即判定
+        不支持。这避免了模型说"看不到图片，但图片中显示的应该是红色"
+        时因 positive_phrases 误判为已识别的情况。
+
+        Returns:
+            matched keyword if unsupported, None otherwise
+        """
+        try:
+            message = response.get("choices", [{}])[0].get("message", {})
+            content = message.get("content") or ""
+        except (IndexError, AttributeError, TypeError):
+            return None
+
+        if not content:
+            return None
+
+        content_lower = content.lower()
+
+        for keyword in MultimodalTestMixin._UNSUPPORTED_STRONG:
+            if keyword in content_lower:
+                return keyword
+
+        patterns = (
+            MultimodalTestMixin._UNSUPPORTED_VIDEO
+            if media_type == "video"
+            else MultimodalTestMixin._UNSUPPORTED_IMAGE
+        )
+        for pattern in patterns:
+            if pattern in content_lower:
+                return pattern
+
+        return None
+
     @staticmethod
     def create_image_message(image_path: str, text: str = None) -> Dict[str, Any]:
         """创建图片消息（Base64编码）"""
