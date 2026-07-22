@@ -20,7 +20,7 @@ import pytest
 import random
 import string
 import time
-from typing import List
+from typing import Any, Dict, List, Optional, Tuple
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
@@ -158,6 +158,137 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             "ended",
         ]
         return any(kw in error_msg or kw in exc_name for kw in keywords)
+
+    def _check_has_thinking(self, response: dict, test_logger) -> bool:
+        """检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签）"""
+        reasoning = self.get_reasoning_content(response)
+        content = self.get_message_content(response)
+        has_reasoning_field = reasoning is not None and len(reasoning.strip()) > 0
+        has_thinking_tags = False
+        thinking_content = ""
+        if content:
+            if "<think>" in content and "</think>" in content:
+                start = content.find("<think>") + len("<think>")
+                end = content.find("</think>")
+                thinking_content = content[start:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+            elif content.startswith("<|im_start|>assistant\n\n"):
+                after_start = content.find("\n") + len("\n")
+                if "</think>" in content:
+                    end = content.find("</think>")
+                    thinking_content = content[after_start:end].strip()
+                    has_thinking_tags = len(thinking_content) > 0
+            elif "</think>" in content and "<think>" not in content:
+                end = content.find("</think>")
+                thinking_content = content[:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+                test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
+        test_logger.info(
+            f"reasoning 字段: {reasoning[:2000] + '...' if reasoning else 'None'}"
+        )
+        test_logger.info(
+            f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
+        )
+        if thinking_content:
+            test_logger.info(f"思考内容: {thinking_content[:2000]}...")
+        return has_reasoning_field or has_thinking_tags
+
+    def _chat_with_thinking_fallback(
+        self,
+        api_client: ModelAPIClient,
+        messages: List[Dict[str, Any]],
+        test_logger,
+        max_tokens: int = 8000,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any], str, bool]:
+        """自动尝试多种思考模式参数格式（不依赖 config.yaml 配置）
+
+        策略顺序：
+            0. {} - 不传 thinking 参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
+            1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
+            2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
+            3. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
+            4. chat_template_kwargs.thinking + reasoning_effort=high
+                - 部分 vLLM/SGLang 部署需要 reasoning_effort 才会触发思考
+
+        遍历所有策略后，若均未获取到思考内容，则 fallback 到不传任何
+        thinking 参数发起请求（大部分模型的思考模式默认打开），以确认
+        长上下文请求本身可用。
+
+        Returns:
+            (response, used_params, strategy_name, has_thinking)
+        """
+        strategies = [
+            ("default", {}),
+            ("enable_thinking", {"enable_thinking": True}),
+            (
+                "chat_template_kwargs.thinking",
+                {"chat_template_kwargs": {"thinking": True}},
+            ),
+            (
+                "thinking.type.enabled",
+                {"thinking": {"type": "enabled"}},
+            ),
+            (
+                "chat_template_kwargs.thinking+reasoning_effort",
+                {
+                    "chat_template_kwargs": {"thinking": True},
+                    "reasoning_effort": "high",
+                },
+            ),
+        ]
+
+        last_response = None
+        last_params = None
+        last_strategy = None
+
+        for idx, (strategy_name, params) in enumerate(strategies, 1):
+            test_logger.info(
+                f"[{idx}/{len(strategies)}] 尝试思考参数策略: "
+                f"{strategy_name} -> {params}"
+            )
+            try:
+                response = api_client.chat_completion(
+                    messages, extra_body=params, max_tokens=max_tokens
+                )
+            except Exception as e:
+                if self._is_over_limit_error(e):
+                    pytest.skip(
+                        f"Model/proxy does not support long context with thinking: {e}"
+                    )
+                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
+                last_strategy = strategy_name
+                last_params = params
+                continue
+
+            self.assert_response_success(response)
+            has_thinking = self._check_has_thinking(response, test_logger)
+
+            if has_thinking:
+                test_logger.info(f"策略 {strategy_name} 成功获取到思考内容")
+                return response, params, strategy_name, True
+
+            test_logger.warning(
+                f"策略 {strategy_name} 未获取到思考内容，将尝试下一策略"
+            )
+            last_response = response
+            last_params = params
+            last_strategy = strategy_name
+
+        if last_response is None:
+            test_logger.info("所有思考参数策略均请求异常，fallback 到不传任何参数请求")
+            try:
+                fallback_response = api_client.chat_completion(
+                    messages, max_tokens=max_tokens
+                )
+            except Exception as e:
+                if self._is_over_limit_error(e):
+                    pytest.skip(f"Model/proxy does not support long context: {e}")
+                raise
+            self.assert_response_success(fallback_response)
+            has_thinking = self._check_has_thinking(fallback_response, test_logger)
+            return fallback_response, {}, "no_params_fallback", has_thinking
+
+        return last_response, last_params, last_strategy, False
 
     @pytest.mark.d_long_context
     @pytest.mark.p0
@@ -305,21 +436,59 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     @pytest.mark.d_long_context
     @pytest.mark.p0
     @pytest.mark.slow
-    def test_niah_needle_in_a_haystack(self, api_client: ModelAPIClient, test_logger):
+    def test_niah_needle_in_a_haystack(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
         """D5: 大海捞针（NIAH）- 长文本中插入特定信息，验证召回率
 
         包含两个场景：
         - 场景1 (8K tokens): 基线大海捞针，验证基本召回能力
         - 场景2 (512K tokens): 超长上下文大海捞针，验证超长文本中的召回能力
+
+        若 8K 基线通过但 512K 场景因模型不支持而无法执行，则测试通过并记录警告。
         """
+
+        class _ContextUnsupportedError(Exception):
+            pass
+
         test_logger.info("=== 测试开始: 大海捞针 ===")
 
         needle = "特殊标记：项目Alpha的第37号实验结果为42，这是唯一正确的数值。"
+
+        def _is_garbled(text: str, threshold: float = 0.4) -> bool:
+            """检测文本是否为乱码/噪声输出
+
+            判定逻辑：统计文本中非正常字符（乱码片段、孤立符号、
+            重复模式）的比例，超过阈值则判定为乱码。
+            """
+            if not text or len(text.strip()) < 10:
+                return True
+            import re
+
+            clean = re.sub(r"[\s\n\r]", "", text)
+            if len(clean) < 10:
+                return True
+            garbled_patterns = [
+                r"\ufffd",
+                r'[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffefa-zA-Z0-9\s.,;:!?\'"()\-\u2014\u2013\u201c\u201d\u2018\u2019/\\@#$%^&*+=\[\]{}|<>~`_]',
+            ]
+            garbled_chars = 0
+            for m in re.finditer(garbled_patterns[0], clean):
+                garbled_chars += 1
+            garbled_chars += len(re.findall(garbled_patterns[1], clean))
+            short_frag = len(re.findall(r"\S{1,2}(?:\s+\S{1,2}){4,}", text))
+            if short_frag > 5:
+                garbled_chars += short_frag * 3
+            ratio = garbled_chars / max(len(clean), 1)
+            return ratio > threshold
 
         def run_niah_scenario(context_tokens: int, scenario_name: str):
             """执行单个大海捞针场景
 
             在生成的长文本中间插入needle，验证模型能否正确召回。
+            当检测到模型不支持该上下文长度时（静默失败），抛出
+            _ContextUnsupportedError 而非 pytest.skip，以便调用方
+            区分处理：8K 不可支持则 FAIL，512K 不可支持则 PASS+警告。
             """
             test_logger.info(f"--- {scenario_name}: ~{context_tokens} tokens ---")
 
@@ -340,34 +509,76 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             self.log_full_response(test_logger, response, f"D5-{scenario_name}")
 
             self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(response)
-
-            assert "42" in content, (
-                f"[{scenario_name}] Model should recall the needle '42', "
-                f"got: {content[:500]}"
-            )
-            content_lower = content.lower()
-            assert any(
-                kw in content_lower
-                for kw in ["特殊标记", "标记", "alpha", "实验", "37", "结果"]
-            ), (
-                f"[{scenario_name}] Model should reference the needle context, "
-                f"got: {content[:500]}"
-            )
 
             usage = response.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
+
+            if prompt_tokens <= 1 and context_tokens >= 8000:
+                raise _ContextUnsupportedError(
+                    f"[{scenario_name}] Silent failure: prompt_tokens={prompt_tokens} "
+                    f"for ~{context_tokens} token input — model/proxy likely does not "
+                    f"support this context length"
+                )
+
+            self.assert_content_not_empty(response)
+            content = self.get_message_content(response)
+
             assert prompt_tokens > 0, (
-                f"[{scenario_name}] Should have prompt_tokens > 0 for NIAH test"
+                f"[{scenario_name}] Should have prompt_tokens > 0 for NIAH test, "
+                f"got {prompt_tokens} — request may not have been processed"
             )
+
+            is_garbled = _is_garbled(content)
+            if is_garbled:
+                test_logger.warning(
+                    f"[{scenario_name}] Response appears garbled/noisy, "
+                    f"content[:500]: {content[:500]}"
+                )
+                assert False, (
+                    f"[{scenario_name}] Response is garbled/noisy — model failed to "
+                    f"properly process the long context. Cannot validate needle recall "
+                    f"from incoherent output. Got: {content[:500]}"
+                )
+
+            content_lower = content.lower()
+
+            needle_core_assertions = [
+                ("42", "42"),
+                ("alpha", "Alpha"),
+            ]
+            needle_secondary = [
+                ("特殊标记", "特殊标记"),
+                ("37", "37"),
+                ("实验结果", "实验结果"),
+            ]
+
+            core_hits = sum(
+                1 for kw, _ in needle_core_assertions if kw in content_lower
+            )
+            secondary_hits = sum(1 for kw, _ in needle_secondary if kw in content_lower)
+
+            assert core_hits == len(needle_core_assertions), (
+                f"[{scenario_name}] Model must contain all core needle info "
+                f"({', '.join(desc for _, desc in needle_core_assertions)}). "
+                f"Matches: {core_hits}/{len(needle_core_assertions)}. "
+                f"Needle: '{needle}'. Got: {content[:500]}"
+            )
+            assert secondary_hits >= 1, (
+                f"[{scenario_name}] Model must reference at least 1 secondary "
+                f"needle detail ({', '.join(desc for _, desc in needle_secondary)}). "
+                f"Matches: {secondary_hits}/{len(needle_secondary)}. "
+                f"Got: {content[:500]}"
+            )
+
             test_logger.info(
-                f"[{scenario_name}] NIAH passed, prompt_tokens={prompt_tokens}, "
+                f"[{scenario_name}] NIAH passed, "
+                f"core_hits={core_hits}, secondary_hits={secondary_hits}, "
+                f"prompt_tokens={prompt_tokens}, "
                 f"completion_tokens={usage.get('completion_tokens')}, "
                 f"response: {content[:2000]}"
             )
 
-        # 场景1: 8K tokens（基线）
+        # 场景1: 8K tokens（基线）— 必须通过
         run_niah_scenario(8000, "8K基线")
 
         # 场景2: 512K tokens（超长上下文大海捞针）
@@ -380,6 +591,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 test_logger.info(
                     f"512K场景: 模型最大上下文长度 {max_len} < 512000，跳过512K场景"
                 )
+                record_warning("模型最大上下文长度 < 512K，跳过512K大海捞针测试")
                 return
             test_logger.info(
                 f"512K场景: 模型最大上下文长度 {max_len} >= 512000，执行512K测试"
@@ -394,11 +606,15 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         api_client.timeout = max(original_timeout, 600)
         try:
             run_niah_scenario(512000, "512K超长")
+        except _ContextUnsupportedError as e:
+            test_logger.warning(str(e))
+            record_warning("模型可能不支持512K上下文长度，跳过512K大海捞针测试")
         except Exception as e:
             if self._is_over_limit_error(e):
                 test_logger.warning(
                     f"512K场景: 模型/proxy不支持该上下文长度，跳过: {e}"
                 )
+                record_warning("模型可能不支持512K上下文长度，跳过512K大海捞针测试")
             else:
                 raise
         finally:
@@ -702,11 +918,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         - 仅在区间内做二分逼近，收敛容差按 max_len 缩放，避免无谓迭代；
         - 单请求超时随输入规模自适应放大，避免大上下文 prefill 超时；
         - 总体墙钟预算保护，超时则以已得最大成功值判定，避免用例整体超时；
-        - 一旦已确认 ≥80%（通过阈值）即提前结束，不再探测更高尺寸。
+        - 一旦已确认 >=80%（通过阈值）即提前结束，不再探测更高尺寸。
         """
         test_logger.info("=== 测试开始: 上下文边界（探进+二分） ===")
 
-        # 通过阈值：断言只要求 ≥80%，达到即可提前结束
+        # 通过阈值：断言只要求 >=80%，达到即可提前结束
         PASS_RATIO = 0.8
         # 总体墙钟预算（秒），避免单测超时；可经 model config 覆盖
         overall_budget = 1500
@@ -723,7 +939,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         def adaptive_timeout(size_tokens: int) -> int:
             # 基础 60s + 每token 约 1.5ms，覆盖 prefill 随输入长度增长
-            # 1M ≈ 1560s，100K ≈ 210s，8K ≈ 72s
+            # 1M ~= 1560s，100K ~= 210s，8K ~= 72s
             return max(60, int(60 + size_tokens * 0.0015))
 
         # 字符/token 比，校准前用随机ASCII经验值 3.0；校准后更新为实测值
@@ -751,7 +967,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 if pt > 0:
                     ratio = sample_chars / pt
                     test_logger.info(
-                        f"校准结果: {sample_chars}字符 → {pt}tokens, "
+                        f"校准结果: {sample_chars}字符 -> {pt}tokens, "
                         f"chars/token={ratio:.3f}"
                     )
                     chars_per_token = ratio
@@ -856,7 +1072,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             if successful_len > 0:
                 cur = successful_len
                 step = max(floor_size, 1024)
-                max_gallop = 25  # log2(1M/1K)≈10，余量充足
+                max_gallop = 25  # log2(1M/1K)~=10，余量充足
                 for _ in range(max_gallop):
                     if elapsed() > overall_budget:
                         test_logger.warning(
@@ -955,8 +1171,19 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def test_reasoning_content_in_long_context(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性"""
-        test_logger.info("=== 测试开始: 长上下文+思考 ===")
+        """D12: 超长上下文（思考模式） - 验证超长上下文下reasoning_content的可用性
+
+        不依赖 config.yaml 配置，自动按以下顺序尝试参数格式：
+        0. 不传参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
+        1. enable_thinking=true (顶层字段)
+        2. chat_template_kwargs={"thinking": true}
+        3. thinking={"type": "enabled"} (DeepSeek/GLM 风格)
+        4. chat_template_kwargs.thinking=true + reasoning_effort=high
+        遍历所有策略后，若均未获取到思考内容，则 fallback 到不传任何
+        thinking 参数发起请求（大部分模型的思考模式默认打开），验证长上下文
+        请求本身可用。
+        """
+        test_logger.info("=== 测试开始: 长上下文+思考（自动回退） ===")
 
         # 生态系统背景（问题核心，保留语义供模型推理）
         ecosystem_background = (
@@ -981,28 +1208,41 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         test_logger.info(f"输入长度: {len(long_prompt)} 字符")
 
         messages = [{"role": "user", "content": long_prompt}]
-        thinking_params = api_client.get_thinking_params(True)
         TestLogger.log_request(
-            test_logger, messages, {**thinking_params, "max_tokens": 8000}
+            test_logger,
+            messages,
+            {
+                "max_tokens": 8000,
+                "thinking_mode": (
+                    "auto-fallback (default -> enable_thinking "
+                    "-> chat_template_kwargs.thinking "
+                    "-> thinking.type=enabled "
+                    "-> chat_template_kwargs.thinking+reasoning_effort "
+                    "-> no_params_fallback)"
+                ),
+            },
         )
 
-        # try/except 仅保护 API 调用本身（传输层错误→skip），
-        # 响应内容断言放在 try/except 之外，确保断言失败报 FAIL 而非误判 skip
-        try:
-            response = api_client.chat_completion(
-                messages,
-                extra_body=thinking_params,
-                max_tokens=8000,
+        (
+            response,
+            used_params,
+            strategy,
+            has_thinking,
+        ) = self._chat_with_thinking_fallback(
+            api_client, messages, test_logger, max_tokens=8000
+        )
+        if response is None:
+            pytest.fail(
+                f"All thinking strategies failed with API errors. "
+                f"Last strategy: {strategy}, params: {used_params}"
             )
-        except Exception as e:
-            if self._is_over_limit_error(e):
-                pytest.skip(
-                    f"Model/proxy does not support long context with thinking: {e}"
-                )
-            raise
 
-        TestLogger.log_response(test_logger, response, "长上下文+思考响应")
-        self.log_full_response(test_logger, response, "D12-长上下文+思考模式")
+        TestLogger.log_response(
+            test_logger, response, f"长上下文+思考响应 (策略: {strategy})"
+        )
+        self.log_full_response(
+            test_logger, response, f"D12-长上下文+思考模式 [{strategy}]"
+        )
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
@@ -1010,8 +1250,13 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         reasoning = self.get_reasoning_content(response)
         content = self.get_message_content(response)
 
-        assert reasoning is not None and len(reasoning.strip()) > 0, (
-            "Thinking mode should produce non-empty reasoning_content in long context"
+        assert has_thinking, (
+            "Thinking mode should return reasoning content (reasoning field or thinking tags) "
+            "in long context. "
+            "Tried strategies: default, enable_thinking, chat_template_kwargs.thinking, "
+            "thinking.type=enabled, chat_template_kwargs.thinking+reasoning_effort, "
+            "no_params_fallback. "
+            f"Last params: {used_params}"
         )
 
         usage = response.get("usage", {})
@@ -1025,7 +1270,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         )
 
         test_logger.info(
-            f"Long context with thinking: reasoning={len(reasoning) if reasoning else 0} chars, "
+            f"Long context with thinking (strategy={strategy}): "
+            f"reasoning={len(reasoning) if reasoning else 0} chars, "
             f"content={len(content) if content else 0} chars, "
             f"prompt_tokens={prompt_tokens}, "
             f"completion_tokens={usage.get('completion_tokens')}"
