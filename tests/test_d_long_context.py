@@ -99,8 +99,13 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
     @staticmethod
     def _get_max_context_len(model_info: dict) -> int:
-        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和 sglang(context-length)"""
-        for key in ("max_model_len", "context-length", "context_length"):
+        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和 sglang(context-length) 以及部分模型(context_window)"""
+        for key in (
+            "max_model_len",
+            "context-length",
+            "context_length",
+            "context_window",
+        ):
             val = model_info.get(key, 0)
             if val:
                 return int(val)
@@ -113,7 +118,12 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         与 _get_max_context_len 不同，此方法在未找到任何上下文长度字段时
         返回 False（而非回退默认值），用于区分"真实声明"与"回退默认值"。
         """
-        for key in ("max_model_len", "context-length", "context_length"):
+        for key in (
+            "max_model_len",
+            "context-length",
+            "context_length",
+            "context_window",
+        ):
             if model_info.get(key):
                 return True
         return False

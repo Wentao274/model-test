@@ -19,10 +19,25 @@ import concurrent.futures
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
 from base.logger import TestLogger
+from tests.test_d_long_context import generate_mixed_content
 
 
 class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
     """稳定性与边界测试类"""
+
+    @staticmethod
+    def _get_max_context_len(model_info: dict) -> int:
+        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和 sglang(context-length) 以及部分模型(context_window)"""
+        for key in (
+            "max_model_len",
+            "context-length",
+            "context_length",
+            "context_window",
+        ):
+            val = model_info.get(key, 0)
+            if val:
+                return int(val)
+        return 202752
 
     def get_test_category(self) -> str:
         return "F. 稳定性与边界"
@@ -58,8 +73,13 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
         """F2 [P1]: 超大输入 - 超过 max_model_len 的输入"""
         test_logger.info("=== 测试开始: 超大输入 ===")
 
-        # 生成超长文本
-        long_prompt = "测试内容 " * 60000
+        # 获取模型真实支持的最大上下文长度，生成超过上限的有意义的混合内容
+        model_info = api_client.get_model_info()
+        max_len = self._get_max_context_len(model_info)
+        over_tokens = max_len + 4000
+        test_logger.info(f"模型最大上下文: {max_len}, 生成输入 ~{over_tokens} tokens")
+
+        long_prompt = generate_mixed_content(over_tokens) + "\n\n请简短总结以上内容。"
         messages = [{"role": "user", "content": long_prompt}]
         test_logger.info(f"请求长度: {len(long_prompt)} 字符")
         TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
