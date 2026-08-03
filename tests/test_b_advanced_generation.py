@@ -212,6 +212,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         if "</think>" in content:
             parts = content.split("</think>", 1)
             return parts[1].strip() if len(parts) > 1 else ""
+        # kimi-k3 格式：思考内容后以 <|close|>think[<|sep|>] 分隔，再输出最终答案
+        if "<|close|>think" in content:
+            close_sep = "<|close|>think<|sep|>"
+            if close_sep in content:
+                parts = content.split(close_sep, 1)
+                return parts[1].strip() if len(parts) > 1 else ""
+            parts = content.split("<|close|>think", 1)
+            return parts[1].strip() if len(parts) > 1 else ""
         return content
 
     def _check_has_thinking(self, response: dict, test_logger) -> bool:
@@ -232,6 +240,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                     end = content.find("</think>")
                     thinking_content = content[after_start:end].strip()
                     has_thinking_tags = len(thinking_content) > 0
+            elif "<|close|>think" in content and "<think>" not in content:
+                end = content.find("<|close|>think")
+                thinking_content = content[:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+                if has_thinking_tags:
+                    test_logger.info("检测到 kimi-k3 格式（<|close|>think 分隔符）")
             elif "</think>" in content and "<think>" not in content:
                 end = content.find("</think>")
                 thinking_content = content[:end].strip()
@@ -463,6 +477,81 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         )
 
         test_logger.info(f"思考模式验证通过 (使用策略: {strategy})")
+
+    @pytest.mark.b_advanced
+    @pytest.mark.p2
+    def test_kimi_k3_thinking_format(self, test_logger):
+        """B1补充: 覆盖 kimi-k3 思考格式（纯单元测试，不依赖 API）
+
+        kimi-k3 将思考内容放在 content 中，以 <|close|>think 作为思考段结束标志，
+        可选 <|sep|> 分隔最终答案。验证检测与剥离逻辑兼容以下两种形态：
+            1) <思考内容><|close|>think<|sep|><最终答案>
+            2) <思考内容><|close|>think              （无最终答案，常见于工具调用前置）
+        """
+        # 形态1：带 <|sep|> 分隔符，含最终答案
+        resp_with_sep = {
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "content": (
+                            "用户要计算 123*456。先算 123*400=49200，"
+                            "再算 123*56=6888，合计 56088。"
+                            "<|close|>think<|sep|>**123 × 456 = 56,088**"
+                        ),
+                        "reasoning_content": None,
+                        "role": "assistant",
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        assert self._check_has_thinking(resp_with_sep, test_logger), (
+            "应识别 kimi-k3 <|close|>think<|sep|> 格式的思考内容"
+        )
+        clean1 = self._strip_thinking_tags(self.get_message_content(resp_with_sep))
+        assert "56,088" in clean1, f"剥离思考后应保留最终答案，got: {clean1!r}"
+        assert "<|close|>think" not in clean1, "最终答案不应包含思考分隔符"
+
+        # 形态2：仅 <|close|>think，无 <|sep|>（思考结束但本条无最终答案）
+        resp_no_sep = {
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "content": "需要调用工具查询天气信息。<|close|>think",
+                        "reasoning_content": None,
+                        "role": "assistant",
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        assert self._check_has_thinking(resp_no_sep, test_logger), (
+            "应识别 kimi-k3 <|close|>think 结束标志的思考内容"
+        )
+        clean2 = self._strip_thinking_tags(self.get_message_content(resp_no_sep))
+        assert "<|close|>think" not in clean2, "剥离后不应残留思考分隔符"
+
+        # 普通回答不应被误判为思考内容
+        resp_plain = {
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "content": "123 × 456 = 56,088",
+                        "reasoning_content": None,
+                        "role": "assistant",
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        assert not self._check_has_thinking(resp_plain, test_logger), (
+            "普通回答不应被误判为思考内容"
+        )
+
+        test_logger.info("kimi-k3 思考格式覆盖验证通过")
 
     @pytest.mark.b_advanced
     @pytest.mark.p1
@@ -961,8 +1050,16 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             ("天气相关问题", "北京今天天气怎么样？", "get_weather"),
             ("股票相关问题", "现在苹果公司(AAPL)的股价是多少？", "get_stock_price"),
             ("新闻搜索问题", "搜索关于人工智能的最新新闻", "search_news"),
-            ("数学计算问题", "帮我计算一下 123 + 456 等于多少？", "calculate"),
-            ("翻译问题", "把 Hello 翻译成中文", "translate"),
+            (
+                "数学计算问题",
+                "帮我计算一下 1234 * 567 + 8901 / 43 等于多少？",
+                "calculate",
+            ),
+            (
+                "翻译问题",
+                "请把下面这段英文翻译成中文：The rapid development of artificial intelligence has profoundly transformed the way we live and work in recent years.",
+                "translate",
+            ),
         ]
 
         for idx, (desc, user_msg, expected_tool) in enumerate(test_cases, 1):

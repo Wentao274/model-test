@@ -188,6 +188,12 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                     end = content.find("</think>")
                     thinking_content = content[after_start:end].strip()
                     has_thinking_tags = len(thinking_content) > 0
+            elif "<|close|>think" in content and "<think>" not in content:
+                end = content.find("<|close|>think")
+                thinking_content = content[:end].strip()
+                has_thinking_tags = len(thinking_content) > 0
+                if has_thinking_tags:
+                    test_logger.info("检测到 kimi-k3 格式（<|close|>think 分隔符）")
             elif "</think>" in content and "<think>" not in content:
                 end = content.find("</think>")
                 thinking_content = content[:end].strip()

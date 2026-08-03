@@ -61,9 +61,33 @@ class BaseTest(ABC):
         else:
             content = self.get_response_content(response)
         if strip_thinking:
-            import re
+            content = self.strip_thinking_content(content)
+        return content
 
-            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+    @staticmethod
+    def strip_thinking_content(content: str) -> str:
+        """从 content 中剥离思考内容，兼容多种思考格式
+
+        - 标准 <think>...</think>（含 MiniMax 仅 </think> 结束标签的情况）
+        - kimi-k3: <思考内容><|close|>think[<|sep|>]<最终答案>
+        返回最终答案部分；无思考标记时原样返回。
+        """
+        if not content:
+            return content
+        TS = chr(60) + "think" + chr(62)
+        TE = chr(60) + "/think" + chr(62)
+        # kimi-k3 格式优先（其 content 不含 <think> 开标签）
+        if "<|close|>think" in content and TS not in content:
+            close_sep = "<|close|>think<|sep|>"
+            if close_sep in content:
+                parts = content.split(close_sep, 1)
+                return parts[1].strip() if len(parts) > 1 else ""
+            parts = content.split("<|close|>think", 1)
+            return parts[1].strip() if len(parts) > 1 else ""
+        # 标准 <think>...</think> 或 MiniMax 仅 </think> 结束标签
+        if TE in content:
+            parts = content.split(TE, 1)
+            return parts[1].strip() if len(parts) > 1 else ""
         return content
 
     def get_reasoning_content(self, response: Dict[str, Any]) -> Optional[str]:
