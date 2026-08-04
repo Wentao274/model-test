@@ -173,6 +173,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         """检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签）"""
         reasoning = self.get_reasoning_content(response)
         content = self.get_message_content(response)
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason", "")
         has_reasoning_field = reasoning is not None and len(reasoning.strip()) > 0
         has_thinking_tags = False
         thinking_content = ""
@@ -199,6 +200,23 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 thinking_content = content[:end].strip()
                 has_thinking_tags = len(thinking_content) > 0
                 test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
+            elif finish_reason == "length" and not has_reasoning_field:
+                # kimi-k3 思考被 max_tokens 截断：未输出 <|close|>think 结束标志，
+                # 整段 content 为被截断的思考。通过推理特征语言区分思考 vs 普通回答。
+                reasoning_markers = [
+                    "the user", "i should", "i need to", "let me",
+                    "i'll", "i must", "用户想", "用户问",
+                    "让我", "我需要", "我应该", "我来",
+                ]
+                cl = content.lower()
+                if len(content.strip()) > 100 and any(m in cl for m in reasoning_markers):
+                    thinking_content = content.strip()
+                    has_thinking_tags = len(thinking_content) > 0
+                    if has_thinking_tags:
+                        test_logger.info(
+                            "检测到被截断的思考内容（finish_reason=length，"
+                            "content 含推理特征语言且无思考结束标志）"
+                        )
         test_logger.info(
             f"reasoning 字段: {reasoning[:2000] + '...' if reasoning else 'None'}"
         )
@@ -214,7 +232,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         api_client: ModelAPIClient,
         messages: List[Dict[str, Any]],
         test_logger,
-        max_tokens: int = 8000,
+        max_tokens: int = 20000,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any], str, bool]:
         """自动尝试多种思考模式参数格式（不依赖 config.yaml 配置）
 
@@ -1228,7 +1246,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             test_logger,
             messages,
             {
-                "max_tokens": 8000,
+                "max_tokens": 20000,
                 "thinking_mode": (
                     "auto-fallback (default -> enable_thinking "
                     "-> chat_template_kwargs.thinking "
@@ -1245,7 +1263,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             strategy,
             has_thinking,
         ) = self._chat_with_thinking_fallback(
-            api_client, messages, test_logger, max_tokens=8000
+            api_client, messages, test_logger, max_tokens=20000
         )
         if response is None:
             pytest.fail(
