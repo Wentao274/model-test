@@ -756,7 +756,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
 
             min_length = 20
             is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
@@ -797,7 +799,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             self.log_full_response(test_logger, response, f"I2-生成一致性-第{i + 1}次")
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             responses.append(content)
             test_logger.info(f"第{i + 1}次响应: {content[:2000]}...")
 
@@ -853,7 +857,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
 
             is_nonsensical, nonsensical_reason = (
                 ResponseRelevanceChecker.is_nonsensical_response(question, content)
@@ -863,16 +869,17 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             if not expected_found:
                 hallucination_count += 1
-                test_logger.warning(
-                    f"幻觉: 期望包含'{expected}', 实际: {content[:500]}"
-                )
-                record_warning(f"幻觉: 期望包含'{expected}'")
-            elif is_nonsensical:
-                hallucination_count += 1
-                test_logger.warning(
-                    f"幻觉: 回答与问题不相关({nonsensical_reason}), 期望包含'{expected}', 实际: {content[:500]}"
-                )
-                record_warning(f"幻觉: 回答与问题不相关({nonsensical_reason})")
+                if is_nonsensical:
+                    test_logger.warning(
+                        f"幻觉: 回答与问题不相关({nonsensical_reason}), "
+                        f"期望包含'{expected}', 实际: {content[:500]}"
+                    )
+                    record_warning(f"幻觉: 回答与问题不相关({nonsensical_reason})")
+                else:
+                    test_logger.warning(
+                        f"幻觉: 期望包含'{expected}', 实际: {content[:500]}"
+                    )
+                    record_warning(f"幻觉: 期望包含'{expected}'")
             elif is_spam:
                 hallucination_count += 1
                 test_logger.warning(
@@ -903,7 +910,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
-        content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+        content = self.get_message_content(
+            response, strip_reasoning=True, strip_thinking=True
+        )
 
         try:
             import json as _json
@@ -944,7 +953,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True).lower()
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            ).lower()
 
             is_nonsensical, nonsensical_reason = (
                 ResponseRelevanceChecker.is_nonsensical_response(prompt, content)
@@ -1014,7 +1025,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答: {content[:2000]}...")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
@@ -1085,7 +1098,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答: {content[:2000]}...")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
@@ -1155,7 +1170,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答内容: {content}")
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
@@ -1212,7 +1229,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             )
 
             self.assert_response_success(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答长度: {len(content)}")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
@@ -1272,7 +1291,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             )
 
             self.assert_response_success(response)
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答: {content[:2000]}...")
 
             is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(
@@ -1332,7 +1353,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
 
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答: {content[:2000]}...")
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
@@ -1498,7 +1521,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
 
-            content = self.get_message_content(response, strip_reasoning=True, strip_thinking=True)
+            content = self.get_message_content(
+                response, strip_reasoning=True, strip_thinking=True
+            )
             test_logger.info(f"回答内容: {content[:500]}...")
 
             if not content or not content.strip():
