@@ -12,6 +12,7 @@ C. 多模态能力测试
 - C8: 图片格式兼容性 - PNG/JPEG/WebP/GIF/Base64编码 [P1]
 """
 
+import os
 import json
 import pytest
 import base64
@@ -851,47 +852,72 @@ class TestMultimodal(BaseTest, StreamingTestMixin, MultimodalTestMixin):
 
         video_url = "http://10.201.132.50:9999/videos/water.mp4"
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "video_url",
-                        "video_url": {"url": video_url},
-                    },
-                    {"type": "text", "text": "请描述这个视频的内容"},
-                ],
-            }
+        # 清除代理环境变量，避免影响模型服务端对nginx远程视频文件的访问
+        _proxy_env_keys = [
+            "http_proxy",
+            "https_proxy",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "all_proxy",
+            "ALL_PROXY",
         ]
-        test_logger.info("请求: 视频理解")
-
-        response = api_client.chat_completion(messages)
-        self.log_full_response(test_logger, response, "C5-视频理解")
-
-        if response.get("error"):
-            pytest.skip(
-                f"Model does not support video understanding: {response.get('error')}"
-            )
-
-        self.assert_response_success(response)
-        self.assert_content_not_empty(response)
-
-        content = self.get_message_content(response)
-        failed_keyword = check_multimodal_failure(response, "video")
-        if failed_keyword:
-            test_logger.warning(
-                f"模型可能不支持多模态（未能识别视频）。Response contains: '{failed_keyword}'"
-            )
-            pytest.skip(
-                f"Model may not support multimodal (video recognition failed). "
-                f"Response contains: '{failed_keyword}'"
-            )
-
-        assert len(content.strip()) > 20, (
-            f"Video understanding response should be descriptive, got {len(content.strip())} chars"
+        _saved_proxies = {}
+        for _key in _proxy_env_keys:
+            if _key in os.environ:
+                _saved_proxies[_key] = os.environ.pop(_key)
+                test_logger.warning(
+                    f"检测并清除代理环境变量: {_key}={_saved_proxies[_key]}"
+                )
+        test_logger.info(
+            f"代理状态检查: http_proxy={os.environ.get('http_proxy', '(未设置)')}, "
+            f"https_proxy={os.environ.get('https_proxy', '(未设置)')}"
         )
 
-        test_logger.info(f"Video understanding result: {content[:2000]}...")
+        try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": video_url},
+                        },
+                        {"type": "text", "text": "请描述这个视频的内容"},
+                    ],
+                }
+            ]
+            test_logger.info("请求: 视频理解")
+
+            response = api_client.chat_completion(messages)
+            self.log_full_response(test_logger, response, "C5-视频理解")
+
+            if response.get("error"):
+                pytest.skip(
+                    f"Model does not support video understanding: {response.get('error')}"
+                )
+
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+
+            content = self.get_message_content(response)
+            failed_keyword = check_multimodal_failure(response, "video")
+            if failed_keyword:
+                test_logger.warning(
+                    f"模型可能不支持多模态（未能识别视频）。Response contains: '{failed_keyword}'"
+                )
+                pytest.skip(
+                    f"Model may not support multimodal (video recognition failed). "
+                    f"Response contains: '{failed_keyword}'"
+                )
+
+            assert len(content.strip()) > 20, (
+                f"Video understanding response should be descriptive, got {len(content.strip())} chars"
+            )
+
+            test_logger.info(f"Video understanding result: {content[:2000]}...")
+        finally:
+            for _key, _val in _saved_proxies.items():
+                os.environ[_key] = _val
 
     @pytest.mark.c_multimodal
     @pytest.mark.p2
