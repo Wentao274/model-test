@@ -274,8 +274,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             0. {} - 不传 thinking 参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
             1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
             2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
-            3. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
-            4. chat_template_kwargs.thinking + reasoning_effort=high
+            3. {"chat_template_kwargs": {"enable_thinking": True}}  - chat_template 方式（vLLM/Qwen3 等）
+            4. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
+            5. chat_template_kwargs.thinking + reasoning_effort=high
                 - 部分 vLLM/SGLang 部署需要 reasoning_effort 才会触发思考
 
         Args:
@@ -296,6 +297,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             (
                 "chat_template_kwargs.thinking",
                 {"chat_template_kwargs": {"thinking": True}},
+            ),
+            (
+                "chat_template_kwargs.enable_thinking",
+                {"chat_template_kwargs": {"enable_thinking": True}},
             ),
             (
                 "thinking.type.enabled",
@@ -356,7 +361,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             1. {} - 不传 thinking 参数（依赖模型默认行为）
             2. {"enable_thinking": False} - 顶层字段显式关闭
             3. {"chat_template_kwargs": {"thinking": False}} - chat_template 方式
-            4. {"thinking": {"type": "disabled"}} - 顶层对象（DeepSeek/GLM 等）
+            4. {"chat_template_kwargs": {"enable_thinking": False}} - chat_template 方式（vLLM/Qwen3 等）
+            5. {"thinking": {"type": "disabled"}} - 顶层对象（DeepSeek/GLM 等）
 
         任一策略无思考内容泄漏即返回；若全部仍泄漏，则 has_no_thinking=False。
 
@@ -369,6 +375,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             (
                 "chat_template_kwargs.thinking_false",
                 {"chat_template_kwargs": {"thinking": False}},
+            ),
+            (
+                "chat_template_kwargs.enable_thinking_false",
+                {"chat_template_kwargs": {"enable_thinking": False}},
             ),
             (
                 "thinking.type.disabled",
@@ -420,8 +430,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         0. 不传参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
         1. enable_thinking=true (顶层字段)
         2. chat_template_kwargs={"thinking": true}
-        3. thinking={"type": "enabled"} (DeepSeek/GLM 风格)
-        4. chat_template_kwargs.thinking=true + reasoning_effort=high
+        3. chat_template_kwargs={"enable_thinking": true}
+        4. thinking={"type": "enabled"} (DeepSeek/GLM 风格)
+        5. chat_template_kwargs.thinking=true + reasoning_effort=high
         若所有方式均未获取到思考内容，则断言失败。
 
         思考内容承载方式由 _check_has_thinking / _strip_thinking_tags
@@ -441,6 +452,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 "thinking_mode": (
                     "auto-fallback on (enable_thinking "
                     "-> chat_template_kwargs.thinking "
+                    "-> chat_template_kwargs.enable_thinking "
                     "-> thinking.type=enabled "
                     "-> chat_template_kwargs.thinking+reasoning_effort)"
                 )
@@ -468,7 +480,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert has_thinking, (
             "Thinking mode should return reasoning content (reasoning field or thinking tags). "
             "Tried strategies: enable_thinking, chat_template_kwargs.thinking, "
-            "thinking.type=enabled, chat_template_kwargs.thinking+reasoning_effort. "
+            "chat_template_kwargs.enable_thinking, thinking.type=enabled, "
+            "chat_template_kwargs.thinking+reasoning_effort. "
             f"Last params: {used_params}"
         )
 
@@ -495,8 +508,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         1. 不传 thinking 参数（依赖模型默认行为）
         2. enable_thinking=false (顶层字段)
         3. chat_template_kwargs={"thinking": false}
-        4. thinking={"type": "disabled"} (DeepSeek/GLM 风格)
-        若四种方式均存在思考内容泄漏，则断言失败。
+        4. chat_template_kwargs={"enable_thinking": false}
+        5. thinking={"type": "disabled"} (DeepSeek/GLM 风格)
+        若所有方式均存在思考内容泄漏，则断言失败。
         """
         test_logger.info("=== 测试开始: 非思考模式（自动回退） ===")
 
@@ -508,6 +522,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 "thinking_mode": (
                     "auto-fallback off (no_params -> enable_thinking:false "
                     "-> chat_template_kwargs.thinking:false "
+                    "-> chat_template_kwargs.enable_thinking:false "
                     "-> thinking.type=disabled)"
                 )
             },
@@ -534,7 +549,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert has_no_thinking, (
             "Non-thinking mode should not leak any reasoning content. "
             "Tried strategies: no_thinking_params, enable_thinking:false, "
-            "chat_template_kwargs.thinking:false, thinking.type=disabled. "
+            "chat_template_kwargs.thinking:false, "
+            "chat_template_kwargs.enable_thinking:false, thinking.type=disabled. "
             f"Last params: {used_params}"
         )
 
@@ -559,10 +575,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         开启部分采用自动回退策略：
             default -> enable_thinking=true -> chat_template_kwargs={"thinking": true}
+            -> chat_template_kwargs={"enable_thinking": true}
             -> thinking={"type": "enabled"}
             -> chat_template_kwargs.thinking=true + reasoning_effort=high
         关闭部分采用自动回退策略：
             no_params -> enable_thinking=false -> chat_template_kwargs={"thinking": false}
+            -> chat_template_kwargs={"enable_thinking": false}
             -> thinking={"type": "disabled"}
         """
         test_logger.info("=== 测试开始: 思考模式切换 ===")
@@ -577,6 +595,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 "thinking_mode": (
                     "auto-fallback on (enable_thinking "
                     "-> chat_template_kwargs.thinking "
+                    "-> chat_template_kwargs.enable_thinking "
                     "-> thinking.type=enabled "
                     "-> chat_template_kwargs.thinking+reasoning_effort)"
                 )
@@ -603,7 +622,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert has_thinking1, (
             "First request with thinking=ON should have thinking content. "
             "Tried strategies: enable_thinking, chat_template_kwargs.thinking, "
-            "thinking.type=enabled, chat_template_kwargs.thinking+reasoning_effort. "
+            "chat_template_kwargs.enable_thinking, thinking.type=enabled, "
+            "chat_template_kwargs.thinking+reasoning_effort. "
             f"Last params: {used_params1}"
         )
 
@@ -626,6 +646,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 "thinking_mode": (
                     "auto-fallback off (no_params -> enable_thinking:false "
                     "-> chat_template_kwargs.thinking:false "
+                    "-> chat_template_kwargs.enable_thinking:false "
                     "-> thinking.type=disabled)"
                 )
             },
@@ -651,7 +672,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert has_no_thinking2, (
             "Second request with thinking=OFF should have no thinking content. "
             "Tried strategies: no_thinking_params, enable_thinking:false, "
-            "chat_template_kwargs.thinking:false, thinking.type=disabled. "
+            "chat_template_kwargs.thinking:false, "
+            "chat_template_kwargs.enable_thinking:false, thinking.type=disabled. "
             f"Last params: {used_params2}"
         )
 
