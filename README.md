@@ -326,7 +326,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 - **远程主机**：`10.201.132.50`（用户 `root`），通过 SSH 凭证 `HOST_SSH_KEY` 免密登录
 - **远程工作目录**：由 `WORK_DIR` 参数指定（默认 `/dingofs/data2/userdata/liwt/maas-image/model-test`）
 - **构建产物目录**：远程 `builds/${TESTER}/${BUILD_NUMBER}/`，Jenkins 端 `reports/${BUILD_NUMBER}/`
-- 代码同步通过 `git restore . && git pull` 完成（经内网代理 `100.64.1.68:1080`）
+- 代码同步通过 `git restore . && git pull` 完成
 
 ### 构建参数
 

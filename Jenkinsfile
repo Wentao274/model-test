@@ -61,8 +61,8 @@ ls -la
 
 # 恢复工作区并拉取最新代码
 echo "=== 同步代码 ==="
-export https_proxy=http://100.64.1.68:1080
-export http_proxy=http://100.64.1.68:1080
+export https_proxy=http://10.201.136.68:1080
+export http_proxy=http://10.201.136.68:1080
 git restore .
 git pull
 unset https_proxy
