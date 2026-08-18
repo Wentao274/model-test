@@ -15,6 +15,7 @@
 | [test_g_api_compatibility.md](test_g_api_compatibility.md) | G. API兼容性 | 8 |
 | [test_h_quality_chat_completions.md](test_h_quality_chat_completions.md) | H. Chat Completions API 质量评估与回答相关性 | 13 |
 | [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
+| [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 4 |
 
 ## 报告文档
 
@@ -38,6 +39,7 @@ pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
 pytest -m h_quality_chat_completions -v  # Chat Completions API 质量评估
 pytest -m i_quality_completions -v  # Completions API 质量评估
+pytest -m j_clear_thinking -v       # clear_thinking 参数行为
 
 # 按优先级运行
 pytest -m p0 -v  # P0 优先级测试

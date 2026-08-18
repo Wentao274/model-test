@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 96 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 100 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -34,8 +34,9 @@
 | G. API 兼容性 | `g_api` | 8 | OpenAI 接口兼容 |
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
+| J. clear_thinking 参数行为 | `j_clear_thinking` | 4 | 多轮对话下历史思考的清除/保留行为、参数正交性 |
 
-> 总计：96 个测试点（P0: 36 / P1: 49 / P2: 11）
+> 总计：100 个测试点（P0: 36 / P1: 52 / P2: 12）
 
 ---
 
@@ -229,6 +230,7 @@ pytest -m f_stability -v                    # 稳定性与边界
 pytest -m g_api -v                          # API 兼容性
 pytest -m h_quality_chat_completions -v     # Chat Completions API 质量评估
 pytest -m i_quality_completions -v          # Completions API 质量评估
+pytest -m j_clear_thinking -v               # clear_thinking 参数行为
 pytest -m p0 -v                             # P0 优先级测试
 pytest -m p1 -v                             # P1 优先级测试
 pytest -m p2 -v                             # P2 优先级测试
@@ -348,7 +350,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | 值 | 含义 |
 |----|------|
 | `all` | 全部测试（不传 `-m`） |
-| `a_basic` ~ `i_quality_completions` | 按 A~I 分类运行 |
+| `a_basic` ~ `j_clear_thinking` | 按 A~J 分类运行 |
 | `p0` / `p1` / `p2` | 按优先级运行 |
 | `smoke` | 冒烟测试 |
 | `slow` | 慢速测试 |
@@ -506,6 +508,7 @@ model-test/
 - [G 类测试说明](docs/test_g_api_compatibility.md)
 - [H 类测试说明](docs/test_h_quality_chat_completions.md)
 - [I 类测试说明](docs/test_i_quality_completions.md)
+- [J 类测试说明](docs/test_j_clear_thinking.md)
 
 ---
 

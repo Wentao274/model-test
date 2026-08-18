@@ -80,6 +80,8 @@ def main():
                         marker = "h_quality_chat_completions"
                     elif test_id.startswith("I"):
                         marker = "i_quality_completions"
+                    elif test_id.startswith("J"):
+                        marker = "j_clear_thinking"
                     else:
                         marker = "unknown"
 

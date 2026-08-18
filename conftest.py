@@ -497,6 +497,10 @@ def pytest_configure(config):
         "markers",
         "i_quality_completions: I类测试 - Completions API质量评估与回答相关性",
     )
+    config.addinivalue_line(
+        "markers",
+        "j_clear_thinking: J类测试 - clear_thinking 参数行为",
+    )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
 
@@ -649,6 +653,8 @@ def pytest_runtest_logreport(report):
             marker_from_file = "h_quality_chat_completions"
         elif test_file_basename.startswith("test_i_"):
             marker_from_file = "i_quality_completions"
+        elif test_file_basename.startswith("test_j_"):
+            marker_from_file = "j_clear_thinking"
 
         # 提取测试函数名（去掉 test_ 前缀）
         test_func_base = (

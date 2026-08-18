@@ -475,6 +475,40 @@ TEST_CATEGORIES = {
             ),
         ],
     },
+    "j_clear_thinking": {
+        "name": "J. clear_thinking 参数行为",
+        "criticality": "重要",
+        "tests": [
+            (
+                "J1",
+                "clear_thinking=true 多轮",
+                "显式 clear_thinking=true，验证多轮请求成功且无 thinking 泄漏到后续上下文",
+                "clear_thinking_true_multi_turn",
+                "P1",
+            ),
+            (
+                "J2",
+                "clear_thinking=false 多轮",
+                "显式 clear_thinking=false，验证多轮请求成功且历史 thinking 被保留",
+                "clear_thinking_false_multi_turn",
+                "P1",
+            ),
+            (
+                "J3",
+                "clear_thinking 对 prompt_tokens 的影响",
+                "对比 true/false 在含历史 thinking 的多轮请求下的 prompt_tokens 差异",
+                "clear_thinking_prompt_tokens_difference",
+                "P2",
+            ),
+            (
+                "J4",
+                "clear_thinking 与 enable_thinking 组合",
+                "四种 (enable_thinking, clear_thinking) 组合均可被服务端接受",
+                "clear_thinking_enable_combinations",
+                "P1",
+            ),
+        ],
+    },
 }
 
 

@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（9 大类 × 96 个测试点）
+## 二、测试点总览（10 大类 × 100 个测试点）
 
 ### 分类概览
 
@@ -36,6 +36,7 @@
 | G. API 兼容性   | 8    | OpenAI 兼容、参数一致性     |
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
+| J. clear_thinking 参数行为 | 4   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合 |
 
 ---
 
@@ -208,6 +209,21 @@
 
 ---
 
+### J. clear_thinking 参数行为（4 项）
+
+验证 `chat_template_kwargs.clear_thinking` 在多轮对话场景下对历史 assistant 思考内容
+（open-think ... close-think 块）的清除/保留行为，以及与 `enable_thinking` 的正交性。
+仅在多轮对话场景下有意义，单轮请求无效果。
+
+| #   | 测试点                                 | 测试内容                                                            | 验证方法                                                | 优先级 |
+|-----|------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|-----|
+| J1  | clear_thinking=true 多轮              | 显式清除历史 thinking，验证多轮请求成功且无 thinking 泄漏到后续上下文                      | 多轮 messages 含历史 think 块，断言响应成功且最终回答可基于历史最终答案推论     | P1  |
+| J2  | clear_thinking=false 多轮             | 显式保留历史 thinking，验证多轮请求成功（此时历史思考被服务端保留并送入上下文）                       | 同 J1 历史，断言响应成功且最终回答可基于历史最终答案推论                     | P1  |
+| J3  | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异                  | 同一组多轮 messages 分别以 true/false 发送，断言 false 的 prompt_tokens ≥ true | P2  |
+| J4  | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | 遍历 (T,T)/(T,F)/(F,T)/(F,F) 四种组合，全部 HTTP 200 且响应非空     | P1  |
+
+---
+
 ## 四、按模型特性的差异化测试点
 
 除通用测试点外，各模型还需要结合当前仓库的已知 passing path 和接口差异做专项验证：
@@ -258,18 +274,19 @@
 A1-A5, A8        基础推理 6 项
 B1, B4           高级功能 2 项（B1 思考模式、B4 单工具调用）
 B8, B9           结构化输出 2 项
-                   多模态 0 项（C 类已降为 P1/P2，仅视觉模型按需评估）
+                    多模态 0 项（C 类已降为 P1/P2，仅视觉模型按需评估）
 D1, D4, D5, D12  上下文处理 4 项（D4 超长上下文升至 P0，D2/D3/D11 降为 P1）
 E1-E8            性能指标 8 项
 F1, F4           稳定性 2 项（F1 空输入、F4 特殊字符注入；F2/F3/F5 降为 P1/P2）
 G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
-                   Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
+                    Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
+                    clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 = 36 项。
+总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 = 36 项。
 
-### P1（选测，49 项）
+### P1（选测，52 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
@@ -281,9 +298,10 @@ F2, F5-F8               稳定性 5 项
 G2, G5                  API 兼容 2 项
 H2, H3, H10, H11        Chat Completions API 质量评估 4 项
 I1-I12                  Completions API 质量评估 12 项
+J1, J2, J4              clear_thinking 参数行为 3 项
 ```
 
-### P2（低优，11 项）
+### P2（低优，12 项）
 
 ```
 B6, B10                 高级功能 2 项
@@ -291,4 +309,5 @@ C3, C5-C7               多模态 4 项
 F3                      稳定性 1 项
 G7, G8                  API 兼容 2 项
 H13, I13                质量评估 2 项
+J3                      clear_thinking 参数行为 1 项
 ```
