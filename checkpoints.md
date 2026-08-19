@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（10 大类 × 100 个测试点）
+## 二、测试点总览（10 大类 × 101 个测试点）
 
 ### 分类概览
 
@@ -36,7 +36,7 @@
 | G. API 兼容性   | 8    | OpenAI 兼容、参数一致性     |
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
-| J. clear_thinking 参数行为 | 4   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合 |
+| J. clear_thinking 参数行为 | 5   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、deployment 能力探测 |
 
 ---
 
@@ -209,7 +209,7 @@
 
 ---
 
-### J. clear_thinking 参数行为（4 项）
+### J. clear_thinking 参数行为（5 项）
 
 验证 `chat_template_kwargs.clear_thinking` 在多轮对话场景下对历史 assistant 思考内容
 （open-think ... close-think 块）的清除/保留行为，以及与 `enable_thinking` 的正交性。
@@ -219,8 +219,9 @@
 |-----|------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|-----|
 | J1  | clear_thinking=true 多轮              | 显式清除历史 thinking，验证多轮请求成功且无 thinking 泄漏到后续上下文                      | 多轮 messages 含历史 think 块，断言响应成功且最终回答可基于历史最终答案推论     | P1  |
 | J2  | clear_thinking=false 多轮             | 显式保留历史 thinking，验证多轮请求成功（此时历史思考被服务端保留并送入上下文）                       | 同 J1 历史，断言响应成功且最终回答可基于历史最终答案推论                     | P1  |
-| J3  | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异                  | 同一组多轮 messages 分别以 true/false 发送，断言 false 的 prompt_tokens ≥ true | P2  |
-| J4  | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | 遍历 (T,T)/(T,F)/(F,T)/(F,F) 四种组合，全部 HTTP 200 且响应非空     | P1  |
+| J3  | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异，**严格断言 pt_false > pt_true**  | 同一组多轮 messages 分别以 true/false 发送，未生效（相等）时用例 FAIL | P2  |
+| J4  | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | enable_thinking=True 的两个组合必须通过；enable_thinking=False 的组合若检测到模型强制开启思考则 SKIP + WARNING | P1  |
+| J5  | clear_thinking deployment 能力探测       | 探测服务端是否真实实现 clear_thinking（pt_false > pt_true），未生效时记录 WARNING      | 探测未生效时 SKIP 并记录 WARNING；J3 在此基础上做行为硬断言        | P1  |
 
 ---
 
@@ -286,7 +287,7 @@ H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 �
 
 总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 = 36 项。
 
-### P1（选测，52 项）
+### P1（选测，53 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
@@ -298,7 +299,7 @@ F2, F5-F8               稳定性 5 项
 G2, G5                  API 兼容 2 项
 H2, H3, H10, H11        Chat Completions API 质量评估 4 项
 I1-I12                  Completions API 质量评估 12 项
-J1, J2, J4              clear_thinking 参数行为 3 项
+J1, J2, J4, J5          clear_thinking 参数行为 4 项
 ```
 
 ### P2（低优，12 项）

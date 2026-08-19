@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 100 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 101 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -34,9 +34,9 @@
 | G. API 兼容性 | `g_api` | 8 | OpenAI 接口兼容 |
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
-| J. clear_thinking 参数行为 | `j_clear_thinking` | 4 | 多轮对话下历史思考的清除/保留行为、参数正交性 |
+| J. clear_thinking 参数行为 | `j_clear_thinking` | 5 | 多轮对话下历史思考的清除/保留、参数正交性、deployment 能力探测 |
 
-> 总计：100 个测试点（P0: 36 / P1: 52 / P2: 12）
+> 总计：101 个测试点（P0: 36 / P1: 53 / P2: 12）
 
 ---
 

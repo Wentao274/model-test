@@ -20,8 +20,9 @@ assistant 消息中的思考内容（open-think ... close-think 块或 reasoning
 |----|--------|---------|--------|
 | J1 | clear_thinking=true 多轮 | 显式清除历史 thinking，验证多轮请求成功且无泄漏 | P1 |
 | J2 | clear_thinking=false 多轮 | 显式保留历史 thinking，验证多轮请求成功 | P1 |
-| J3 | clear_thinking 对 prompt_tokens 的影响 | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异 | P2 |
+| J3 | clear_thinking 对 prompt_tokens 的影响 | 严格断言 pt_false > pt_true，未生效时 FAIL | P2 |
 | J4 | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受 | P1 |
+| J5 | clear_thinking deployment 能力探测 | 探测服务端是否真实实现 clear_thinking，未生效时 WARNING + record_warning | P1 |
 
 ## 运行方式
 
@@ -55,21 +56,48 @@ pytest tests/test_j_clear_thinking.py -m smoke -v
 （此时历史思考也被服务端保留并送入上下文）。
 
 ### test_clear_thinking_prompt_tokens_difference (J3)
-使用同一组多轮 messages，分别以 `clear_thinking=true` 和 `clear_thinking=false` 发送请求，
-对比两者的 `usage.prompt_tokens`：
-- 服务端正确实现 `clear_thinking` 时，`false`（保留历史思考）的 prompt_tokens 应 ≥ `true`
-- 服务端未返回 usage 字段或忽略 `clear_thinking` 时，发出 warning，断言改为软断言
-  （仅记录差异，不影响用例通过）
+使用同一组多轮 messages，分别以 `clear_thinking=true` 和 `clear_thinking=false` 发送请求
+（false 用 `only_strategy` 保证策略一致），对比两者的 `usage.prompt_tokens`。
 
-为保证对比可比，第二次请求强制使用与第一次相同的下发策略（`only_strategy` 参数），
-避免策略差异导致 prompt_tokens 偏差。
+**严格断言**：`pt_false` 必须严格大于 `pt_true`，相等即 FAIL。
+- 服务端正确实现 `clear_thinking` 时，`false`（保留历史思考）的 prompt_tokens 应严格大于 `true`
+- 服务端未返回 usage 字段时 SKIP（无法判定，不视为失败）
+- `pt_false == pt_true` 时 FAIL，强制回归保护——避免"参数被接受但未生效"的 deployment 静默通过
+
+J3 依赖 `_probe_clear_thinking_effect` 的探测结果。J3 是"行为验证"，未生效时 FAIL；
+J5 是"能力探测"，未生效时 WARNING。两者互补。
 
 ### test_clear_thinking_enable_combinations (J4)
 遍历四种 `(enable_thinking, clear_thinking)` 组合：
 - `(true, true)`、`(true, false)`、`(false, true)`、`(false, false)`
 
-验证所有组合均能被服务端接受并返回非空响应。这是 `clear_thinking` 与 `enable_thinking`
-正交独立的关键回归点——任意组合都不应导致服务端拒绝请求。
+判定规则：
+- **enable_thinking=True 的两种组合**：必须返回 HTTP 200 且响应非空。这是 `clear_thinking`
+  与 `enable_thinking` 正交独立的关键回归点。
+- **enable_thinking=False 的两种组合**：
+  - 若服务端尊重参数（响应无思考内容）：必须返回 HTTP 200 且响应非空
+  - 若模型强制开启思考（响应仍含 `reasoning_content` 或 think 标签）：SKIP 该组合并
+    `record_warning`，**不视为失败**——这是模型固有特性，不是参数处理 bug
+
+这样在强制开启思考的模型（如部分 deepseek/glm 部署）上，J4 不会因为 `enable_thinking=False`
+被忽略而误判失败，同时报告会明确标记该特性。
+
+强制开启思考的识别方式：`_response_has_thinking` 检查响应的 `reasoning` / `reasoning_content`
+字段非空，或 `content` 中含 `open-think` 标签。
+
+### test_clear_thinking_deployment_probe (J5)
+在做行为验证（J3）之前，先探测当前 deployment 是否真的实现了 `clear_thinking` 对历史
+thinking 的剥除/保留行为。这是 deployment 能力的"事实判定"用例：
+
+- **生效**（`pt_false > pt_true`）：记录 INFO，提示 J3 行为验证应能 PASS
+- **未生效**（`pt_true == pt_false`）：记录 WARNING 并调用 `record_warning`，
+  提示运维/算法团队该 deployment 仅"接受参数"但不"处理参数"，J3 将 FAIL
+- **探测失败**（请求异常 / 无 usage）：SKIP，不视为失败
+
+J5 与 J3 的关系：
+- J5 是"能力探测"——未生效时 WARNING（不 FAIL），让报告对 deployment 能力可见
+- J3 是"行为验证"——未生效时 FAIL，强制 deployment 必须真实实现 clear_thinking 才能通过回归
+- 两者互补：J5 帮助定位"为什么 J3 失败"，J3 强制回归标准
 
 ## enable_thinking 下发格式自动回退
 
@@ -128,7 +156,10 @@ HISTORY_ASSISTANT_CONTENT = (
   命中 `["126", "42 * 3"]`
 - **J3**：硬断言 `prompt_tokens(false) >= prompt_tokens(true)`；服务端未返回 usage 时
   仅 warning 不 fail
-- **J4**：硬断言四种组合全部返回 HTTP 200 且响应非空；日志输出每个组合的生效策略
+- **J3**：硬断言 `pt_false > pt_true`（严格大于，相等即 FAIL）；服务端未返回 usage 时 SKIP
+- **J4**：硬断言 `enable_thinking=True` 的两个组合返回 HTTP 200 且响应非空；
+  `enable_thinking=False` 的组合若检测到模型强制开启思考则 SKIP + WARNING（不视为失败）
+- **J5**：探测未生效时 WARNING + `record_warning`（不 FAIL）；探测失败时 SKIP
 
 ## 注意事项
 

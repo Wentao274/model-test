@@ -507,6 +507,14 @@ TEST_CATEGORIES = {
                 "clear_thinking_enable_combinations",
                 "P1",
             ),
+            (
+                "J5",
+                "clear_thinking deployment 能力探测",
+                "探测服务端是否真实实现 clear_thinking（pt_false > pt_true），"
+                "未生效时记录 WARNING 提示运维/算法团队",
+                "clear_thinking_deployment_probe",
+                "P1",
+            ),
         ],
     },
 }
