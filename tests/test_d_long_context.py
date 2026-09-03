@@ -169,6 +169,24 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         ]
         return any(kw in error_msg or kw in exc_name for kw in keywords)
 
+    @staticmethod
+    def _is_unknown_param_error(e) -> bool:
+        """判断异常是否因请求参数不被服务端识别（如 thinking_budget 不支持）
+
+        用于 thinking budget 降级重试：当服务端返回 unknown/unrecognized/
+        unexpected 参数错误或 400/422 时，视为该参数不支持，可去掉重试。
+        """
+        if e is None:
+            return False
+        error_msg = str(e).lower()
+        explicit_unknown = any(
+            kw in error_msg
+            for kw in ["unknown", "unrecognized", "unexpected", "not supported"]
+        )
+        http_bad_request = any(kw in error_msg for kw in ["400", "422"])
+        param_related = any(kw in error_msg for kw in ["thinking", "budget", "field", "argument", "parameter"])
+        return (explicit_unknown and param_related) or (http_bad_request and param_related)
+
     def _check_has_thinking(self, response: dict, test_logger) -> bool:
         """检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签）"""
         reasoning = self.get_reasoning_content(response)
@@ -536,9 +554,22 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             prompt = needle_text + "\n\n请问文章中的特殊标记是什么？"
 
             messages = [{"role": "user", "content": prompt}]
-            TestLogger.log_request(test_logger, messages, {"max_tokens": 2000})
+            thinking_budget = {"type": "enabled", "budget": 1000}
+            TestLogger.log_request(test_logger, messages, {"max_tokens": 8000, "thinking": thinking_budget})
 
-            response = api_client.chat_completion(messages, max_tokens=2000)
+            try:
+                response = api_client.chat_completion(
+                    messages, max_tokens=8000, thinking=thinking_budget
+                )
+            except Exception as e:
+                if self._is_unknown_param_error(e):
+                    test_logger.warning(
+                        f"[{scenario_name}] thinking budget not supported, "
+                        f"retrying without: {e}"
+                    )
+                    response = api_client.chat_completion(messages, max_tokens=8000)
+                else:
+                    raise
             TestLogger.log_response(test_logger, response, f"{scenario_name}响应")
             self.log_full_response(test_logger, response, f"D5-{scenario_name}")
 
@@ -781,11 +812,26 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 ),
             }
         ]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 16000})
+        thinking_budget = {"type": "enabled", "budget": 2000}
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 16000, "thinking": thinking_budget})
 
         try:
-            response_iter = api_client.chat_completion_stream(messages, max_tokens=16000)
-            result = self.collect_stream_chunks(response_iter)
+            try:
+                response_iter = api_client.chat_completion_stream(
+                    messages, max_tokens=16000, thinking=thinking_budget
+                )
+                result = self.collect_stream_chunks(response_iter)
+            except Exception as e:
+                if self._is_unknown_param_error(e):
+                    test_logger.warning(
+                        f"thinking budget not supported, retrying without: {e}"
+                    )
+                    response_iter = api_client.chat_completion_stream(
+                        messages, max_tokens=16000
+                    )
+                    result = self.collect_stream_chunks(response_iter)
+                else:
+                    raise
             self.log_full_response(
                 test_logger,
                 {
