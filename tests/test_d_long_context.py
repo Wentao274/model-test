@@ -774,18 +774,17 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             {
                 "role": "user",
                 "content": (
-                    "请写一篇关于人工智能发展史的详细文章，要求：\n"
-                    "1. 涵盖从1956年Dartmouth会议到2025年的完整发展脉络；\n"
-                    "2. 包括符号主义、连接主义、深度学习、大模型四个阶段；\n"
-                    "3. 每个阶段需列举代表性事件、关键人物和技术突破；\n"
-                    "4. 文章不少于4000字，结构清晰，分章节论述。"
+                    "请直接写一篇关于人工智能发展史的长文章，"
+                    "涵盖从1956年Dartmouth会议到2025年的发展脉络，"
+                    "包括符号主义、连接主义、深度学习、大模型等阶段。"
+                    "文章结构清晰，内容详实，不少于4000字。"
                 ),
             }
         ]
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 8000})
+        TestLogger.log_request(test_logger, messages, {"max_tokens": 16000})
 
         try:
-            response_iter = api_client.chat_completion_stream(messages, max_tokens=8000)
+            response_iter = api_client.chat_completion_stream(messages, max_tokens=16000)
             result = self.collect_stream_chunks(response_iter)
             self.log_full_response(
                 test_logger,
