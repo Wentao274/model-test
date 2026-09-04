@@ -33,7 +33,7 @@
 | F. 稳定性与边界 | `f_stability` | 8 | 异常输入、OOM 恢复 |
 | G. API 兼容性 | `g_api` | 8 | OpenAI 接口兼容 |
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
-| I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
+| I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测（**已默认禁用**） |
 | J. clear_thinking 参数行为 | `j_clear_thinking` | 5 | 多轮对话下历史思考的清除/保留、参数正交性、deployment 能力探测 |
 
 > 总计：101 个测试点（P0: 36 / P1: 53 / P2: 12）
@@ -229,7 +229,7 @@ pytest -m d_long_context -v                 # 长上下文处理
 pytest -m f_stability -v                    # 稳定性与边界
 pytest -m g_api -v                          # API 兼容性
 pytest -m h_quality_chat_completions -v     # Chat Completions API 质量评估
-pytest -m i_quality_completions -v          # Completions API 质量评估
+pytest -m i_quality_completions -v          # Completions API 质量评估（已禁用）
 pytest -m j_clear_thinking -v               # clear_thinking 参数行为
 pytest -m p0 -v                             # P0 优先级测试
 pytest -m p1 -v                             # P1 优先级测试
@@ -238,7 +238,7 @@ pytest -m smoke -v                          # 冒烟测试（核心功能快速�
 pytest -m slow -v                           # 慢速测试
 ```
 
-> E 类（`e_performance`）测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
+> E 类（`e_performance`）和 I 类（`i_quality_completions`）测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
 
 ### 参数说明
 
@@ -340,7 +340,8 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `BASE_URL` | string | `http://10.201.149.10:8080` | API 地址（必填，**无需带 `/v1`**） |
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
-| `MARKER` | choice | `all` | 测试标记，见下表 |
+| `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
+| `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_j（跳过 test_e、test_i）下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |
 | `RECIPIENTS` | text | `liwt@zetyun.com` | 测试报告邮件接收者（逗号分隔） |
 | `WORK_DIR` | string | `/dingofs/data2/.../model-test` | 远程测试仓库目录（请勿改动） |
@@ -361,7 +362,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 |------|------|
 | 1. 打印测试参数 | 输出本次构建的所有参数信息 |
 | 2. 环境检查 | SSH 到远程主机，`git pull` 同步代码；不存在则 `uv venv` 创建虚拟环境；`uv pip install -r requirements.txt` 安装依赖 |
-| 3. 运行测试 | 执行 pytest，根据 `THINKING_MODE` 选择 `--thinking-mode` / `--no-thinking-mode`，根据 `MARKER` 决定是否加 `-m`；输出 Allure 数据与 Markdown 汇总到构建产物目录。该阶段失败仅将 stage 标记为 FAILURE，构建结果置为 UNSTABLE，不中断后续报告阶段 |
+| 3. 运行测试 | 执行 pytest：若 `SPECIFIC_TEST` 不为 `none` 则仅运行该指定用例（忽略 `MARKER`）；否则按 `MARKER` 运行（`all` 不加 `-m`，其他加 `-m <marker>`）。根据 `THINKING_MODE` 选择 `--thinking-mode` / `--no-thinking-mode`。输出 Allure 数据与 Markdown 汇总到构建产物目录。该阶段失败仅将 stage 标记为 FAILURE，构建结果置为 UNSTABLE，不中断后续报告阶段 |
 | 4. 生成 Allure 报告 | 远程调用 `allure generate` 生成 HTML 报告 |
 | 5. 拉取报告到 Jenkins | 将 Markdown 报告、`allure-results`、`allure-html` 通过 `scp` + `tar` 拉取到 Jenkins 的 `reports/${BUILD_NUMBER}/` |
 | 6. 发送邮件 | 解析 Markdown 报告，提取统计汇总/分类统计/测试结论，渲染为 HTML 邮件发送；附件为完整 Markdown 报告 |
@@ -396,7 +397,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 邮件正文包含：
 
-1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/思考模式、执行时间、构建状态
+1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式、执行时间、构建状态
 2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
 3. **分类统计** — 按 9 大分类的通过率统计
 4. **测试结论** — 按用例优先级（P0/P1/P2）自动判定（详见[测试结论判定](#测试结论判定)）
@@ -482,7 +483,7 @@ model-test/
 ├── Jenkinsfile           # Jenkins 流水线定义
 ├── checkpoints.md        # 测试点设计文档
 ├── base/                 # 基础模块（API 客户端、日志、报告生成、测试定义）
-├── tests/                # 测试用例（test_a_ ~ test_i_）
+├── tests/                # 测试用例（test_a_ ~ test_j_）
 ├── fixtures/             # 测试 fixtures（图片/视频/代码/工具）
 ├── scripts/              # 工具脚本（install_allure.sh、quick_report.py、generate_report.py）
 ├── docs/                 # 详细文档
@@ -518,6 +519,6 @@ model-test/
 2. `--base-url` 无需带 `/v1` 后缀，框架会自动拼接；若误带也会自动去除。
 3. 芯片名称自动转小写（如 `NVIDIA-H100` → `nvidia-h100`）。
 4. `thinking_mode` 不指定时使用 `config.yaml` 中的模型配置；命令行 `--thinking-mode` / `--no-thinking-mode` 优先级最高。
-5. E 类性能测试已默认禁用（`conftest.py` 中自动 skip）。
+5. E 类性能测试和 I 类 Completions 质量测试已默认禁用（`conftest.py` 中自动 skip）。
 6. Jenkins 构建中"运行测试"阶段失败不会中断流水线，后续报告生成与邮件发送仍会执行（构建结果置为 UNSTABLE）。
 7. Jenkins 远程构建保留最近 20 次产物，更早的自动清理。

@@ -12,7 +12,86 @@ pipeline {
         string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080', description: 'API 地址（必填）')
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
-        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型')
+        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型（当SPECIFIC_TEST不为none时此项被忽略）')
+        choice(name: 'SPECIFIC_TEST', choices: [
+            'none',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_single_turn_conversation',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_multi_turn_conversation',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_system_prompt',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_streaming_output',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_non_streaming_output',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_temperature_control',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_top_p_top_k_sampling',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_max_tokens_limit',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_stop_sequences',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_seed_reproducibility',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_multilingual_capability',
+            'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_special_tokens_handling',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_thinking_mode',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_non_thinking_mode',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_thinking_mode_switch',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_single_tool_call',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_multiple_tool_call',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_parallel_tool_calls',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_multi_step_tool_chain',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_json_mode',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_structured_output',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_prefix_suffix_constraint',
+            'tests/test_c_multimodal.py::TestMultimodal::test_single_image_understanding',
+            'tests/test_c_multimodal.py::TestMultimodal::test_multi_image_comparison',
+            'tests/test_c_multimodal.py::TestMultimodal::test_high_resolution_image',
+            'tests/test_c_multimodal.py::TestMultimodal::test_chart_ocr',
+            'tests/test_c_multimodal.py::TestMultimodal::test_video_understanding',
+            'tests/test_c_multimodal.py::TestMultimodal::test_screenshot_to_code',
+            'tests/test_c_multimodal.py::TestMultimodal::test_multimodal_tool_call',
+            'tests/test_c_multimodal.py::TestMultimodal::test_image_format_compatibility',
+            'tests/test_d_long_context.py::TestLongContext::test_short_context_baseline',
+            'tests/test_d_long_context.py::TestLongContext::test_medium_context',
+            'tests/test_d_long_context.py::TestLongContext::test_long_context',
+            'tests/test_d_long_context.py::TestLongContext::test_super_long_context',
+            'tests/test_d_long_context.py::TestLongContext::test_niah_needle_in_a_haystack',
+            'tests/test_d_long_context.py::TestLongContext::test_context_boundary_behavior',
+            'tests/test_d_long_context.py::TestLongContext::test_context_truncation',
+            'tests/test_d_long_context.py::TestLongContext::test_long_output_generation',
+            'tests/test_d_long_context.py::TestLongContext::test_super_long_context_create',
+            'tests/test_d_long_context.py::TestLongContext::test_super_long_context_stream',
+            'tests/test_d_long_context.py::TestLongContext::test_context_boundary_exact_limit',
+            'tests/test_d_long_context.py::TestLongContext::test_reasoning_content_in_long_context',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_empty_input',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_oversized_input',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_invalid_parameters',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_special_character_injection',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_concurrent_stability',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_oom_recovery',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_long_running_service',
+            'tests/test_f_stability.py::TestStabilityAndBoundary::test_request_timeout_handling',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_chat_completions_api',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_completions_api',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_models_list',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_usage_statistics',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_error_codes',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_client_sdk_compatibility',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_response_format_variants',
+            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_stream_parameter',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_consistency',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_hallucination_detection',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_instruction_following',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_programming',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_math',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_science',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_garbled_text_detection',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_nonsensical_response_detection',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_cross_domain_relevance',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_conversation_context_consistency',
+            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_specificity_check',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_true_multi_turn',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_false_multi_turn',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_prompt_tokens_difference',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_enable_combinations',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_deployment_probe'
+        ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
         string(name: 'WORK_DIR', defaultValue: '/dingofs/data2/userdata/liwt/maas-image/model-test', description: '测试仓库目录，请不要改动')
@@ -40,6 +119,7 @@ pipeline {
                     println("BASE_URL:     ${params.BASE_URL}")
                     println("思考模式:     ${params.THINKING_MODE}")
                     println("测试标记:     ${params.MARKER}")
+                    println("指定用例:     ${params.SPECIFIC_TEST}")
                     println("模型描述:     ${params.DESCRIPTION}")
                     println("邮件接收者:   ${params.RECIPIENTS}")
                     println("工作目录:     ${params.WORK_DIR}")
@@ -87,6 +167,7 @@ ENDSSH"""
             steps {
                 script {
                     def apiKey = params.API_KEY ? params.API_KEY.toString().trim() : ''
+                    def thinkingFlag = params.THINKING_MODE ? '--thinking-mode' : '--no-thinking-mode'
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """
@@ -99,62 +180,44 @@ mkdir -p ${BUILD_OUTPUT_DIR}
 # 清理上一次可能残留的连通性检查失败标记
 rm -f ${BUILD_OUTPUT_DIR}/.connectivity_check_failed
 
-if [ "${params.THINKING_MODE}" = "true" ]; then
-    if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
-        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
-        pytest -v \\
-            --base-url "${params.BASE_URL}" \\
-            --api-key "${apiKey}" \\
-            --model-name "${params.MODEL}" \\
-            --chip "${params.CHIP}" \\
-            --engine "${params.ENGINE}" \\
-            --pd-mode "${params.PD}" \\
-            --tester "${params.TESTER}" \\
-            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
-            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-            --thinking-mode
-    else
-        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
-        pytest -v -m "${params.MARKER}" \\
-            --base-url "${params.BASE_URL}" \\
-            --api-key "${apiKey}" \\
-            --model-name "${params.MODEL}" \\
-            --chip "${params.CHIP}" \\
-            --engine "${params.ENGINE}" \\
-            --pd-mode "${params.PD}" \\
-            --tester "${params.TESTER}" \\
-            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
-            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-            --thinking-mode
-    fi
+export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
+
+if [ -n "${params.SPECIFIC_TEST}" ] && [ "${params.SPECIFIC_TEST}" != "none" ]; then
+    pytest -v "${params.SPECIFIC_TEST}" \\
+        --base-url "${params.BASE_URL}" \\
+        --api-key "${apiKey}" \\
+        --model-name "${params.MODEL}" \\
+        --chip "${params.CHIP}" \\
+        --engine "${params.ENGINE}" \\
+        --pd-mode "${params.PD}" \\
+        --tester "${params.TESTER}" \\
+        --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
+        --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
+        ${thinkingFlag}
+elif [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
+    pytest -v \\
+        --base-url "${params.BASE_URL}" \\
+        --api-key "${apiKey}" \\
+        --model-name "${params.MODEL}" \\
+        --chip "${params.CHIP}" \\
+        --engine "${params.ENGINE}" \\
+        --pd-mode "${params.PD}" \\
+        --tester "${params.TESTER}" \\
+        --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
+        --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
+        ${thinkingFlag}
 else
-    if [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
-        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
-        pytest -v \\
-            --base-url "${params.BASE_URL}" \\
-            --api-key "${apiKey}" \\
-            --model-name "${params.MODEL}" \\
-            --chip "${params.CHIP}" \\
-            --engine "${params.ENGINE}" \\
-            --pd-mode "${params.PD}" \\
-            --tester "${params.TESTER}" \\
-            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
-            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-            --no-thinking-mode
-    else
-        export CONNECTIVITY_FAILED_FLAG="${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
-        pytest -v -m "${params.MARKER}" \\
-            --base-url "${params.BASE_URL}" \\
-            --api-key "${apiKey}" \\
-            --model-name "${params.MODEL}" \\
-            --chip "${params.CHIP}" \\
-            --engine "${params.ENGINE}" \\
-            --pd-mode "${params.PD}" \\
-            --tester "${params.TESTER}" \\
-            --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
-            --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-            --no-thinking-mode
-    fi
+    pytest -v -m "${params.MARKER}" \\
+        --base-url "${params.BASE_URL}" \\
+        --api-key "${apiKey}" \\
+        --model-name "${params.MODEL}" \\
+        --chip "${params.CHIP}" \\
+        --engine "${params.ENGINE}" \\
+        --pd-mode "${params.PD}" \\
+        --tester "${params.TESTER}" \\
+        --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
+        --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
+        ${thinkingFlag}
 fi
 ENDSSH"""
                         }
@@ -365,6 +428,7 @@ fi
                 <tr><th>API 地址</th><td>${params.BASE_URL}</td></tr>
                 <tr><th>PD模式</th><td>${params.PD}</td></tr>
                 <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
+                <tr><th>指定用例</th><td>${params.SPECIFIC_TEST}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>

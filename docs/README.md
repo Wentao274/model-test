@@ -17,6 +17,8 @@
 | [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
 | [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 5 |
 
+> **注意**：E 类和 I 类测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
+
 ## 报告文档
 
 | 文档 | 说明 |
@@ -34,11 +36,11 @@ pytest -m a_basic -v        # 基础推理能力
 pytest -m b_advanced -v     # 高级生成功能
 pytest -m c_multimodal -v   # 多模态能力
 pytest -m d_long_context -v # 长上下文处理
-pytest -m e_performance -v  # 性能指标
+pytest -m e_performance -v  # 性能指标（已禁用）
 pytest -m f_stability -v    # 稳定性与边界
 pytest -m g_api -v          # API兼容性
 pytest -m h_quality_chat_completions -v  # Chat Completions API 质量评估
-pytest -m i_quality_completions -v  # Completions API 质量评估
+pytest -m i_quality_completions -v  # Completions API 质量评估（已禁用）
 pytest -m j_clear_thinking -v       # clear_thinking 参数行为
 
 # 按优先级运行

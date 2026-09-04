@@ -22,6 +22,8 @@
 
 ## 运行方式
 
+> **注意**：E 类测试已在 `conftest.py` 的 `pytest_collection_modifyitems` 中自动标记为 skip（原因：E类性能测试已禁用），即使通过以下命令运行也会全部跳过。如需临时启用，请在 `conftest.py` 中移除对应的 `pytest.mark.skip` 标记。
+
 ```bash
 # 运行所有性能测试
 pytest tests/test_e_performance.py -v

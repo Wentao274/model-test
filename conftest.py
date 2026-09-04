@@ -478,6 +478,9 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.g_api)
         elif "test_h_" in item.nodeid:
             item.add_marker(pytest.mark.h_quality_chat_completions)
+        elif "test_i_" in item.nodeid:
+            item.add_marker(pytest.mark.i_quality_completions)
+            item.add_marker(pytest.mark.skip(reason="I类Completions质量测试已禁用"))
 
 
 def pytest_configure(config):

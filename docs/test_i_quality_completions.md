@@ -23,6 +23,8 @@
 
 ## 运行方式
 
+> **注意**：I 类测试已在 `conftest.py` 的 `pytest_collection_modifyitems` 中自动标记为 skip（原因：I类Completions质量测试已禁用），即使通过以下命令运行也会全部跳过。如需临时启用，请在 `conftest.py` 中移除对应的 `pytest.mark.skip` 标记。
+
 ```bash
 # 运行所有 Completions API 质量评估测试
 pytest tests/test_i_quality_completions.py -v
