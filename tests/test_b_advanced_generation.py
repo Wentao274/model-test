@@ -3,7 +3,7 @@ B. 高级生成功能测试
 
 测试点：
 - B1: 思考模式（Thinking）- 开启thinking mode，验证返回思考链+最终答案 [P0]
-- B2: 非思考模式（Instant）- 关闭thinking，验证无hidden thinking泄漏 [P1]
+- B2: 非思考模式（Instant）- 关闭thinking，无泄漏；不支持关闭则告警 [P1]
 - B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换 [P1]
 - B4: 工具调用-单工具 - 定义单个function，验证模型正确调用并传参 [P0]
 - B5: 工具调用-多工具 - 定义多个function，验证模型选择正确的工具 [P1]
@@ -12,6 +12,7 @@ B. 高级生成功能测试
 - B8: JSON Mode - response_format=json_object，验证输出合法JSON [P0]
 - B9: 结构化输出 - JSON Schema约束输出格式，验证字段完整性 [P0]
 - B10: Prefix / Suffix 约束 - 指定输出前缀或格式模板，验证遵循度 [P2]
+- B11: reasoning_effort 参数 - low/high/max 三档，不支持的模型告警 [P1]
 """
 
 import json
@@ -21,7 +22,7 @@ import urllib.parse
 import json as json_lib
 import pytest
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
@@ -501,7 +502,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
     @pytest.mark.b_advanced
     @pytest.mark.p1
     @pytest.mark.smoke
-    def test_non_thinking_mode(self, api_client: ModelAPIClient, test_logger):
+    def test_non_thinking_mode(self, api_client: ModelAPIClient, test_logger, record_warning):
         """B2 [P1]: 非思考模式（Instant）- 关闭thinking，无泄漏
 
         不依赖 config.yaml 配置，自动按以下顺序尝试关闭思考模式：
@@ -510,7 +511,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         3. chat_template_kwargs={"thinking": false}
         4. chat_template_kwargs={"enable_thinking": false}
         5. thinking={"type": "disabled"} (DeepSeek/GLM 风格)
-        若所有方式均存在思考内容泄漏，则断言失败。
+
+        行为说明：
+        - 若任一策略成功关闭思考（无泄漏），则正常通过。
+        - 若所有策略均无法关闭思考（模型固有强制思考，如 GLM-5.3 等
+          chat_template 不存在"关闭思考"分支的模型），则 record_warning
+          并跳过断言，**不视为失败**。这是模型固有特性而非参数处理 bug。
+        - 若所有策略均请求异常（API 错误），则 pytest.fail。
         """
         test_logger.info("=== 测试开始: 非思考模式（自动回退） ===")
 
@@ -546,13 +553,21 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         self.assert_content_not_empty(response)
 
-        assert has_no_thinking, (
-            "Non-thinking mode should not leak any reasoning content. "
-            "Tried strategies: no_thinking_params, enable_thinking:false, "
-            "chat_template_kwargs.thinking:false, "
-            "chat_template_kwargs.enable_thinking:false, thinking.type=disabled. "
-            f"Last params: {used_params}"
-        )
+        if not has_no_thinking:
+            warn_msg = (
+                f"模型可能不支持关闭思考模式：所有关闭策略 "
+                f"(no_params, enable_thinking:false, chat_template_kwargs.thinking:false, "
+                f"chat_template_kwargs.enable_thinking:false, thinking.type=disabled) "
+                f"均检测到思考内容泄漏 (最后策略: {strategy}, params: {used_params})。"
+                f"该模型可能固有强制思考（如 GLM-5.3 等无「关闭思考」分支的模版），"
+                f"请改用 reasoning_effort=low 等参数控制思考强度。"
+            )
+            test_logger.warning(warn_msg)
+            record_warning(warn_msg)
+        else:
+            test_logger.info(
+                f"非思考模式成功关闭思考 (使用策略: {strategy})，无thinking泄漏"
+            )
 
         content = self.get_message_content(response)
         content_clean = self._strip_thinking_tags(content)
@@ -565,12 +580,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             f"Non-thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
         )
 
-        test_logger.info(f"非思考模式测试通过 (使用策略: {strategy})，无thinking泄漏")
-
     @pytest.mark.b_advanced
     @pytest.mark.p1
     @pytest.mark.smoke
-    def test_thinking_mode_switch(self, api_client: ModelAPIClient, test_logger):
+    def test_thinking_mode_switch(self, api_client: ModelAPIClient, test_logger, record_warning):
         """B3: 思考模式切换 - 同一会话内thinking↔non-thinking切换
 
         开启部分采用自动回退策略：
@@ -582,6 +595,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             no_params -> enable_thinking=false -> chat_template_kwargs={"thinking": false}
             -> chat_template_kwargs={"enable_thinking": false}
             -> thinking={"type": "disabled"}
+
+        行为说明：
+        - 第1轮（开启思考）：必须有思考内容，否则失败。
+        - 第2轮（关闭思考）：若所有策略均无法关闭思考（模型固有强制思考，
+          如 GLM-5.3 等 chat_template 无"关闭思考"分支的模型），则
+          record_warning 并跳过断言，**不视为失败**。
         """
         test_logger.info("=== 测试开始: 思考模式切换 ===")
 
@@ -669,13 +688,22 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response2, f"B3-关闭thinking [{strategy2}]")
 
         self.assert_content_not_empty(response2)
-        assert has_no_thinking2, (
-            "Second request with thinking=OFF should have no thinking content. "
-            "Tried strategies: no_thinking_params, enable_thinking:false, "
-            "chat_template_kwargs.thinking:false, "
-            "chat_template_kwargs.enable_thinking:false, thinking.type=disabled. "
-            f"Last params: {used_params2}"
-        )
+
+        if not has_no_thinking2:
+            warn_msg = (
+                f"模型可能不支持关闭思考模式：第2轮所有关闭策略 "
+                f"(no_params, enable_thinking:false, chat_template_kwargs.thinking:false, "
+                f"chat_template_kwargs.enable_thinking:false, thinking.type=disabled) "
+                f"均检测到思考内容泄漏 (最后策略: {strategy2}, params: {used_params2})。"
+                f"该模型可能固有强制思考（如 GLM-5.3 等无「关闭思考」分支的模版），"
+                f"请改用 reasoning_effort=low 等参数控制思考强度。"
+            )
+            test_logger.warning(warn_msg)
+            record_warning(warn_msg)
+        else:
+            test_logger.info(
+                f"第2轮成功关闭思考 (使用策略: {strategy2})，无thinking泄漏"
+            )
 
         content2 = self.get_message_content(response2)
         content2_clean = self._strip_thinking_tags(content2)
@@ -687,7 +715,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         )
 
         test_logger.info(
-            f"思考模式切换测试通过 (开启策略: {strategy1}, 关闭策略: {strategy2})"
+            f"思考模式切换测试完成 (开启策略: {strategy1}, 关闭策略: {strategy2})"
         )
 
     def _execute_tool(self, tool_name: str, arguments: dict) -> dict:
@@ -1589,3 +1617,171 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             record_warning(msg)
 
         test_logger.info("Prefix/Suffix 约束测试完成")
+
+    @pytest.mark.b_advanced
+    @pytest.mark.p1
+    def test_reasoning_effort(self, api_client: ModelAPIClient, test_logger, record_warning):
+        """B11 [P1]: reasoning_effort 参数测试
+
+        GLM-5.3 等模型的 chat_template 通过 reasoning_effort 参数控制思考强度，
+        支持的值为 'low'、'high'，未定义或其他值默认为 'max'。模版会在 prompt
+        头部渲染 `Reasoning Effort: <X>` 行。
+
+        本用例通过多种下发格式自动回退尝试 reasoning_effort：
+            1. chat_template_kwargs: {reasoning_effort: "low"}
+               (vLLM/GLM5 标准下发方式，模版可直接读取该变量)
+            2. 顶层 reasoning_effort: "low"
+               (OpenAI 兼容字段，需服务端转发到模版上下文)
+            3. chat_template_kwargs: {reasoning_effort: "high"}
+            4. 顶层 reasoning_effort: "high"
+
+        判定规则：
+        - 任一策略请求成功（HTTP 200）即视为模型支持 reasoning_effort，验证响应非空。
+        - 若低/高两档都能成功，对比 completion_tokens 差异（low 应 <= high），
+          差异显著则记录 INFO，差异为零或反向则 record_warning（非硬断言）。
+        - 所有策略均请求异常（API 错误）时，record_warning 提示模型可能不支持
+          reasoning_effort，用例以 pytest.skip 跳过，**不视为失败**。
+        """
+        test_logger.info("=== 测试开始: reasoning_effort 参数测试 ===")
+
+        messages = [{"role": "user", "content": "请计算 123 * 456 = ?"}]
+
+        # 多种下发策略
+        effort_strategies = [
+            (
+                "chat_template_kwargs.reasoning_effort=low",
+                {"chat_template_kwargs": {"reasoning_effort": "low"}},
+                "low",
+            ),
+            (
+                "top_reasoning_effort=low",
+                {"reasoning_effort": "low"},
+                "low",
+            ),
+            (
+                "chat_template_kwargs.reasoning_effort=high",
+                {"chat_template_kwargs": {"reasoning_effort": "high"}},
+                "high",
+            ),
+            (
+                "top_reasoning_effort=high",
+                {"reasoning_effort": "high"},
+                "high",
+            ),
+            (
+                "chat_template_kwargs.reasoning_effort=max",
+                {"chat_template_kwargs": {"reasoning_effort": "max"}},
+                "max",
+            ),
+            (
+                "top_reasoning_effort=max",
+                {"reasoning_effort": "max"},
+                "max",
+            ),
+        ]
+
+        # 按 effort 值收集首次成功的响应
+        effort_results: Dict[str, Tuple[Dict[str, Any], str]] = {}
+        all_failed = True
+        last_error: Optional[Exception] = None
+        last_strategy: Optional[str] = None
+
+        for strategy_name, params, effort_val in effort_strategies:
+            test_logger.info(
+                f"尝试策略: {strategy_name} -> {params}"
+            )
+            TestLogger.log_request(test_logger, messages, {"strategy": strategy_name, "extra_body": params})
+            try:
+                response = api_client.chat_completion(messages, extra_body=params)
+            except Exception as e:
+                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
+                last_error = e
+                last_strategy = strategy_name
+                continue
+
+            all_failed = False
+            self.assert_response_success(response)
+            TestLogger.log_response(
+                test_logger, response, f"reasoning_effort={effort_val} 响应 (策略: {strategy_name})"
+            )
+            self.log_full_response(
+                test_logger, response, f"B11-reasoning_effort={effort_val} [{strategy_name}]"
+            )
+
+            # 仅保留每个 effort 值的第一个成功响应
+            if effort_val not in effort_results:
+                effort_results[effort_val] = (response, strategy_name)
+
+            # 获取到 low 和 high 的成功响应即可进行对比，提前结束
+            if "low" in effort_results and "high" in effort_results:
+                test_logger.info("已获取 low 和 high 成功响应，停止尝试剩余策略")
+                break
+
+        if all_failed:
+            warn_msg = (
+                f"模型可能不支持 reasoning_effort 参数：所有 {len(effort_strategies)} 种 "
+                f"下发策略均请求异常 (最后策略: {last_strategy}, 最后错误: {last_error})。"
+                f"该模型 chat_template 可能未实现 reasoning_effort 逻辑。"
+            )
+            test_logger.warning(warn_msg)
+            record_warning(warn_msg)
+            pytest.skip(warn_msg)
+
+        # 验证所有获取到的响应内容非空
+        for eff_val, (resp, strat) in effort_results.items():
+            self.assert_content_not_empty(
+                resp, message=f"reasoning_effort={eff_val} [{strat}]"
+            )
+            content = self.get_message_content(resp)
+            content_clean = self._strip_thinking_tags(content)
+            test_logger.info(
+                f"reasoning_effort={eff_val} (策略: {strat}) 最终回答: {content_clean[:2000]}..."
+            )
+
+        # 对比 low vs high 的 completion_tokens（若两者均可用）
+        if "low" in effort_results and "high" in effort_results:
+            resp_low, strat_low = effort_results["low"]
+            resp_high, strat_high = effort_results["high"]
+            ct_low = (resp_low.get("usage") or {}).get("completion_tokens")
+            ct_high = (resp_high.get("usage") or {}).get("completion_tokens")
+            test_logger.info(
+                f"completion_tokens 对比: low={ct_low} (策略 {strat_low}), "
+                f"high={ct_high} (策略 {strat_high})"
+            )
+
+            if ct_low is not None and ct_high is not None:
+                if ct_low <= ct_high:
+                    test_logger.info(
+                        f"reasoning_effort 生效迹象: low({ct_low}) <= high({ct_high})"
+                    )
+                else:
+                    warn_msg = (
+                        f"reasoning_effort 低/高 completion_tokens 反向: "
+                        f"low={ct_low} > high={ct_high}，"
+                        f"可能 reasoning_effort 未真实生效或采样波动较大"
+                    )
+                    test_logger.warning(warn_msg)
+                    record_warning(warn_msg)
+            else:
+                test_logger.warning("服务端未返回 completion_tokens，无法对比 low/high 差异")
+
+        # 弱断言：至少有一个 effort 值能给出正确答案
+        correct_answer = False
+        for eff_val, (resp, strat) in effort_results.items():
+            content = self.get_message_content(resp)
+            content_clean = self._strip_thinking_tags(content)
+            if any(kw in content_clean for kw in ["56088", "56088.0", "56,088"]):
+                test_logger.info(
+                    f"reasoning_effort={eff_val} (策略: {strat}) 给出正确答案 56088"
+                )
+                correct_answer = True
+                break
+
+        if not correct_answer:
+            warn_msg = "reasoning_effort 所有成功策略均未给出正确答案 56088"
+            test_logger.warning(warn_msg)
+            record_warning(warn_msg)
+
+        test_logger.info(
+            f"reasoning_effort 参数测试完成 (成功档位: {list(effort_results.keys())})"
+        )

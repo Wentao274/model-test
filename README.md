@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 101 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 105 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -26,7 +26,7 @@
 | 分类 | Marker | 测试点数 | 说明 |
 |------|--------|---------|------|
 | A. 基础推理能力 | `a_basic` | 12 | 单轮/多轮对话、流式输出、参数控制 |
-| B. 高级生成功能 | `b_advanced` | 10 | 思考模式、工具调用、JSON Mode |
+| B. 高级生成功能 | `b_advanced` | 11 | 思考模式、工具调用、JSON Mode、reasoning_effort |
 | C. 多模态能力 | `c_multimodal` | 8 | 图片/视频理解、OCR |
 | D. 长上下文处理 | `d_long_context` | 12 | 长文本、大海捞针、超长上下文验证 |
 | E. 性能指标 | `e_performance` | 12 | 延迟、吞吐、并发（**已默认禁用**） |
@@ -34,9 +34,9 @@
 | G. API 兼容性 | `g_api` | 8 | OpenAI 接口兼容 |
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测（**已默认禁用**） |
-| J. clear_thinking 参数行为 | `j_clear_thinking` | 5 | 多轮对话下历史思考的清除/保留、参数正交性、deployment 能力探测 |
+| J. clear_thinking 参数行为 | `j_clear_thinking` | 8 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界 |
 
-> 总计：101 个测试点（P0: 36 / P1: 53 / P2: 12）
+> 总计：105 个测试点（P0: 36 / P1: 56 / P2: 13）
 
 ---
 
@@ -426,7 +426,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | P1 | 重要 | 推荐指标，失败建议修复 |
 | P2 | 一般 | 增强指标，失败可酌情接受 |
 
-每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 96 项）：P0 = 36，P1 = 49，P2 = 11。
+每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 105 项）：P0 = 36，P1 = 56，P2 = 13。
 
 ### 判定规则
 

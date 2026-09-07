@@ -37,6 +37,7 @@ pipeline {
             'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_json_mode',
             'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_structured_output',
             'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_prefix_suffix_constraint',
+            'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_reasoning_effort',
             'tests/test_c_multimodal.py::TestMultimodal::test_single_image_understanding',
             'tests/test_c_multimodal.py::TestMultimodal::test_multi_image_comparison',
             'tests/test_c_multimodal.py::TestMultimodal::test_high_resolution_image',
@@ -90,7 +91,10 @@ pipeline {
             'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_false_multi_turn',
             'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_prompt_tokens_difference',
             'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_enable_combinations',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_deployment_probe'
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_deployment_probe',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_reasoning_field',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_with_reasoning_effort',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_multi_assistant_boundary'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

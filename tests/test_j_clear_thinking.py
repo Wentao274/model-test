@@ -11,11 +11,22 @@ clear_thinking 仅在多轮对话场景下有意义：控制历史 assistant 消
 - J2: clear_thinking=false 多轮 - 显式保留历史 thinking，验证多轮请求成功 [P1]
 - J3: clear_thinking 对 prompt_tokens 的影响 - 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异 [P2]
 - J4: clear_thinking 与 enable_thinking 组合 - 四种组合均可被服务端接受 [P1]
+- J5: clear_thinking deployment 能力探测 - 探测服务端是否真实实现 clear_thinking [P1]
+- J6: clear_thinking 对 reasoning_content 独立字段的处理 - 验证 assistant 消息
+  以 reasoning_content 字段承载思考内容时 clear_thinking 的剥除/保留行为 [P1]
+- J7: clear_thinking 与 reasoning_effort 组合 - GLM-5.3 等模型的核心参数组合 [P1]
+- J8: 多 assistant 边界测试 - 多条历史 assistant 消息下 last_user_index 边界条件 [P2]
 
 说明：
-- 历史 assistant 消息以 content 直接携带监狱 ... 块的方式构造，这是
-  vLLM Qwen3/GLM5 等 chat_template 在服务端渲染时实际处理的对象，与服务端
+- 历史 assistant 消息以 content 直接携带 open-think ... close-think 块的方式构造，
+  这是 vLLM Qwen3/GLM5 等 chat_template 在服务端渲染时实际处理的对象，与服务端
   chat_template 的 clear_thinking 分支正面对应。
+- J6 额外验证 reasoning_content 作为独立字段（而非 content 内嵌标签）的场景，
+  覆盖 GLM-5.3 模版 L137-138 的 `m.reasoning_content is string` 分支。
+- J7 验证 clear_thinking 与 reasoning_effort 的组合，覆盖 GLM-5.3 模版同时使用
+  两个核心参数的场景。
+- J8 验证多条 assistant 消息下 clear_thinking 对 last_user_index 之前/之后消息的
+  差异化处理（模版 L143: `loop.index0 > ns.last_user_index`）。
 - enable_thinking 通过多种下发格式自动回退（chat_template_kwargs.enable_thinking /
   chat_template_kwargs.thinking / 顶层 enable_thinking / thinking.type），任一成功
   即视为服务端支持，避免对单一 deployment 形态过度耦合。
@@ -614,3 +625,494 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             )
             test_logger.warning(warning_msg)
             record_warning(warning_msg)
+
+    # ------------------------------------------------------------------
+    # J6: clear_thinking 对 reasoning_content 独立字段的处理
+    # ------------------------------------------------------------------
+
+    # 历史 assistant 的思考内容，以 reasoning_content 独立字段方式承载（而非
+    # content 内嵌 open-think/close-think 块）。GLM-5.3 模版 L137-138 优先
+    # 读取 m.reasoning_content 字段，此场景覆盖该分支。
+    HISTORY_REASONING_CONTENT = (
+        "让我一步一步计算 7 乘以 6：\n"
+        "首先，7 乘以 6 可以分解为 7 + 7 + 7 + 7 + 7 + 7，\n"
+        "一共 6 个 7 相加，结果是 42。\n"
+        "我再换一种方式验证：6 乘以 7 等于 6 + 6 + 6 + 6 + 6 + 6 + 6，\n"
+        "一共 7 个 6 相加，结果也是 42。\n"
+        "因此答案确定为 42，可以作为后续推理的依据。"
+    )
+
+    def _build_multi_turn_messages_with_reasoning_field(
+        self, reasoning_content: str = None
+    ) -> List[Dict[str, Any]]:
+        """构造含 reasoning_content 独立字段的多轮 messages。
+
+        与 _build_multi_turn_messages 不同，历史 assistant 的思考内容通过
+        reasoning_content 字段承载（而非 content 内嵌标签），content 仅含最终答案。
+        这覆盖 GLM-5.3 模版 L137-138 的 `m.reasoning_content is string` 分支。
+        """
+        if reasoning_content is None:
+            reasoning_content = self.HISTORY_REASONING_CONTENT
+        return [
+            {"role": "user", "content": HISTORY_USER_1},
+            {
+                "role": "assistant",
+                "content": HISTORY_ASSISTANT_ANSWER,
+                "reasoning_content": reasoning_content,
+            },
+            {"role": "user", "content": HISTORY_USER_2},
+        ]
+
+    @pytest.mark.j_clear_thinking
+    @pytest.mark.p1
+    def test_clear_thinking_reasoning_field(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
+        """J6 [P1]: clear_thinking 对 reasoning_content 独立字段的处理
+
+        历史 assistant 消息以 reasoning_content 独立字段承载思考内容
+        （而非 content 内嵌 open-think/close-think 块），覆盖 GLM-5.3 模版
+        L137-138 的 `m.reasoning_content is string` 分支。
+
+        分别以 clear_thinking=true 和 clear_thinking=false 发送请求，
+        验证：
+        - 两种参数均能被服务端接受（HTTP 200）；
+        - 响应非空且能基于历史最终答案给出正确推论；
+        - 对比 prompt_tokens：clear_thinking=false 应 >= clear_thinking=true
+          （reasoning_content 被保留时 prompt 更长），差异为零则 record_warning。
+        """
+        test_logger.info(
+            "=== 测试开始: clear_thinking 对 reasoning_content 独立字段的处理 ==="
+        )
+
+        # 1. clear_thinking=true
+        messages_true = self._build_multi_turn_messages_with_reasoning_field()
+        try:
+            response_true, strategy_true = self._send_with_clear_thinking(
+                api_client, messages_true,
+                enable_thinking=True, clear_thinking=True,
+                test_logger=test_logger,
+            )
+        except Exception:
+            pytest.skip("clear_thinking 请求失败，服务端可能不支持该参数")
+
+        self.log_full_response(
+            test_logger, response_true,
+            f"J6-clear_thinking=true [reasoning_field] [{strategy_true}]",
+        )
+        self.assert_response_success(response_true)
+        self.assert_content_not_empty(response_true)
+
+        content_true = self.get_message_content(
+            response_true, strip_thinking=True, strip_reasoning=True
+        )
+        self._soft_assert_followup(content_true, test_logger, "J6-true")
+
+        # 2. clear_thinking=false（使用相同策略保证对比一致性）
+        messages_false = self._build_multi_turn_messages_with_reasoning_field()
+        try:
+            response_false, _ = self._send_with_clear_thinking(
+                api_client, messages_false,
+                enable_thinking=True, clear_thinking=False,
+                test_logger=test_logger,
+                only_strategy=strategy_true,
+            )
+        except Exception:
+            pytest.skip("clear_thinking=false 请求失败，服务端可能不支持该参数")
+
+        self.log_full_response(
+            test_logger, response_false,
+            f"J6-clear_thinking=false [reasoning_field] [{strategy_true}]",
+        )
+        self.assert_response_success(response_false)
+        self.assert_content_not_empty(response_false)
+
+        content_false = self.get_message_content(
+            response_false, strip_thinking=True, strip_reasoning=True
+        )
+        self._soft_assert_followup(content_false, test_logger, "J6-false")
+
+        # 3. 对比 prompt_tokens
+        pt_true = (response_true.get("usage") or {}).get("prompt_tokens")
+        pt_false = (response_false.get("usage") or {}).get("prompt_tokens")
+        test_logger.info(
+            f"J6 prompt_tokens 对比 (reasoning_field, 策略 {strategy_true}): "
+            f"clear=true -> {pt_true}, clear=false -> {pt_false}"
+        )
+
+        if pt_true is not None and pt_false is not None:
+            if pt_false > pt_true:
+                test_logger.info(
+                    f"✓ reasoning_content 独立字段下 clear_thinking 生效: "
+                    f"false({pt_false}) > true({pt_true}), "
+                    f"差值 {pt_false - pt_true}"
+                )
+            elif pt_false == pt_true:
+                warn_msg = (
+                    f"reasoning_content 独立字段下 clear_thinking 未体现 prompt_tokens 差异 "
+                    f"(pt_true={pt_true} == pt_false={pt_false}, 策略 {strategy_true}): "
+                    f"服务端可能未处理 reasoning_content 字段的 clear_thinking 逻辑，"
+                    f"或模版优先从 content 提取思考而忽略 reasoning_content 字段"
+                )
+                test_logger.warning(warn_msg)
+                record_warning(warn_msg)
+            else:
+                warn_msg = (
+                    f"reasoning_content 独立字段下 prompt_tokens 反向: "
+                    f"false({pt_false}) < true({pt_true})，可能采样波动"
+                )
+                test_logger.warning(warn_msg)
+                record_warning(warn_msg)
+        else:
+            test_logger.warning("服务端未返回 prompt_tokens，无法对比 J6 差异")
+
+        test_logger.info("clear_thinking reasoning_content 独立字段用例完成")
+
+    # ------------------------------------------------------------------
+    # J7: clear_thinking 与 reasoning_effort 组合
+    # ------------------------------------------------------------------
+
+    def _send_with_clear_thinking_and_effort(
+        self,
+        api_client: ModelAPIClient,
+        messages: List[Dict[str, Any]],
+        clear_thinking: bool,
+        reasoning_effort: str,
+        test_logger,
+        max_tokens: int = 2048,
+        temperature: float = 0.3,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """以 (clear_thinking, reasoning_effort) 组合发送请求，自动回退下发格式。
+
+        GLM-5.3 的核心参数是 reasoning_effort（控制思考强度）和 clear_thinking
+        （控制历史思考剥除）。本方法按以下顺序尝试下发，任一成功即返回：
+
+            1. chat_template_kwargs: {clear_thinking, reasoning_effort}
+               (vLLM/GLM5 标准，两个参数均在 chat_template_kwargs 下发)
+            2. chat_template_kwargs.clear_thinking + 顶层 reasoning_effort
+               (部分部署 reasoning_effort 作为顶层 OpenAI 兼容字段)
+
+        Returns:
+            (response, strategy_name) - 成功时两者均非 None；
+            失败时两者均为 None（不抛 pytest.skip，由调用方决定如何处理）。
+        """
+        strategies = [
+            (
+                "chat_template_kwargs.both",
+                {
+                    "chat_template_kwargs": {
+                        "clear_thinking": clear_thinking,
+                        "reasoning_effort": reasoning_effort,
+                    }
+                },
+            ),
+            (
+                "chat_template_kwargs.clear+top_effort",
+                {
+                    "chat_template_kwargs": {"clear_thinking": clear_thinking},
+                    "reasoning_effort": reasoning_effort,
+                },
+            ),
+        ]
+
+        last_error: Optional[Exception] = None
+        last_strategy: Optional[str] = None
+
+        for idx, (strategy_name, params) in enumerate(strategies, 1):
+            test_logger.info(
+                f"[{idx}/{len(strategies)}] 尝试 clear_thinking+reasoning_effort 策略: "
+                f"{strategy_name} -> {params}"
+            )
+            meta = {
+                "clear_thinking": clear_thinking,
+                "reasoning_effort": reasoning_effort,
+                "strategy": strategy_name,
+                "extra_body": params,
+            }
+            TestLogger.log_request(test_logger, messages, meta)
+            try:
+                response = api_client.chat_completion(
+                    messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    extra_body=params,
+                )
+            except Exception as e:
+                test_logger.warning(
+                    f"策略 {strategy_name} 请求异常: {e}，尝试下一策略"
+                )
+                last_error = e
+                last_strategy = strategy_name
+                continue
+
+            TestLogger.log_response(
+                test_logger,
+                response,
+                f"clear_thinking+effort 响应 (策略={strategy_name}, "
+                f"clear={clear_thinking}, effort={reasoning_effort})",
+            )
+            test_logger.info(f"策略 {strategy_name} 成功")
+            return response, strategy_name
+
+        test_logger.warning(
+            f"所有 clear_thinking+reasoning_effort 策略均失败 "
+            f"(clear={clear_thinking}, effort={reasoning_effort}, "
+            f"最后策略: {last_strategy}, 最后错误: {last_error})"
+        )
+        return None, None
+
+    @pytest.mark.j_clear_thinking
+    @pytest.mark.p1
+    def test_clear_thinking_with_reasoning_effort(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
+        """J7 [P1]: clear_thinking 与 reasoning_effort 组合
+
+        GLM-5.3 等模型通过 reasoning_effort（low/high/max）控制思考强度，
+        通过 clear_thinking 控制历史思考剥除。本用例验证两者组合使用时：
+
+        - 四种组合 (clear_thinking=true/false × reasoning_effort=low/high) 均
+          能被服务端接受（HTTP 200 且响应非空），验证参数正交性；
+        - clear_thinking=true + reasoning_effort=low 与 clear_thinking=false +
+          reasoning_effort=high 在 prompt_tokens 上应有差异（false+high 保留
+          历史思考且高强度思考，prompt 最长），差异为零则 record_warning。
+        """
+        test_logger.info("=== 测试开始: clear_thinking 与 reasoning_effort 组合 ===")
+        messages_base = self._build_multi_turn_messages()
+
+        combos = [
+            (True, "low"),
+            (True, "high"),
+            (False, "low"),
+            (False, "high"),
+        ]
+
+        results: Dict[str, Dict[str, Any]] = {}
+        forced_skip = False
+
+        for clear, effort in combos:
+            key = f"clear={clear},effort={effort}"
+            test_logger.info(f"\n--- 组合 {key} ---")
+            messages = list(messages_base)
+            response, strategy = self._send_with_clear_thinking_and_effort(
+                api_client, messages,
+                clear_thinking=clear,
+                reasoning_effort=effort,
+                test_logger=test_logger,
+            )
+
+            if response is None:
+                forced_skip = True
+                test_logger.warning(f"组合 {key} 请求失败，跳过该组合")
+                continue
+
+            self.log_full_response(
+                test_logger, response,
+                f"J7-({key}) [{strategy}]",
+            )
+            self.assert_response_success(response)
+            self.assert_content_not_empty(response)
+            results[key] = {
+                "response": response,
+                "strategy": strategy,
+                "clear": clear,
+                "effort": effort,
+            }
+
+        if forced_skip and not results:
+            pytest.skip("所有 clear_thinking+reasoning_effort 组合均请求失败")
+
+        # 汇总日志
+        test_logger.info(
+            f"J7 组合矩阵结果: 通过 {len(results)}/{len(combos)}"
+        )
+        for key, r in results.items():
+            test_logger.info(f"  [PASS] {key} -> 策略 {r['strategy']}")
+
+        # 至少 2 个组合通过即视为参数正交性可用
+        assert len(results) >= 2, (
+            f"clear_thinking+reasoning_effort 组合至少应有 2 个通过，"
+            f"实际通过 {len(results)}/{len(combos)}"
+        )
+
+        # 对比极端组合的 prompt_tokens
+        key_clear_low = "clear=True,effort=low"
+        key_false_high = "clear=False,effort=high"
+        if key_clear_low in results and key_false_high in results:
+            pt_clear_low = (
+                results[key_clear_low]["response"].get("usage") or {}
+            ).get("prompt_tokens")
+            pt_false_high = (
+                results[key_false_high]["response"].get("usage") or {}
+            ).get("prompt_tokens")
+            test_logger.info(
+                f"J7 极端组合 prompt_tokens 对比: "
+                f"clear=true+low={pt_clear_low}, clear=false+high={pt_false_high}"
+            )
+            if pt_clear_low is not None and pt_false_high is not None:
+                if pt_false_high > pt_clear_low:
+                    test_logger.info(
+                        f"✓ 极端组合 prompt_tokens 差异符合预期: "
+                        f"false+high({pt_false_high}) > true+low({pt_clear_low})"
+                    )
+                elif pt_false_high == pt_clear_low:
+                    warn_msg = (
+                        f"极端组合 prompt_tokens 相等 "
+                        f"(true+low={pt_clear_low} == false+high={pt_false_high})，"
+                        f"clear_thinking 与 reasoning_effort 可能未独立生效"
+                    )
+                    test_logger.warning(warn_msg)
+                    record_warning(warn_msg)
+            else:
+                test_logger.warning("服务端未返回 prompt_tokens，无法对比 J7 极端组合")
+
+        test_logger.info("clear_thinking 与 reasoning_effort 组合用例完成")
+
+    # ------------------------------------------------------------------
+    # J8: 多 assistant 边界测试（last_user_index 逻辑）
+    # ------------------------------------------------------------------
+
+    # 第三轮 user 的提问，基于前两轮的最终答案
+    HISTORY_USER_3 = "那么上面两个结果加起来是多少？"
+
+    def _build_multi_assistant_messages(
+        self, history_contents: List[str] = None
+    ) -> List[Dict[str, Any]]:
+        """构造含多条历史 assistant 消息的多轮 messages。
+
+        消息序列：user1 -> assistant1(含thinking) -> user2 -> assistant2(含thinking) -> user3
+
+        GLM-5.3 模版 L126-131 计算 last_user_index（最后一条 user 消息的索引），
+        L143 `loop.index0 > ns.last_user_index` 表示：位于 last_user 之后的
+        assistant 消息即使 clear_thinking=true 也保留思考内容。本构造中
+        user3 是最后一条 user，assistant2 在 user3 之前（应被清除），
+        但若有 assistant 在 user3 之后则应保留思考。
+
+        本构造中两条 assistant 均在 user3 之前，clear_thinking=true 时两条
+        均应被剥除思考；clear_thinking=false 时两条均保留。
+        """
+        if history_contents is None:
+            history_contents = [
+                f"{_THINK_OPEN}\n第一轮思考：7*6=42，因为7个6相加。\n{_THINK_CLOSE}\n\n7 * 6 = 42",
+                f"{_THINK_OPEN}\n第二轮思考：42*3=126，因为42+42+42=126。\n{_THINK_CLOSE}\n\n42 * 3 = 126",
+            ]
+        messages = [
+            {"role": "user", "content": HISTORY_USER_1},
+            {"role": "assistant", "content": history_contents[0]},
+            {"role": "user", "content": HISTORY_USER_2},
+            {"role": "assistant", "content": history_contents[1]},
+            {"role": "user", "content": self.HISTORY_USER_3},
+        ]
+        return messages
+
+    @pytest.mark.j_clear_thinking
+    @pytest.mark.p2
+    def test_clear_thinking_multi_assistant_boundary(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
+        """J8 [P2]: 多 assistant 边界测试
+
+        多条历史 assistant 消息（均在 last_user 之前）下，验证 clear_thinking
+        对所有历史 assistant 消息的统一处理。
+
+        消息序列：user1 -> assistant1(thinking) -> user2 -> assistant2(thinking) -> user3
+
+        - clear_thinking=true：两条 assistant 的思考均应被剥除 → prompt_tokens 较短
+        - clear_thinking=false：两条 assistant 的思考均保留 → prompt_tokens 较长
+
+        判定规则：
+        - 两种参数均请求成功且响应非空 → 验证模型能基于历史最终答案推论
+        - prompt_tokens(false) > prompt_tokens(true) → 生效，INFO
+        - prompt_tokens 相等 → record_warning（可能未处理多 assistant 场景）
+        - 请求失败 → pytest.skip
+        """
+        test_logger.info("=== 测试开始: 多 assistant 边界测试 ===")
+
+        # 1. clear_thinking=true
+        messages_true = self._build_multi_assistant_messages()
+        try:
+            response_true, strategy_true = self._send_with_clear_thinking(
+                api_client, messages_true,
+                enable_thinking=True, clear_thinking=True,
+                test_logger=test_logger,
+            )
+        except Exception:
+            pytest.skip("clear_thinking 请求失败，服务端可能不支持该参数")
+
+        self.log_full_response(
+            test_logger, response_true,
+            f"J8-clear_thinking=true [multi-assistant] [{strategy_true}]",
+        )
+        self.assert_response_success(response_true)
+        self.assert_content_not_empty(response_true)
+
+        content_true = self.get_message_content(
+            response_true, strip_thinking=True, strip_reasoning=True
+        )
+        test_logger.info(f"J8 clear=true 最终回答: {content_true[:2000]}...")
+        # 两轮结果 42 + 126 = 168
+        if any(kw in content_true for kw in ["168", "42 + 126", "42+126"]):
+            test_logger.info("J8 clear=true 响应包含正确推论 168")
+        else:
+            test_logger.warning(
+                f"J8 clear=true 未命中期望推论 168，响应: {content_true[:500]}"
+            )
+
+        # 2. clear_thinking=false（相同策略）
+        messages_false = self._build_multi_assistant_messages()
+        try:
+            response_false, _ = self._send_with_clear_thinking(
+                api_client, messages_false,
+                enable_thinking=True, clear_thinking=False,
+                test_logger=test_logger,
+                only_strategy=strategy_true,
+            )
+        except Exception:
+            pytest.skip("clear_thinking=false 请求失败，服务端可能不支持该参数")
+
+        self.log_full_response(
+            test_logger, response_false,
+            f"J8-clear_thinking=false [multi-assistant] [{strategy_true}]",
+        )
+        self.assert_response_success(response_false)
+        self.assert_content_not_empty(response_false)
+
+        content_false = self.get_message_content(
+            response_false, strip_thinking=True, strip_reasoning=True
+        )
+        test_logger.info(f"J8 clear=false 最终回答: {content_false[:2000]}...")
+
+        # 3. 对比 prompt_tokens（多 assistant 场景差异应更大）
+        pt_true = (response_true.get("usage") or {}).get("prompt_tokens")
+        pt_false = (response_false.get("usage") or {}).get("prompt_tokens")
+        test_logger.info(
+            f"J8 prompt_tokens 对比 (multi-assistant, 策略 {strategy_true}): "
+            f"clear=true -> {pt_true}, clear=false -> {pt_false}"
+        )
+
+        if pt_true is not None and pt_false is not None:
+            if pt_false > pt_true:
+                test_logger.info(
+                    f"✓ 多 assistant 场景 clear_thinking 生效: "
+                    f"false({pt_false}) > true({pt_true}), "
+                    f"差值 {pt_false - pt_true}"
+                )
+            elif pt_false == pt_true:
+                warn_msg = (
+                    f"多 assistant 场景 clear_thinking 未体现 prompt_tokens 差异 "
+                    f"(pt_true={pt_true} == pt_false={pt_false}, 策略 {strategy_true}): "
+                    f"服务端可能未对多条历史 assistant 消息统一处理 clear_thinking"
+                )
+                test_logger.warning(warn_msg)
+                record_warning(warn_msg)
+            else:
+                warn_msg = (
+                    f"多 assistant 场景 prompt_tokens 反向: "
+                    f"false({pt_false}) < true({pt_true})，可能采样波动"
+                )
+                test_logger.warning(warn_msg)
+                record_warning(warn_msg)
+        else:
+            test_logger.warning("服务端未返回 prompt_tokens，无法对比 J8 差异")
+
+        test_logger.info("多 assistant 边界测试用例完成")

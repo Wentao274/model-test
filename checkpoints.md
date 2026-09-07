@@ -21,14 +21,14 @@
 
 ---
 
-## 二、测试点总览（10 大类 × 101 个测试点）
+## 二、测试点总览（10 大类 × 105 个测试点）
 
 ### 分类概览
 
 | 分类           | 测试点数 | 说明                  |
 |--------------|------|---------------------|
 | A. 基础推理能力    | 12   | 文本生成、对话、基础控制等       |
-| B. 高级生成功能    | 10   | 思考模式、工具调用、结构化输出等    |
+| B. 高级生成功能    | 11   | 思考模式、工具调用、结构化输出、reasoning_effort 等    |
 | C. 多模态能力     | 8    | 图片理解、视频理解、跨模态推理     |
 | D. 长上下文处理    | 12   | 长文本输入/输出、大海捞针、上下文边界、超长上下文验证 |
 | E. 性能指标      | 12   | 延迟、吞吐、并发、显存         |
@@ -36,7 +36,7 @@
 | G. API 兼容性   | 8    | OpenAI 兼容、参数一致性     |
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
-| J. clear_thinking 参数行为 | 5   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、deployment 能力探测 |
+| J. clear_thinking 参数行为 | 8   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、deployment 能力探测 |
 
 ---
 
@@ -64,13 +64,13 @@
 
 ---
 
-### B. 高级生成功能（10 项）
+### B. 高级生成功能（11 项）
 
 | #   | 测试点                | 测试内容                                           | 优先级 |
 |-----|--------------------|------------------------------------------------|-----|
 | B1  | 思考模式（Thinking）     | 开启 thinking mode，验证返回思考链 + 最终答案                | P0  |
-| B2  | 非思考模式（Instant）     | 关闭 thinking，拆分验证“请求可接受”与“无 hidden thinking 泄漏” | P1  |
-| B3  | 思考模式切换             | 同一会话内 thinking↔non-thinking 切换                 | P1  |
+| B2  | 非思考模式（Instant）     | 关闭 thinking，拆分验证"请求可接受"与"无 hidden thinking 泄漏"；不支持关闭则告警 | P1  |
+| B3  | 思考模式切换             | 同一会话内 thinking↔non-thinking 切换；关闭不支持则告警         | P1  |
 | B4  | 工具调用-单工具           | 定义单个 function，验证模型正确调用并传参                      | P0  |
 | B5  | 工具调用-多工具           | 定义多个 function，验证模型选择正确的工具                      | P1  |
 | B6  | 工具调用-并行调用          | 单次回复中并行调用多个工具                                  | P2  |
@@ -78,6 +78,7 @@
 | B8  | JSON Mode          | response_format=json_object，验证输出合法 JSON        | P0  |
 | B9  | 结构化输出              | JSON Schema 约束输出格式，验证字段完整性                     | P0  |
 | B10 | Prefix / Suffix 约束 | 指定输出前缀或格式模板，验证遵循度                              | P2  |
+| B11 | reasoning_effort 参数 | low/high/max 三档思考强度，不支持的模型告警并跳过                  | P1  |
 
 
 ---
@@ -209,11 +210,12 @@
 
 ---
 
-### J. clear_thinking 参数行为（5 项）
+### J. clear_thinking 参数行为（8 项）
 
 验证 `chat_template_kwargs.clear_thinking` 在多轮对话场景下对历史 assistant 思考内容
 （open-think ... close-think 块）的清除/保留行为，以及与 `enable_thinking` 的正交性。
-仅在多轮对话场景下有意义，单轮请求无效果。
+仅在多轮对话场景下有意义，单轮请求无效果。J6/J7/J8 为新增用例，覆盖 GLM-5.3 chat_template
+的 `reasoning_content` 独立字段分支、`reasoning_effort` 参数组合、多 assistant 边界逻辑。
 
 | #   | 测试点                                 | 测试内容                                                            | 验证方法                                                | 优先级 |
 |-----|------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|-----|
@@ -222,6 +224,9 @@
 | J3  | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异，**严格断言 pt_false > pt_true**  | 同一组多轮 messages 分别以 true/false 发送，未生效（相等）时用例 FAIL | P2  |
 | J4  | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | enable_thinking=True 的两个组合必须通过；enable_thinking=False 的组合若检测到模型强制开启思考则 SKIP + WARNING | P1  |
 | J5  | clear_thinking deployment 能力探测       | 探测服务端是否真实实现 clear_thinking（pt_false > pt_true），未生效时记录 WARNING      | 探测未生效时 SKIP 并记录 WARNING；J3 在此基础上做行为硬断言        | P1  |
+| J6  | clear_thinking 对 reasoning_content 独立字段的处理 | assistant 以 reasoning_content 独立字段承载思考时验证 clear_thinking 行为（GLM-5.3 模版 L137-138） | 对比 true/false 的 prompt_tokens，相等时 record_warning（不 FAIL） | P1  |
+| J7  | clear_thinking 与 reasoning_effort 组合 | GLM-5.3 核心参数组合，验证参数正交性                            | 四种组合 (clear × effort) 至少 2 个通过；极端组合 pt 相等则 record_warning | P1  |
+| J8  | 多 assistant 边界测试 | 多条历史 assistant 消息下 last_user_index 边界条件（模版 L143）          | user1→assistant1→user2→assistant2→user3，对比 true/false 的 prompt_tokens | P2  |
 
 ---
 

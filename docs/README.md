@@ -7,7 +7,7 @@
 | 文档 | 测试分类 | 测试点数 |
 |------|---------|---------|
 | [test_a_basic_reasoning.md](test_a_basic_reasoning.md) | A. 基础推理能力 | 12 |
-| [test_b_advanced_generation.md](test_b_advanced_generation.md) | B. 高级生成功能 | 10 |
+| [test_b_advanced_generation.md](test_b_advanced_generation.md) | B. 高级生成功能 | 11 |
 | [test_c_multimodal.md](test_c_multimodal.md) | C. 多模态能力 | 8 |
 | [test_d_long_context.md](test_d_long_context.md) | D. 长上下文处理 | 12 |
 | [test_e_performance.md](test_e_performance.md) | E. 性能指标 | 12 |
@@ -15,7 +15,7 @@
 | [test_g_api_compatibility.md](test_g_api_compatibility.md) | G. API兼容性 | 8 |
 | [test_h_quality_chat_completions.md](test_h_quality_chat_completions.md) | H. Chat Completions API 质量评估与回答相关性 | 13 |
 | [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
-| [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 5 |
+| [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 8 |
 
 > **注意**：E 类和 I 类测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
 
