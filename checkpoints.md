@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（10 大类 × 105 个测试点）
+## 二、测试点总览（10 大类 × 103 个测试点）
 
 ### 分类概览
 
@@ -33,7 +33,7 @@
 | D. 长上下文处理    | 12   | 长文本输入/输出、大海捞针、上下文边界、超长上下文验证 |
 | E. 性能指标      | 12   | 延迟、吞吐、并发、显存         |
 | F. 稳定性与边界    | 8    | 异常输入、OOM 恢复、长时间运行   |
-| G. API 兼容性   | 8    | OpenAI 兼容、参数一致性     |
+| G. API 兼容性   | 6    | OpenAI 兼容、参数一致性     |
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | J. clear_thinking 参数行为 | 8   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、deployment 能力探测 |
@@ -153,19 +153,19 @@
 
 ---
 
-### G. API 兼容性（8 项）
+### G. API 兼容性（6 项）
 
 
 | #   | 测试点                     | 测试内容                           | 验证要点                                 | 优先级 |
 |-----|-------------------------|--------------------------------|--------------------------------------|-----|
 | G1  | OpenAI Chat Completions | /v1/chat/completions 接口兼容      | 请求格式、返回格式完全兼容                        | P0  |
-| G2  | OpenAI Completions      | /v1/completions 接口兼容           | 传统 completion 格式支持                   | P1  |
-| G3  | 模型列表                    | /v1/models 返回可用模型              | 正确返回模型 ID 和元信息                       | P0  |
+| G2  | OpenAI Completions      | /v1/completions 接口兼容           | 传统 completion 格式支持、max_tokens 超限处理     | P1  |
+| G3  | 模型列表                    | /v1/models 返回可用模型              | 正确返回模型 ID 和元信息，当前模型在列表中              | P0  |
 | G4  | Usage 统计                | 返回中 usage 字段准确                 | prompt_tokens + completion_tokens 准确 | P0  |
-| G5  | 错误码规范                   | 400/401/404/429/500 错误码        | 符合 OpenAI 错误格式                       | P1  |
-| G6  | 客户端 SDK 兼容              | Python openai / JS @openai/sdk | 无需修改代码直接调用                           | P0  |
-| G7  | 响应格式变体                  | 响应格式变体                         | 测试不同参数组合，temperature, max_tokens     | P2  |
-| G8  | Stream参数                | Stream参数                       | 测试流式请求                               | P2  |
+| G5  | 错误码规范                   | 401/400/404 错误码               | 符合 OpenAI 错误格式                       | P1  |
+| G6  | 客户端 SDK 兼容              | Python openai                 | 无需修改代码直接调用                           | P0  |
+
+> **注意**：response_format（json_object/json_schema）测试见 B8/B9，stream 参数测试见 A4，G 类不重复测试。
 
 
 ---
@@ -292,28 +292,29 @@ H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 �
 
 总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 = 36 项。
 
-### P1（选测，53 项）
+### P1（选测，56 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
-B2, B3, B5, B7          高级功能 4 项
-C1, C2, C4, C8          多模态 4 项
-D2, D3, D6-D11          上下文处理 8 项
-E9-E12                  性能指标 4 项
-F2, F5-F8               稳定性 5 项
-G2, G5                  API 兼容 2 项
-H2, H3, H10, H11        Chat Completions API 质量评估 4 项
-I1-I12                  Completions API 质量评估 12 项
-J1, J2, J4, J5          clear_thinking 参数行为 4 项
+B2, B3, B5, B7, B11         高级功能 5 项
+C1, C2, C4, C8              多模态 4 项
+D2, D3, D6-D11              上下文处理 8 项
+E9-E12                      性能指标 4 项
+F2, F5-F8                   稳定性 5 项
+G2, G5                      API 兼容 2 项
+H2, H3, H10, H11            Chat Completions API 质量评估 4 项
+I1-I12                      Completions API 质量评估 12 项
+J1, J2, J4, J5, J6, J7      clear_thinking 参数行为 6 项
 ```
 
-### P2（低优，12 项）
+### P2（低优，11 项）
 
 ```
-B6, B10                 高级功能 2 项
-C3, C5-C7               多模态 4 项
-F3                      稳定性 1 项
-G7, G8                  API 兼容 2 项
-H13, I13                质量评估 2 项
-J3                      clear_thinking 参数行为 1 项
+B6, B10                     高级功能 2 项
+C3, C5-C7                   多模态 4 项
+F3                          稳定性 1 项
+                            API 兼容 0 项（G7/G8 已移除，response_format 见 B8/B9，stream 见 A4）
+H13                         Chat Completions API 质量评估 1 项
+I13                         Completions API 质量评估 1 项
+J3, J8                      clear_thinking 参数行为 2 项
 ```

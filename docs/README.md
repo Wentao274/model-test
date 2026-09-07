@@ -12,7 +12,7 @@
 | [test_d_long_context.md](test_d_long_context.md) | D. 长上下文处理 | 12 |
 | [test_e_performance.md](test_e_performance.md) | E. 性能指标 | 12 |
 | [test_f_stability.md](test_f_stability.md) | F. 稳定性与边界 | 8 |
-| [test_g_api_compatibility.md](test_g_api_compatibility.md) | G. API兼容性 | 8 |
+| [test_g_api_compatibility.md](test_g_api_compatibility.md) | G. API兼容性 | 6 |
 | [test_h_quality_chat_completions.md](test_h_quality_chat_completions.md) | H. Chat Completions API 质量评估与回答相关性 | 13 |
 | [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
 | [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 8 |
