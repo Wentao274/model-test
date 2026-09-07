@@ -15,7 +15,9 @@ B. 高级生成功能测试
 - B11: reasoning_effort 参数 - low/high/max 三档，不支持的模型告警 [P1]
 """
 
+import ast
 import json
+import operator
 import re
 import urllib.request
 import urllib.parse
@@ -206,22 +208,120 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "B. 高级生成功能"
 
-    @staticmethod
-    def _strip_thinking_tags(content: str) -> str:
-        if not content:
-            return content
-        if "<think>" in content:
-            parts = content.split("</think>", 1)
-            return parts[1].strip() if len(parts) > 1 else ""
-        # kimi-k3 格式：思考内容后以 <|close|>think[<|sep|>] 分隔，再输出最终答案
-        if "<|close|>think" in content:
-            close_sep = "<|close|>think<|sep|>"
-            if close_sep in content:
-                parts = content.split(close_sep, 1)
-                return parts[1].strip() if len(parts) > 1 else ""
-            parts = content.split("<|close|>think", 1)
-            return parts[1].strip() if len(parts) > 1 else ""
+    # 合法的 finish_reason 值（非流式最终响应）
+    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
+    # 流式最后一chunk的 finish_reason 额外允许 None（中间chunk无 finish_reason）
+    VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)
+
+    # ------------------------------------------------------------------
+    # 辅助方法
+    # ------------------------------------------------------------------
+
+    def _get_formal_content(
+        self, response: Dict[str, Any], test_logger=None, context: str = ""
+    ) -> str:
+        """获取正式回复内容
+
+        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
+        reasoning_content 字段和 think 标签内容）。
+        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
+        回退到 content + reasoning_content，避免因思考模型 content 为空
+        导致后续断言失败。
+        """
+        content = self.get_message_content(
+            response, strip_reasoning=True, strip_thinking=True
+        )
+        if not content.strip():
+            full = self.get_message_content(response)
+            if test_logger and full.strip():
+                test_logger.info(
+                    f"[{context}] 正式content为空，回退到content+reasoning"
+                    f"（思考模型可能被reasoning消耗了max_tokens）"
+                )
+            return full
         return content
+
+    def _assert_finish_reason(
+        self, response: Dict[str, Any], allow_none: bool = False
+    ) -> str:
+        """断言 finish_reason 合法并返回其值"""
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        valid = (
+            self.VALID_STREAM_FINISH_REASONS
+            if allow_none
+            else self.VALID_FINISH_REASONS
+        )
+        assert finish_reason in valid, (
+            f"finish_reason should be one of {valid}, got '{finish_reason}'"
+        )
+        return finish_reason
+
+    def _append_assistant_message(
+        self, messages: List[Dict[str, Any]], response: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """将 assistant 回复追加到消息列表（剥离 reasoning_content 字段）"""
+        content = self.get_message_content(response, strip_reasoning=True)
+        messages.append({"role": "assistant", "content": content})
+        return messages
+
+    @staticmethod
+    def _safe_eval_math(expression: str) -> float:
+        """安全地计算数学表达式
+
+        使用 ast.parse 解析表达式，仅允许数字和算术运算符，
+        避免使用 eval() 带来的代码注入风险。
+        """
+        if not expression or not expression.strip():
+            raise ValueError("Empty expression")
+
+        _BIN_OPS = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.FloorDiv: operator.floordiv,
+            ast.Mod: operator.mod,
+            ast.Pow: operator.pow,
+        }
+        _UNARY_OPS = {
+            ast.UAdd: operator.pos,
+            ast.USub: operator.neg,
+        }
+
+        def _eval_node(node):
+            if isinstance(node, ast.Expression):
+                return _eval_node(node.body)
+            if isinstance(node, ast.BinOp):
+                op_type = type(node.op)
+                if op_type not in _BIN_OPS:
+                    raise ValueError(
+                        f"Unsupported binary operator: {op_type.__name__}"
+                    )
+                return _BIN_OPS[op_type](
+                    _eval_node(node.left), _eval_node(node.right)
+                )
+            if isinstance(node, ast.UnaryOp):
+                op_type = type(node.op)
+                if op_type not in _UNARY_OPS:
+                    raise ValueError(
+                        f"Unsupported unary operator: {op_type.__name__}"
+                    )
+                return _UNARY_OPS[op_type](_eval_node(node.operand))
+            if isinstance(node, ast.Constant):
+                if isinstance(node.value, (int, float)) and not isinstance(
+                    node.value, bool
+                ):
+                    return node.value
+                raise ValueError(f"Unsupported constant: {node.value!r}")
+            if isinstance(node, ast.Num):  # Python < 3.8 兼容
+                return node.n
+            raise ValueError(f"Unsupported AST node: {type(node).__name__}")
+
+        try:
+            tree = ast.parse(expression.strip(), mode="eval")
+        except SyntaxError as e:
+            raise ValueError(f"Invalid expression syntax: {e}") from e
+        return _eval_node(tree)
 
     def _check_has_thinking(self, response: dict, test_logger) -> bool:
         reasoning = self.get_reasoning_content(response)
@@ -436,7 +536,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         5. chat_template_kwargs.thinking=true + reasoning_effort=high
         若所有方式均未获取到思考内容，则断言失败。
 
-        思考内容承载方式由 _check_has_thinking / _strip_thinking_tags
+        思考内容承载方式由 _check_has_thinking / strip_thinking_content
         统一解析，兼容 reasoning_content 字段与 content 内嵌的多种思考格式：
         - <think>...</think> 完整标签
         - 仅 </think> 结束标志（MiniMax M2 风格）
@@ -477,6 +577,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, f"B1-思考模式 [{strategy}]")
 
         self.assert_content_not_empty(response)
+        self._assert_finish_reason(response)
 
         assert has_thinking, (
             "Thinking mode should return reasoning content (reasoning field or thinking tags). "
@@ -486,15 +587,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             f"Last params: {used_params}"
         )
 
-        content = self.get_message_content(response)
-        content_clean = self._strip_thinking_tags(content)
-        test_logger.info(f"最终回答内容: {content_clean[:2000]}...")
+        content = self._get_formal_content(response, test_logger, "B1")
+        test_logger.info(f"最终回答内容: {content[:2000]}...")
 
-        assert len(content_clean.strip()) > 0, (
+        assert len(content.strip()) > 0, (
             "Final answer content should not be empty"
         )
-        assert any(kw in content_clean for kw in ["56088", "56088.0", "56,088"]), (
-            f"Thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
+        assert any(kw in content for kw in ["56088", "56088.0", "56,088"]), (
+            f"Thinking mode should produce correct answer 56088, got: {content[:500]}"
         )
 
         test_logger.info(f"思考模式验证通过 (使用策略: {strategy})")
@@ -552,6 +652,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, f"B2-非思考模式 [{strategy}]")
 
         self.assert_content_not_empty(response)
+        self._assert_finish_reason(response)
 
         if not has_no_thinking:
             warn_msg = (
@@ -569,15 +670,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 f"非思考模式成功关闭思考 (使用策略: {strategy})，无thinking泄漏"
             )
 
-        content = self.get_message_content(response)
-        content_clean = self._strip_thinking_tags(content)
-        test_logger.info(f"最终回答内容: {content_clean[:2000]}...")
+        content = self._get_formal_content(response, test_logger, "B2")
+        test_logger.info(f"最终回答内容: {content[:2000]}...")
 
-        assert len(content_clean.strip()) > 0, (
+        assert len(content.strip()) > 0, (
             "Non-thinking mode should still produce a content response"
         )
-        assert any(kw in content_clean for kw in ["56088", "56088.0", "56,088"]), (
-            f"Non-thinking mode should produce correct answer 56088, got: {content_clean[:500]}"
+        assert any(kw in content for kw in ["56088", "56088.0", "56,088"]), (
+            f"Non-thinking mode should produce correct answer 56088, got: {content[:500]}"
         )
 
     @pytest.mark.b_advanced
@@ -638,6 +738,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response1, f"B3-开启thinking [{strategy1}]")
 
         self.assert_content_not_empty(response1)
+        self._assert_finish_reason(response1)
         assert has_thinking1, (
             "First request with thinking=ON should have thinking content. "
             "Tried strategies: enable_thinking, chat_template_kwargs.thinking, "
@@ -646,15 +747,14 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             f"Last params: {used_params1}"
         )
 
-        content1 = self.get_message_content(response1)
-        content1_clean = self._strip_thinking_tags(content1)
-        test_logger.info(f"开启thinking最终回答: {content1_clean[:2000]}...")
-        assert len(content1_clean.strip()) > 0, (
+        content1 = self._get_formal_content(response1, test_logger, "B3-开启")
+        test_logger.info(f"开启thinking最终回答: {content1[:2000]}...")
+        assert len(content1.strip()) > 0, (
             "Thinking mode response should have final answer"
         )
-        assert any(kw in content1_clean for kw in ["56088", "56088.0", "56,088"]), (
+        assert any(kw in content1 for kw in ["56088", "56088.0", "56,088"]), (
             f"Thinking mode should produce correct answer 56088, "
-            f"got: {content1_clean[:500]}"
+            f"got: {content1[:500]}"
         )
 
         test_logger.info("第2轮: 关闭thinking模式（自动回退）")
@@ -688,6 +788,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response2, f"B3-关闭thinking [{strategy2}]")
 
         self.assert_content_not_empty(response2)
+        self._assert_finish_reason(response2)
 
         if not has_no_thinking2:
             warn_msg = (
@@ -705,13 +806,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 f"第2轮成功关闭思考 (使用策略: {strategy2})，无thinking泄漏"
             )
 
-        content2 = self.get_message_content(response2)
-        content2_clean = self._strip_thinking_tags(content2)
-        assert len(content2_clean.strip()) > 0, (
+        content2 = self._get_formal_content(response2, test_logger, "B3-关闭")
+        assert len(content2.strip()) > 0, (
             "Non-thinking response should have content"
         )
-        assert any(kw in content2_clean for kw in ["56088", "56088.0", "56,088"]), (
-            f"Non-thinking mode should produce correct answer, got: {content2_clean[:500]}"
+        assert any(kw in content2 for kw in ["56088", "56088.0", "56,088"]), (
+            f"Non-thinking mode should produce correct answer, got: {content2[:500]}"
         )
 
         test_logger.info(
@@ -787,9 +887,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             return {"keyword": keyword, "results": results}
         elif tool_name == "calculate":
             try:
-                result = eval(arguments.get("expression", "0"))
+                result = self._safe_eval_math(arguments.get("expression", "0"))
                 return {"expression": arguments.get("expression"), "result": result}
-            except:
+            except (ValueError, ZeroDivisionError, TypeError):
                 return {"expression": arguments.get("expression"), "result": "计算错误"}
         elif tool_name == "translate":
             text = arguments.get("text", "")
@@ -893,11 +993,15 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages.append({"role": "assistant", "tool_calls": assistant_tool_calls})
             messages.extend(tool_messages)
 
-            final_response = api_client.chat_completion(messages)
+            final_response = api_client.chat_completion(
+                messages, temperature=0.0
+            )
             self.log_full_response(
                 test_logger, final_response, f"工具轮次{round_idx}最终响应"
             )
-            final_content = self.get_message_content(final_response)
+            final_content = self._get_formal_content(
+                final_response, test_logger, f"工具轮次{round_idx}"
+            )
             test_logger.info(f"模型最终响应(轮次{round_idx}): {final_content}")
 
             if final_content and final_content.strip():
@@ -959,10 +1063,12 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             )
 
         final_response = api_client.chat_completion(
-            messages, tools=tools, tool_choice="auto"
+            messages, tools=tools, tool_choice="auto", temperature=0.0
         )
         self.log_full_response(test_logger, final_response, "并行工具调用最终响应")
-        final_content = self.get_message_content(final_response)
+        final_content = self._get_formal_content(
+            final_response, test_logger, "并行工具最终响应"
+        )
         test_logger.info(f"模型最终响应: {final_content}")
         return final_content, final_response
 
@@ -977,7 +1083,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages, {"tools": "TOOLS_GET_WEATHER"})
 
         response = api_client.chat_completion(
-            messages, tools=TOOLS_GET_WEATHER, tool_choice="auto"
+            messages, tools=TOOLS_GET_WEATHER, tool_choice="auto", temperature=0.0
         )
         TestLogger.log_response(test_logger, response, "单工具调用响应")
         self.log_full_response(test_logger, response, "B4-单工具调用")
@@ -1020,6 +1126,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             api_client, messages, tool_calls[0], test_logger
         )
         self.assert_response_success(final_response)
+        self._assert_finish_reason(final_response)
         assert len(final_content.strip()) > 0, (
             "Final response after tool execution should not be empty"
         )
@@ -1055,7 +1162,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             TestLogger.log_request(test_logger, messages, {"tools": "5 tools"})
 
             response = api_client.chat_completion(
-                messages, tools=tools, tool_choice="auto"
+                messages, tools=tools, tool_choice="auto", temperature=0.0
             )
             TestLogger.log_response(test_logger, response, f"{desc}工具调用")
             self.log_full_response(test_logger, response, f"B5-测试{idx}-{desc}")
@@ -1090,10 +1197,16 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 f"[测试{idx}] Tool arguments should be non-empty dict, got: {args}"
             )
 
+            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+            assert finish_reason in ("tool_calls", "length"), (
+                f"[测试{idx}] finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
+            )
+
             final_content, final_response = self._execute_tool_call(
                 api_client, messages, tool_calls[0], test_logger
             )
             self.assert_response_success(final_response)
+            self._assert_finish_reason(final_response)
             assert len(final_content.strip()) > 0, (
                 f"[测试{idx}] Final response after tool execution should not be empty"
             )
@@ -1112,7 +1225,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages, {"tools": "TOOLS_MULTIPLE"})
 
         response = api_client.chat_completion(
-            messages, tools=TOOLS_MULTIPLE, tool_choice="auto"
+            messages, tools=TOOLS_MULTIPLE, tool_choice="auto", temperature=0.0
         )
         TestLogger.log_response(test_logger, response, "并行工具调用响应")
         self.log_full_response(test_logger, response, "B6-并行工具调用")
@@ -1122,6 +1235,11 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         test_logger.info(f"工具调用数量: {len(tool_calls)}")
         assert len(tool_calls) > 0, "Should have tool calls"
+
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        assert finish_reason in ("tool_calls", "length"), (
+            f"finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
+        )
 
         called_tools = set()
         for tc in tool_calls:
@@ -1165,6 +1283,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             api_client, messages, tool_calls, TOOLS_MULTIPLE, test_logger
         )
         self.assert_response_success(final_response)
+        self._assert_finish_reason(final_response)
         assert len(final_content.strip()) > 0, "Final response should not be empty"
 
     @pytest.mark.b_advanced
@@ -1273,7 +1392,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             )
 
             response = api_client.chat_completion(
-                messages, tools=tools, tool_choice="auto"
+                messages, tools=tools, tool_choice="auto", temperature=0.0
             )
             TestLogger.log_response(test_logger, response, f"第{step}步响应")
             self.log_full_response(test_logger, response, f"B7-第{step}步")
@@ -1284,9 +1403,21 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 test_logger.info(f"第{step}步: 模型未调用工具，链式调用结束")
                 break
 
+            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+            assert finish_reason in ("tool_calls", "length"), (
+                f"第{step}步: finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
+            )
+
             # assistant 消息只 append 一次（包含全部 tool_calls），
             # 之后逐条 append tool 结果，避免重复 assistant 消息破坏对话历史
-            messages.append(response["choices"][0]["message"])
+            # 剥离 reasoning_content 字段，避免将思考内容回传给模型污染上下文
+            raw_msg = response["choices"][0]["message"]
+            assistant_msg = {"role": "assistant"}
+            if raw_msg.get("content"):
+                assistant_msg["content"] = raw_msg["content"]
+            if raw_msg.get("tool_calls"):
+                assistant_msg["tool_calls"] = raw_msg["tool_calls"]
+            messages.append(assistant_msg)
 
             for tool_call in tool_calls:
                 function_name = tool_call.get("function", {}).get("name")
@@ -1317,6 +1448,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info(
             f"链式调用完成，共调用 {len(called_tools)} 个不同工具: {called_tools}"
         )
+
+        # 当模型停止调用工具时，验证 finish_reason 合法
+        if not tool_calls:
+            self._assert_finish_reason(response)
 
         # 断言：至少完成了2步工具调用
         assert len(called_tools) >= 2, (
@@ -1388,8 +1523,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "B8-JSON-Mode")
 
         self.assert_response_success(response)
+        self._assert_finish_reason(response)
 
-        content = self.get_message_content(response)
+        content = self._get_formal_content(response, test_logger, "B8")
 
         json_data = None
         json_error = None
@@ -1437,7 +1573,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             json_data.get("age") or json_data.get("年龄") or json_data.get("岁数")
         )
         if age_value is not None:
-            assert isinstance(age_value, (int, float)), (
+            assert isinstance(age_value, (int, float)) and not isinstance(
+                age_value, bool
+            ), (
                 f"Age field should be numeric, got {type(age_value).__name__}: {age_value}"
             )
 
@@ -1463,26 +1601,33 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             {"role": "user", "content": "请返回一个包含姓名、年龄和城市的JSON对象"}
         ]
         TestLogger.log_request(
-            test_logger, messages, {"response_format": "json_schema"}
+            test_logger, messages, {"response_format": "json_schema (fallback json_object)"}
         )
 
-        response = api_client.chat_completion(
-            messages, response_format={"type": "json_object", "schema": schema}
-        )
+        # 优先尝试 json_schema 格式（OpenAI 标准），不支持则回退到 json_object
+        try:
+            response = api_client.chat_completion(
+                messages,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "person_info", "schema": schema},
+                },
+            )
+        except Exception as e:
+            test_logger.info(f"json_schema 格式不支持({e})，回退到 json_object")
+            response = api_client.chat_completion(
+                messages, response_format={"type": "json_object"}
+            )
         TestLogger.log_response(test_logger, response, "结构化输出响应")
         self.log_full_response(test_logger, response, "B9-结构化输出")
 
         self.assert_response_success(response)
-        content = self.get_message_content(response)
+        self._assert_finish_reason(response)
+        content = self._get_formal_content(response, test_logger, "B9")
         reasoning = self.get_reasoning_content(response)
 
         json_data = None
         source = None
-
-        # 处理 content 中包含 </think> 思考内容的情况
-        if content and "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
-            test_logger.info(f"Extracted JSON after </think>: {content[:2000]}...")
 
         # 优先从 content 提取 JSON
         if content and content.strip():
@@ -1511,6 +1656,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
 
         test_logger.info(f"Structured output found in {source}: {json_data}")
 
+        assert isinstance(json_data, dict), (
+            f"Should return a JSON object, got {type(json_data).__name__}"
+        )
+
         has_name = "name" in json_data or "姓名" in json_data
         has_age = "age" in json_data or "年龄" in json_data
         assert has_name, (
@@ -1518,10 +1667,6 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         )
         assert has_age, (
             f"Should have 'age' or '年龄' field, got keys: {list(json_data.keys())}"
-        )
-
-        assert isinstance(json_data, dict), (
-            f"Should return a JSON object, got {type(json_data).__name__}"
         )
 
         age_value = json_data.get("age") or json_data.get("年龄")
@@ -1571,7 +1716,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "B10-Prefix约束")
 
         self.assert_response_success(response)
-        content = self.get_message_content(response)
+        self._assert_finish_reason(response)
+        content = self._get_formal_content(response, test_logger, "B10-Prefix")
 
         test_logger.info(f"Prefix 约束响应: {content[:2000]}...")
 
@@ -1602,7 +1748,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "B10-Suffix约束")
 
         self.assert_response_success(response)
-        content = self.get_message_content(response)
+        self._assert_finish_reason(response)
+        content = self._get_formal_content(response, test_logger, "B10-Suffix")
 
         test_logger.info(f"Suffix 约束响应: {content[:2000]}...")
 
@@ -1732,10 +1879,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             self.assert_content_not_empty(
                 resp, message=f"reasoning_effort={eff_val} [{strat}]"
             )
-            content = self.get_message_content(resp)
-            content_clean = self._strip_thinking_tags(content)
+            self._assert_finish_reason(resp)
+            content = self._get_formal_content(resp, test_logger, f"B11-{eff_val}")
             test_logger.info(
-                f"reasoning_effort={eff_val} (策略: {strat}) 最终回答: {content_clean[:2000]}..."
+                f"reasoning_effort={eff_val} (策略: {strat}) 最终回答: {content[:2000]}..."
             )
 
         # 对比 low vs high 的 completion_tokens（若两者均可用）
@@ -1768,9 +1915,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         # 弱断言：至少有一个 effort 值能给出正确答案
         correct_answer = False
         for eff_val, (resp, strat) in effort_results.items():
-            content = self.get_message_content(resp)
-            content_clean = self._strip_thinking_tags(content)
-            if any(kw in content_clean for kw in ["56088", "56088.0", "56,088"]):
+            content = self._get_formal_content(
+                resp, test_logger, f"B11-answer-{eff_val}"
+            )
+            if any(kw in content for kw in ["56088", "56088.0", "56,088"]):
                 test_logger.info(
                     f"reasoning_effort={eff_val} (策略: {strat}) 给出正确答案 56088"
                 )
