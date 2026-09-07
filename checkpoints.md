@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（10 大类 × 103 个测试点）
+## 二、测试点总览（10 大类 × 106 个测试点）
 
 ### 分类概览
 
@@ -36,7 +36,7 @@
 | G. API 兼容性   | 6    | OpenAI 兼容、参数一致性     |
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
-| J. clear_thinking 参数行为 | 8   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、deployment 能力探测 |
+| J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
 
 ---
 
@@ -210,23 +210,28 @@
 
 ---
 
-### J. clear_thinking 参数行为（8 项）
+### J. clear_thinking 参数行为（11 项）
 
 验证 `chat_template_kwargs.clear_thinking` 在多轮对话场景下对历史 assistant 思考内容
 （open-think ... close-think 块）的清除/保留行为，以及与 `enable_thinking` 的正交性。
-仅在多轮对话场景下有意义，单轮请求无效果。J6/J7/J8 为新增用例，覆盖 GLM-5.3 chat_template
-的 `reasoning_content` 独立字段分支、`reasoning_effort` 参数组合、多 assistant 边界逻辑。
+仅在多轮对话场景下有意义，单轮请求无效果。J6/J7/J8 覆盖 GLM-5.3 chat_template 的
+`reasoning_content` 独立字段分支、`reasoning_effort` 参数组合、多 assistant 边界逻辑；
+J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、last_user 之后 assistant
+思考保留边界。
 
-| #   | 测试点                                 | 测试内容                                                            | 验证方法                                                | 优先级 |
-|-----|------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|-----|
-| J1  | clear_thinking=true 多轮              | 显式清除历史 thinking，验证多轮请求成功且无 thinking 泄漏到后续上下文                      | 多轮 messages 含历史 think 块，断言响应成功且最终回答可基于历史最终答案推论     | P1  |
-| J2  | clear_thinking=false 多轮             | 显式保留历史 thinking，验证多轮请求成功（此时历史思考被服务端保留并送入上下文）                       | 同 J1 历史，断言响应成功且最终回答可基于历史最终答案推论                     | P1  |
-| J3  | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异，**严格断言 pt_false > pt_true**  | 同一组多轮 messages 分别以 true/false 发送，未生效（相等）时用例 FAIL | P2  |
-| J4  | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | enable_thinking=True 的两个组合必须通过；enable_thinking=False 的组合若检测到模型强制开启思考则 SKIP + WARNING | P1  |
-| J5  | clear_thinking deployment 能力探测       | 探测服务端是否真实实现 clear_thinking（pt_false > pt_true），未生效时记录 WARNING      | 探测未生效时 SKIP 并记录 WARNING；J3 在此基础上做行为硬断言        | P1  |
-| J6  | clear_thinking 对 reasoning_content 独立字段的处理 | assistant 以 reasoning_content 独立字段承载思考时验证 clear_thinking 行为（GLM-5.3 模版 L137-138） | 对比 true/false 的 prompt_tokens，相等时 record_warning（不 FAIL） | P1  |
-| J7  | clear_thinking 与 reasoning_effort 组合 | GLM-5.3 核心参数组合，验证参数正交性                            | 四种组合 (clear × effort) 至少 2 个通过；极端组合 pt 相等则 record_warning | P1  |
-| J8  | 多 assistant 边界测试 | 多条历史 assistant 消息下 last_user_index 边界条件（模版 L143）          | user1→assistant1→user2→assistant2→user3，对比 true/false 的 prompt_tokens | P2  |
+| #    | 测试点                                 | 测试内容                                                            | 验证方法                                                | 优先级 |
+|------|------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|-----|
+| J1   | clear_thinking=true 多轮              | 显式清除历史 thinking，验证多轮请求成功且无 thinking 泄漏到后续上下文                      | 多轮 messages 含历史 think 块，断言响应成功且最终回答可基于历史最终答案推论     | P1  |
+| J2   | clear_thinking=false 多轮             | 显式保留历史 thinking，验证多轮请求成功（此时历史思考被服务端保留并送入上下文）                       | 同 J1 历史，断言响应成功且最终回答可基于历史最终答案推论                     | P1  |
+| J3   | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异                  | 同一组多轮 messages 分别以 true/false 发送，pt_false > pt_true 时 PASS；未生效（相等）时 record_warning + SKIP | P2  |
+| J4   | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | enable_thinking=True 的两个组合必须通过；enable_thinking=False 的组合若检测到模型强制开启思考则 SKIP + WARNING | P1  |
+| J5   | clear_thinking deployment 能力探测       | 探测服务端是否真实实现 clear_thinking（pt_false > pt_true），未生效时记录 WARNING      | 探测未生效时 WARNING + record_warning（不 SKIP，始终报告 deployment 能力）；J3 在此基础上做行为验证 | P1  |
+| J6   | clear_thinking 对 reasoning_content 独立字段的处理 | assistant 以 reasoning_content 独立字段承载思考时验证 clear_thinking 行为（GLM-5.3 模版 L137-138） | 对比 true/false 的 prompt_tokens，相等时 record_warning（不 FAIL） | P1  |
+| J7   | clear_thinking 与 reasoning_effort 组合 | GLM-5.3 核心参数组合，验证参数正交性                            | 四种组合 (clear × effort) 至少 2 个通过；极端组合 pt 相等则 record_warning | P1  |
+| J8   | 多 assistant 边界测试 | 多条历史 assistant 消息下 last_user_index 边界条件（模版 L143，剥除分支）          | user1→assistant1→user2→assistant2→user3，对比 true/false 的 prompt_tokens | P2  |
+| J9   | clear_thinking 默认行为探测 | 不传 clear_thinking 时的服务端默认值验证（Qwen3 预期默认 true） | 不传 vs 显式 true/false 三次请求对比 prompt_tokens，默认 false 或不等则 record_warning | P2  |
+| J10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
+| J11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（J8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
 ---
 
@@ -307,7 +312,7 @@ I1-I12                      Completions API 质量评估 12 项
 J1, J2, J4, J5, J6, J7      clear_thinking 参数行为 6 项
 ```
 
-### P2（低优，11 项）
+### P2（低优，14 项）
 
 ```
 B6, B10                     高级功能 2 项
@@ -316,5 +321,5 @@ F3                          稳定性 1 项
                             API 兼容 0 项（G7/G8 已移除，response_format 见 B8/B9，stream 见 A4）
 H13                         Chat Completions API 质量评估 1 项
 I13                         Completions API 质量评估 1 项
-J3, J8                      clear_thinking 参数行为 2 项
+J3, J8, J9, J10, J11        clear_thinking 参数行为 5 项
 ```

@@ -535,6 +535,27 @@ TEST_CATEGORIES = {
                 "test_clear_thinking_multi_assistant_boundary",
                 "P2",
             ),
+            (
+                "J9",
+                "clear_thinking 默认行为探测",
+                "不传 clear_thinking 时的服务端默认值验证",
+                "test_clear_thinking_default_behavior",
+                "P2",
+            ),
+            (
+                "J10",
+                "clear_thinking 行为级验证",
+                "follow-up 依赖历史思考内容，验证模型是否真的看到历史 thinking",
+                "test_clear_thinking_behavioral_verification",
+                "P2",
+            ),
+            (
+                "J11",
+                "last_user 之后 assistant 思考保留边界",
+                "验证模版 loop.index0 > last_user_index 的保留分支",
+                "test_clear_thinking_after_last_user_boundary",
+                "P2",
+            ),
         ],
     },
 }

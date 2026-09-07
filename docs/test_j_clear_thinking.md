@@ -20,12 +20,15 @@ assistant 消息中的思考内容（open-think ... close-think 块或 reasoning
 |----|--------|---------|--------|
 | J1 | clear_thinking=true 多轮 | 显式清除历史 thinking，验证多轮请求成功且无泄漏 | P1 |
 | J2 | clear_thinking=false 多轮 | 显式保留历史 thinking，验证多轮请求成功 | P1 |
-| J3 | clear_thinking 对 prompt_tokens 的影响 | 严格断言 pt_false > pt_true，未生效时 FAIL | P2 |
+| J3 | clear_thinking 对 prompt_tokens 的影响 | 对比 pt_false > pt_true，未生效时 record_warning + SKIP | P2 |
 | J4 | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受 | P1 |
 | J5 | clear_thinking deployment 能力探测 | 探测服务端是否真实实现 clear_thinking，未生效时 WARNING + record_warning | P1 |
 | J6 | clear_thinking 对 reasoning_content 独立字段的处理 | assistant 消息以 reasoning_content 字段承载思考时验证 clear_thinking 行为 | P1 |
 | J7 | clear_thinking 与 reasoning_effort 组合 | GLM-5.3 等模型核心参数组合，验证参数正交性 | P1 |
 | J8 | 多 assistant 边界测试 | 多条历史 assistant 消息下 last_user_index 边界条件 | P2 |
+| J9 | clear_thinking 默认行为探测 | 不传 clear_thinking 时的服务端默认值验证 | P2 |
+| J10 | clear_thinking 行为级验证 | follow-up 依赖历史思考内容，验证模型是否真的"看到"历史 thinking | P2 |
+| J11 | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支 | P2 |
 
 ## 运行方式
 
@@ -62,13 +65,17 @@ pytest tests/test_j_clear_thinking.py -m smoke -v
 使用同一组多轮 messages，分别以 `clear_thinking=true` 和 `clear_thinking=false` 发送请求
 （false 用 `only_strategy` 保证策略一致），对比两者的 `usage.prompt_tokens`。
 
-**严格断言**：`pt_false` 必须严格大于 `pt_true`，相等即 FAIL。
-- 服务端正确实现 `clear_thinking` 时，`false`（保留历史思考）的 prompt_tokens 应严格大于 `true`
-- 服务端未返回 usage 字段时 SKIP（无法判定，不视为失败）
-- `pt_false == pt_true` 时 FAIL，强制回归保护——避免"参数被接受但未生效"的 deployment 静默通过
+**判定规则**：
+- `pt_false > pt_true` 时 PASS，记录差异量。
+- 服务端未返回 usage 字段时 SKIP（无法判定，不视为失败）。
+- `pt_false == pt_true`（参数被接受但未生效）时 `record_warning` + SKIP，
+  视为"服务端不支持 clear_thinking 的真实实现"，不判失败——
+  与 J5/J6/J7/J8 的"未生效则告警"策略保持一致。
 
-J3 依赖 `_probe_clear_thinking_effect` 的探测结果。J3 是"行为验证"，未生效时 FAIL；
-J5 是"能力探测"，未生效时 WARNING。两者互补。
+J3 依赖 `_probe_clear_thinking_effect` 的探测结果。J3 是"行为验证"（未生效时
+record_warning + SKIP），J5 是"能力探测"（未生效时 WARNING 但不 SKIP，始终报告
+deployment 能力）。两者互补：J5 让报告对 deployment 能力可见，J3 在未生效时跳过
+行为验证。
 
 ### test_clear_thinking_enable_combinations (J4)
 遍历四种 `(enable_thinking, clear_thinking)` 组合：
@@ -98,9 +105,9 @@ thinking 的剥除/保留行为。这是 deployment 能力的"事实判定"用�
 - **探测失败**（请求异常 / 无 usage）：SKIP，不视为失败
 
 J5 与 J3 的关系：
-- J5 是"能力探测"——未生效时 WARNING（不 FAIL），让报告对 deployment 能力可见
-- J3 是"行为验证"——未生效时 FAIL，强制 deployment 必须真实实现 clear_thinking 才能通过回归
-- 两者互补：J5 帮助定位"为什么 J3 失败"，J3 强制回归标准
+- J5 是"能力探测"——未生效时 WARNING（不 SKIP），始终报告 deployment 能力
+- J3 是"行为验证"——未生效时 `record_warning` + SKIP，不在未生效的 deployment 上强行通过
+- 两者互补：J5 帮助定位"为什么 J3 跳过"，J3 在未生效时跳过行为验证
 
 ### test_clear_thinking_reasoning_field (J6)
 验证 `clear_thinking` 对 `reasoning_content` **独立字段**的处理（区别于 J1/J2 的 content 内嵌标签）。
@@ -141,7 +148,48 @@ GLM-5.3 模版 L126-131 计算 `last_user_index`（最后一条 user 的索引�
 对比 `clear_thinking=true/false` 的 `prompt_tokens`，差异应大于单 assistant 场景：
 - `pt_false > pt_true` → 生效（INFO）
 - `pt_false == pt_true` → `record_warning`（多 assistant 场景未统一处理）
-- 请求失败 → `pytest.skip`
+- 请求失败 → `record_warning` + `pytest.skip`
+
+### test_clear_thinking_default_behavior (J9)
+验证**不传 `clear_thinking`** 时的服务端默认行为。三次请求使用相同下发策略和相同
+多轮 messages：
+
+1. 不传 `clear_thinking`（移除 `chat_template_kwargs` 中的 `clear_thinking` 键）
+2. 显式 `clear_thinking=true`
+3. 显式 `clear_thinking=false`
+
+对比 `prompt_tokens` 判定默认值：
+- `pt_no_param == pt_true` → 默认 true（清除历史思考，Qwen3 预期）
+- `pt_no_param == pt_false` → 默认 false（`record_warning`：可能导致多轮 context 膨胀）
+- `pt_no_param` 介于两者或不等 → `record_warning`（默认行为不明确）
+- 请求失败 → `record_warning` + `pytest.skip`
+
+### test_clear_thinking_behavioral_verification (J10)
+与 J1-J8 的 token 数验证**互补**，提供**行为级佐证**。follow-up 问题
+"你刚才用了哪两种验证方法？"只有读到历史 thinking 才能准确回答（历史 thinking
+提到"分解为 7+7+7..."和"6+6+6..."两种方法）。
+
+- `clear_thinking=false`（保留思考）：模型应能回忆方法细节，命中关键词
+- `clear_thinking=true`（清除思考）：模型只看到 "7 * 6 = 42"，不应命中
+
+判定规则（软断言，不硬失败）：
+- false 命中且 true 不命中 → ✓ 行为级佐证 clear_thinking 生效
+- 两者均命中 → `record_warning`（true 可能未真实剥除，或模型自行推测）
+- 两者均不命中 → `record_warning`（模型未引用历史思考，验证不明确）
+- 请求失败 → `record_warning` + `pytest.skip`
+
+### test_clear_thinking_after_last_user_boundary (J11)
+验证模版 `loop.index0 > ns.last_user_index` 的**"保留"分支**（J8 只覆盖"剥除"
+分支——所有 assistant 均在 last_user 之前）。
+
+消息序列：`user1 → assistant1(thinking) → user2 → assistant2(thinking)`
+- assistant1 在 last_user 之前 → `clear_thinking=true` 时剥除
+- assistant2 在 last_user 之后 → 即使 `clear_thinking=true` 也保留
+
+对比 `prompt_tokens`：
+- `pt_false > pt_true` → 边界逻辑生效（差值应仅反映 assistant1 思考被剥除）
+- `pt_false == pt_true` → `record_warning`（边界逻辑可能未生效）
+- 请求失败 → `record_warning` + `pytest.skip`
 
 ## enable_thinking 下发格式自动回退
 
@@ -191,23 +239,32 @@ HISTORY_ASSISTANT_CONTENT = (
   模型都能凭历史最终答案（42）推 126，避免对模型行为过度依赖
 - **enable_thinking 多策略回退**：自动尝试 4 种下发格式（见上节），首个成功即返回，
   避免对单一 deployment 形态过度耦合
-- **服务端不支持 `clear_thinking` 时 `pytest.skip` 跳过**而非 fail，保证不同 deployment
-  上报告稳定
+- **服务端不支持 `clear_thinking` 时 `record_warning` + `pytest.skip`** 跳过而非 fail，
+  保证不同 deployment 上报告稳定，且告警可追溯
 
 ## 断言策略
 
 - **J1/J2**：硬断言响应成功、最终回答非空；软断言（warning）模型基于历史最终答案推论
-  命中 `["126", "42 * 3"]`
-- **J3**：硬断言 `pt_false > pt_true`（严格大于，相等即 FAIL）；服务端未返回 usage 时 SKIP
+  命中 `["126", "42 * 3"]`；参数不支持时 `record_warning` + SKIP
+- **J3**：`pt_false > pt_true` 时 PASS；`pt_false == pt_true` 时 `record_warning` + SKIP
+  （参数被接受但未生效，视为不支持）；服务端未返回 usage 时 SKIP
 - **J4**：硬断言 `enable_thinking=True` 的两个组合返回 HTTP 200 且响应非空；
-  `enable_thinking=False` 的组合若检测到模型强制开启思考则 SKIP + WARNING（不视为失败）
-- **J5**：探测未生效时 WARNING + `record_warning`（不 FAIL）；探测失败时 SKIP
+  `enable_thinking=False` 的组合若检测到模型强制开启思考则 SKIP + WARNING（不视为失败）；
+  参数不支持时 `record_warning` + SKIP
+- **J5**：探测未生效时 WARNING + `record_warning`（不 SKIP，始终报告 deployment 能力）；
+  探测失败时 SKIP
 - **J6**：硬断言响应成功、非空；`pt_false == pt_true` 时 `record_warning`（不 FAIL）；
-  请求失败时 `pytest.skip`
-- **J7**：硬断言至少 2 个组合通过；极端组合 `pt` 相等时 `record_warning`（不 FAIL）；
-  所有组合失败时 `pytest.skip`
+  请求失败时 `record_warning` + `pytest.skip`
+- **J7**：通过组合 < 2 时 `record_warning` + SKIP；极端组合 `pt` 相等时 `record_warning`
+  （不 FAIL）；所有组合失败时 `record_warning` + `pytest.skip`
 - **J8**：硬断言响应成功、非空；`pt_false == pt_true` 时 `record_warning`（不 FAIL）；
-  请求失败时 `pytest.skip`
+  请求失败时 `record_warning` + `pytest.skip`
+- **J9**：`pt_no_param == pt_true` 时 PASS（默认 true）；`== pt_false` 或不等时
+  `record_warning`（不 FAIL）；请求失败时 `record_warning` + SKIP
+- **J10**：软断言（不硬失败）；false 命中且 true 不命中时 PASS；其余情况
+  `record_warning`；请求失败时 `record_warning` + SKIP
+- **J11**：`pt_false > pt_true` 时 PASS；`==` 时 `record_warning`（不 FAIL）；
+  请求失败时 `record_warning` + `pytest.skip`
 
 ## 注意事项
 
@@ -216,11 +273,17 @@ HISTORY_ASSISTANT_CONTENT = (
   Minimax-M2.5 是否改写过默认值需逐模型核对 `tokenizer_config.json` 的 `chat_template` 源码
 - 当前 `config.yaml` 的 `thinking_key` 仅覆盖 `enable_thinking`，未对 `clear_thinking`
   做模型级开关。J 类测试统一以 `chat_template_kwargs` 形式下发，不依赖 config 配置
-- 服务端若拒绝 `clear_thinking` 参数导致 HTTP 错误，用例以 `pytest.skip` 跳过而非
-  fail，使报告在不同 deployment 上稳定可用
-- **J6/J7/J8 为新增用例**，专门覆盖 GLM-5.3 chat_template 特性：
+- 服务端若拒绝 `clear_thinking` 参数导致 HTTP 错误，用例以 `record_warning` + `pytest.skip`
+  跳过而非 fail，使报告在不同 deployment 上稳定可用，且告警可追溯
+- **J6/J7/J8** 专门覆盖 GLM-5.3 chat_template 特性：
   - J6：`reasoning_content` 独立字段分支（模版 L137-138）
   - J7：`clear_thinking` + `reasoning_effort` 组合（GLM-5.3 核心参数）
-  - J8：多 assistant 消息下 `last_user_index` 边界逻辑（模版 L143）
+  - J8：多 assistant 消息下 `last_user_index` 边界逻辑（模版 L143，"剥除"分支）
+- **J9/J10/J11** 为补充用例：
+  - J9：不传 `clear_thinking` 时的默认行为探测，确认默认值是否符合预期
+  - J10：行为级验证——follow-up 依赖历史思考内容，验证模型是否真的"看到"历史 thinking，
+    与 J1-J8 的 token 数验证互补
+  - J11：`last_user` 之后 assistant 思考保留边界——覆盖模版 L143 `loop.index0 > ns.last_user_index`
+    的"保留"分支（J8 只覆盖"剥除"分支）
 - GLM-5.3 模版无 `enable_thinking` 变量，通过 `reasoning_effort`（low/high/max）控制
   思考强度，`enable_thinking` 参数对 GLM-5.3 无效
