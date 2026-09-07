@@ -29,8 +29,82 @@ from base.logger import TestLogger
 class TestBasicReasoning(BaseTest, StreamingTestMixin):
     """基础推理能力测试类"""
 
+    # 合法的 finish_reason 值（非流式最终响应）
+    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
+    # 流式最后一chunk的 finish_reason 额外允许 None（中间chunk无 finish_reason）
+    VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)
+
     def get_test_category(self) -> str:
         return "A. 基础推理能力"
+
+    # ------------------------------------------------------------------
+    # 辅助方法
+    # ------------------------------------------------------------------
+
+    def _get_formal_content(
+        self, response: Dict[str, Any], test_logger=None, context: str = ""
+    ) -> str:
+        """获取正式回复内容
+
+        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
+        reasoning_content 字段和 <think> 标签内容）。
+        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
+        回退到 content + reasoning_content，避免因思考模型 content 为空
+        导致后续断言失败。
+
+        Args:
+            response: API 响应字典
+            test_logger: 日志器（可选），回退时记录提示信息
+            context: 日志上下文标识
+        """
+        content = self.get_message_content(
+            response, strip_reasoning=True, strip_thinking=True
+        )
+        if not content.strip():
+            full = self.get_message_content(response)
+            if test_logger and full.strip():
+                test_logger.info(
+                    f"[{context}] 正式content为空，回退到content+reasoning"
+                    f"（思考模型可能被reasoning消耗了max_tokens）"
+                )
+            return full
+        return content
+
+    def _assert_finish_reason(
+        self, response: Dict[str, Any], allow_none: bool = False
+    ) -> str:
+        """断言 finish_reason 合法并返回其值
+
+        Args:
+            response: API 响应字典
+            allow_none: 是否允许 None（流式中间chunk）
+        """
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        valid = (
+            self.VALID_STREAM_FINISH_REASONS
+            if allow_none
+            else self.VALID_FINISH_REASONS
+        )
+        assert finish_reason in valid, (
+            f"finish_reason should be one of {valid}, got '{finish_reason}'"
+        )
+        return finish_reason
+
+    def _append_assistant_message(
+        self, messages: List[Dict[str, Any]], response: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """将 assistant 回复追加到消息列表
+
+        只保留 role 和 content（剥离 reasoning_content 字段），
+        避免将思考内容回传给模型导致上下文污染。
+        """
+        content = self.get_message_content(response, strip_reasoning=True)
+        messages.append({"role": "assistant", "content": content})
+        return messages
+
+    # ------------------------------------------------------------------
+    # 测试用例
+    # ------------------------------------------------------------------
 
     @pytest.mark.a_basic
     @pytest.mark.p0
@@ -47,15 +121,11 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "A1-单轮对话")
 
         self.assert_response_success(response)
+        # assert_content_not_empty 检查 content + reasoning，对思考模型安全
         self.assert_content_not_empty(response)
 
-        content = self.get_message_content(response)
-        assert len(content.strip()) > 0, "Response should contain non-empty text"
-
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("stop", "eos", "ended", "length"), (
-            f"finish_reason should be 'stop'/'eos'/'ended'/'length', got '{finish_reason}'"
-        )
+        content = self._get_formal_content(response, test_logger, "A1")
+        finish_reason = self._assert_finish_reason(response)
 
         assert response.get("id") is not None, "Response should contain 'id' field"
         assert response.get("model") is not None, (
@@ -87,7 +157,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response1, "A2-第1轮")
 
         self.assert_response_success(response1, "First round")
-        messages.append(response1["choices"][0]["message"])
+        self.assert_content_not_empty(response1, "First round")
+        self._append_assistant_message(messages, response1)
 
         # 第2轮
         test_logger.info("第2轮: 追问刚才说的颜色")
@@ -99,13 +170,15 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response2, "A2-第2轮")
 
         self.assert_response_success(response2, "Second round")
-        content2 = self.get_message_content(response2)
-        test_logger.info(f"第2轮回答: {content2[:2000]}...")
+        self.assert_content_not_empty(response2, "Second round")
+        # 使用 _get_formal_content 只检查正式回复，避免 reasoning 中的关键词干扰
+        content2 = self._get_formal_content(response2, test_logger, "A2-第2轮")
+        test_logger.info(f"第2轮回答: {content2[:2000]}")
 
         assert "蓝色" in content2 or "blue" in content2.lower(), (
             "Model should remember the previous context about blue color"
         )
-        messages.append(response2["choices"][0]["message"])
+        self._append_assistant_message(messages, response2)
 
         # 第3轮追问（用户从未提过水果，验证模型不产生幻觉）
         test_logger.info("第3轮: 问水果（用户从未提过，验证不产生幻觉）")
@@ -117,11 +190,14 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response3, "A2-第3轮")
 
         self.assert_response_success(response3, "Third round")
-        content3 = self.get_message_content(response3)
-        assert len(content3.strip()) > 0, "Third round response should not be empty"
+        self.assert_content_not_empty(response3, "Third round")
+        # strip_reasoning 避免模型在 reasoning 中讨论水果名被误判为幻觉
+        content3 = self._get_formal_content(response3, test_logger, "A2-第3轮")
 
         # 幻觉检测：用户从未提及水果，模型不应编造具体水果
-        common_fruits = ["苹果", "香蕉", "橙子", "葡萄", "西瓜", "草莓", "橘子", "梨"]
+        common_fruits = [
+            "苹果", "香蕉", "橙子", "葡萄", "西瓜", "草莓", "橘子", "梨",
+        ]
         hallucinated = [f for f in common_fruits if f in content3]
         if hallucinated:
             msg = f"第3轮模型可能产生幻觉，编造了用户未提及的水果: {hallucinated}"
@@ -130,7 +206,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         else:
             test_logger.info("第3轮幻觉检测通过：模型未编造用户未提及的水果")
 
-        messages.append(response3["choices"][0]["message"])
+        self._append_assistant_message(messages, response3)
 
         # 第4轮
         test_logger.info("第4轮: 问城市")
@@ -142,11 +218,14 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response4, "A2-第4轮")
 
         self.assert_response_success(response4, "Fourth round")
-        messages.append(response4["choices"][0]["message"])
+        self.assert_content_not_empty(response4, "Fourth round")
+        self._append_assistant_message(messages, response4)
 
         # 第5轮验证所有上下文
         test_logger.info("第5轮: 验证之前所有上下文")
-        messages.append({"role": "user", "content": "请总结一下我们刚才谈论的所有内容"})
+        messages.append(
+            {"role": "user", "content": "请总结一下我们刚才谈论的所有内容"}
+        )
         TestLogger.log_request(test_logger, messages)
 
         response5 = api_client.chat_completion(messages)
@@ -154,8 +233,9 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response5, "A2-第5轮")
 
         self.assert_response_success(response5, "Fifth round")
-        content5 = self.get_message_content(response5)
-        test_logger.info(f"第5轮总结: {content5[:2000]}...")
+        self.assert_content_not_empty(response5, "Fifth round")
+        content5 = self._get_formal_content(response5, test_logger, "A2-第5轮")
+        test_logger.info(f"第5轮总结: {content5[:2000]}")
 
         has_blue = "蓝色" in content5 or "blue" in content5.lower()
         has_shanghai = "上海" in content5 or "shanghai" in content5.lower()
@@ -170,7 +250,10 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         """A3: System Prompt - 设置系统角色，验证模型遵循程度"""
         test_logger.info("=== 测试开始: System Prompt ===")
 
-        system_prompt = "你是一个专业的Python编程助手，善于解释代码和解决编程问题。请始终以Python编程专家的身份回答。"
+        system_prompt = (
+            "你是一个专业的Python编程助手，善于解释代码和解决编程问题。"
+            "请始终以Python编程专家的身份回答。"
+        )
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -186,8 +269,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
 
-        content = self.get_message_content(response)
-        test_logger.info(f"响应内容: {content[:2000]}...")
+        content = self._get_formal_content(response, test_logger, "A3")
+        test_logger.info(f"响应内容: {content[:2000]}")
 
         assert any(
             kw in content.lower()
@@ -207,7 +290,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             "Model should not deny its Python expert role set by system prompt"
         )
 
-        messages.append(response["choices"][0]["message"])
+        # 第二轮：验证模型在偏离角色的问题上仍保持角色设定
+        self._append_assistant_message(messages, response)
         messages.append({"role": "user", "content": "今天天气怎么样？"})
 
         test_logger.info("验证模型在偏离角色的问题上仍保持角色设定")
@@ -216,11 +300,27 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response_deviate, "A3-角色偏离测试")
 
         self.assert_response_success(response_deviate)
-        content_deviate = self.get_message_content(response_deviate)
-        assert any(
-            kw in content_deviate.lower()
-            for kw in ["python", "编程", "代码", "code", "程序"]
-        ), "Model should still relate to programming even for off-topic questions"
+        self.assert_content_not_empty(response_deviate, "Deviate round")
+        content_deviate = self._get_formal_content(
+            response_deviate, test_logger, "A3-角色偏离"
+        )
+
+        # 模型不应否认其 Python 编程助手角色
+        assert not any(
+            kw in content_deviate.lower() for kw in deviated_keywords
+        ), (
+            "Model should not deny its Python expert role for off-topic questions"
+        )
+        # 模型应引导回编程话题或声明无法查询天气（而非直接回答天气问题）
+        role_keywords = ["python", "编程", "代码", "code", "程序"]
+        limitation_keywords = ["无法", "不能", "不具备", "抱歉", "sorry"]
+        assert (
+            any(kw in content_deviate.lower() for kw in role_keywords)
+            or any(kw in content_deviate.lower() for kw in limitation_keywords)
+        ), (
+            "Model should either relate to programming or acknowledge "
+            "inability to answer weather questions"
+        )
 
     @pytest.mark.a_basic
     @pytest.mark.p0
@@ -238,13 +338,18 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         result = self.collect_stream_chunks(response_iterator)
 
         test_logger.info(
-            f"接收到 {len(result['chunks'])} 个chunks，内容长度: {len(result['content'])}"
+            f"接收到 {len(result['chunks'])} 个chunks，"
+            f"内容长度: {len(result['content'])}，"
+            f"思考内容长度: {len(result['reasoning'])}"
         )
-        test_logger.info(f"流式内容: {result['content'][:2000]}...")
+        test_logger.info(f"流式内容: {result['content'][:2000]}")
 
         assert len(result["chunks"]) > 0, "Should receive streaming chunks"
-        assert len(result["content"].strip()) > 0, (
-            "Should receive non-empty content in streaming"
+
+        # 思考模型可能 content 为空但 reasoning 有内容
+        full_content = result["content"] + result["reasoning"]
+        assert len(full_content.strip()) > 0, (
+            "Should receive non-empty content or reasoning in streaming"
         )
 
         first_chunk = result["chunks"][0]
@@ -255,20 +360,33 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         assert (
             first_delta.get("role") == "assistant"
             or first_delta.get("content") is not None
-        ), "First chunk delta should contain role='assistant' or content"
+            or first_delta.get("reasoning") is not None
+            or first_delta.get("reasoning_content") is not None
+        ), (
+            "First chunk delta should contain role='assistant', "
+            "content, or reasoning"
+        )
 
+        # 至少一个 chunk 应有 delta.content 或 delta.reasoning
         has_content_delta = False
         for chunk in result["chunks"]:
             delta = chunk.get("choices", [{}])[0].get("delta", {})
-            if delta.get("content"):
+            if (
+                delta.get("content")
+                or delta.get("reasoning")
+                or delta.get("reasoning_content")
+            ):
                 has_content_delta = True
                 break
-        assert has_content_delta, "At least one chunk should have delta.content"
+        assert has_content_delta, (
+            "At least one chunk should have delta.content or delta.reasoning"
+        )
 
         last_chunk = result["chunks"][-1]
         last_finish = last_chunk.get("choices", [{}])[0].get("finish_reason")
-        assert last_finish in ("stop", "eos", "ended", "length", None), (
-            f"Last chunk finish_reason should be 'stop'/'eos'/'ended'/'length'/None, got '{last_finish}'"
+        assert last_finish in self.VALID_STREAM_FINISH_REASONS, (
+            f"Last chunk finish_reason should be one of "
+            f"{self.VALID_STREAM_FINISH_REASONS}, got '{last_finish}'"
         )
 
         # 检测流式响应是否被服务端积攒后一次性返回（软告警）
@@ -292,7 +410,9 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         test_logger.info(
             f"Streaming validation passed: {len(result['chunks'])} chunks, "
-            f"content length: {len(result['content'])}, last finish_reason: {last_finish}"
+            f"content length: {len(result['content'])}, "
+            f"reasoning length: {len(result['reasoning'])}, "
+            f"last finish_reason: {last_finish}"
         )
 
     @pytest.mark.a_basic
@@ -301,7 +421,9 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         """A5: 非流式输出 - stream=false，验证完整返回"""
         test_logger.info("=== 测试开始: 非流式输出 ===")
 
-        messages = [{"role": "user", "content": "请给我讲一个笑话"}]
+        messages = [
+            {"role": "user", "content": "请介绍一下机器学习的基本概念和应用场景"}
+        ]
         TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(messages, stream=False)
@@ -324,24 +446,29 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
                 "completion_tokens", 0
             ), (
                 f"total_tokens should equal prompt_tokens + completion_tokens, "
-                f"got total={usage['total_tokens']}, prompt={usage.get('prompt_tokens')}, "
+                f"got total={usage['total_tokens']}, "
+                f"prompt={usage.get('prompt_tokens')}, "
                 f"completion={usage.get('completion_tokens')}"
             )
 
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("stop", "eos", "ended", "length"), (
-            f"finish_reason should be 'stop'/'eos'/'ended'/'length', got '{finish_reason}'"
-        )
+        self._assert_finish_reason(response)
 
     @pytest.mark.a_basic
     @pytest.mark.p1
     def test_temperature_control(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """A6: Temperature 控制 - temp=0(确定性) vs temp=1.0(多样性)"""
+        """A6: Temperature 控制 - temp=0(确定性) vs temp=1.0(多样性)
+
+        使用开放性 prompt（"描述理想生活"）增大答案空间，使 temp=1.0
+        更容易体现多样性差异。使用 _get_formal_content 比较 formal content，
+        避免思考模型 reasoning 波动干扰相似度计算。
+        """
         test_logger.info("=== 测试开始: Temperature 控制 ===")
 
-        messages = [{"role": "user", "content": "请给出三个关于天气的形容词"}]
+        messages = [
+            {"role": "user", "content": "请用几句话描述一下你心目中的理想生活"}
+        ]
         TestLogger.log_request(test_logger, messages)
 
         # temp=0 确定性输出
@@ -351,8 +478,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response0, "A6-temp=0-第1次")
 
         self.assert_response_success(response0)
-        content0 = self.get_message_content(response0)
-        test_logger.info(f"temp=0 第一次响应: {content0[:2000]}...")
+        content0 = self._get_formal_content(response0, test_logger, "A6-temp=0-1")
+        test_logger.info(f"temp=0 第一次响应: {content0[:2000]}")
 
         # temp=1.0 多样性第一次输出
         test_logger.info("temp=1.0: 多样性第一次输出")
@@ -361,23 +488,25 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response1, "A6-temp=1.0-第1次")
 
         self.assert_response_success(response1)
-        content1 = self.get_message_content(response1)
-        test_logger.info(f"temp=1.0 响应: {content1[:2000]}...")
+        content1 = self._get_formal_content(response1, test_logger, "A6-temp=1.0-1")
+        test_logger.info(f"temp=1.0 响应: {content1[:2000]}")
 
-        # temp=0 应该更确定，多次调用结果应该相同
+        # temp=0 应该更确定，多次调用结果应该高度相似
         test_logger.info("验证temp=0的确定性：再次调用相同prompt")
         response0_repeat = api_client.chat_completion(messages, temperature=0.0)
         TestLogger.log_response(test_logger, response0_repeat, "temp=0第二次响应")
         self.log_full_response(test_logger, response0_repeat, "A6-temp=0-第2次")
 
         self.assert_response_success(response0_repeat)
-        content0_repeat = self.get_message_content(response0_repeat)
-        test_logger.info(f"temp=0 第二次响应: {content0_repeat[:2000]}...")
+        content0_repeat = self._get_formal_content(
+            response0_repeat, test_logger, "A6-temp=0-2"
+        )
+        test_logger.info(f"temp=0 第二次响应: {content0_repeat[:2000]}")
 
         similarity = SequenceMatcher(None, content0, content0_repeat).ratio()
         test_logger.info(f"temp=0 两次输出相似度: {similarity:.4f}")
-        assert similarity >= 0.5, (
-            f"temp=0 outputs should be similar (similarity={similarity:.4f}), "
+        assert similarity >= 0.8, (
+            f"temp=0 outputs should be highly similar (similarity={similarity:.4f}), "
             f"got:\n[1]{content0[:500]}\n[2]{content0_repeat[:500]}"
         )
 
@@ -388,32 +517,32 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response1_repeat, "A6-temp=1.0-第2次")
 
         self.assert_response_success(response1_repeat)
-        content1_repeat = self.get_message_content(response1_repeat)
-        test_logger.info(f"temp=1.0 第二次响应: {content1_repeat[:2000]}...")
+        content1_repeat = self._get_formal_content(
+            response1_repeat, test_logger, "A6-temp=1.0-2"
+        )
+        test_logger.info(f"temp=1.0 第二次响应: {content1_repeat[:2000]}")
 
         similarity_high = SequenceMatcher(None, content1, content1_repeat).ratio()
         test_logger.info(f"temp=1.0 两次输出相似度: {similarity_high:.4f}")
 
-        # 验证 temp=1.0 比 temp=0 更具多样性（相似度应更低）
-        # 软告警：temp=1.0 比 temp=0 更相似或完全相同时，提示 temperature 可能未生效
-        if similarity_high >= 0.99:
+        # temp=1.0 两次输出完全一致 → temperature 参数可能未生效（硬断言）
+        assert similarity_high < 0.99, (
+            f"temp=1.0 两次输出完全一致(相似度={similarity_high:.4f})，"
+            f"temperature 参数可能未生效"
+        )
+
+        # temp=1.0 相似度高于 temp=0 → temperature 多样性控制异常（软告警）
+        if similarity_high > similarity:
             msg = (
-                f"temp=1.0 两次输出完全一致(相似度={similarity_high:.4f})，"
-                f"temperature 参数可能未生效"
-            )
-            test_logger.warning(msg)
-            record_warning(msg)
-        elif similarity_high > similarity:
-            msg = (
-                f"temp=1.0 相似度({similarity_high:.4f})高于 temp=0({similarity:.4f})，"
-                f"temperature 多样性控制可能异常"
+                f"temp=1.0 相似度({similarity_high:.4f})高于 "
+                f"temp=0({similarity:.4f})，temperature 多样性控制可能异常"
             )
             test_logger.warning(msg)
             record_warning(msg)
         else:
             test_logger.info(
-                f"Temperature 多样性验证通过: temp=1.0 相似度({similarity_high:.4f}) "
-                f"< temp=0 相似度({similarity:.4f})"
+                f"Temperature 多样性验证通过: temp=1.0 相似度"
+                f"({similarity_high:.4f}) < temp=0 相似度({similarity:.4f})"
             )
 
         assert len(content0.strip()) > 0, "temp=0 response should not be empty"
@@ -449,27 +578,35 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             response = api_client.chat_completion(messages, top_p=param_value)
         else:
             try:
-                response = api_client.chat_completion(messages, top_k=int(param_value))
+                response = api_client.chat_completion(
+                    messages, top_k=int(param_value)
+                )
             except Exception as e:
-                pytest.skip(f"API不支持top_k参数: {e}")
+                # 仅对 400（参数不支持）跳过，其他错误（超时/500）向上抛出
+                if "400" in str(e):
+                    pytest.skip(f"API不支持top_k参数: {e}")
+                raise
 
         TestLogger.log_response(
             test_logger, response, f"{param_type}={param_value}响应"
         )
-        self.log_full_response(test_logger, response, f"A7-{param_type}={param_value}")
+        self.log_full_response(
+            test_logger, response, f"A7-{param_type}={param_value}"
+        )
 
         self.assert_response_success(response)
-        content = self.get_message_content(response)
-        test_logger.info(f"{param_type}={param_value} 响应: {content[:2000]}...")
+        self.assert_content_not_empty(response)
+
+        content = self._get_formal_content(
+            response, test_logger, f"A7-{param_type}={param_value}"
+        )
+        test_logger.info(f"{param_type}={param_value} 响应: {content[:2000]}")
 
         assert len(content.strip()) > 0, (
             f"{param_type}={param_value} response should not be empty"
         )
 
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("stop", "eos", "ended", "length"), (
-            f"finish_reason should be valid, got '{finish_reason}'"
-        )
+        self._assert_finish_reason(response)
 
     @pytest.mark.a_basic
     @pytest.mark.p0
@@ -477,29 +614,50 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
     def test_max_tokens_limit(
         self, api_client: ModelAPIClient, max_tokens: int, test_logger
     ):
-        """A8: Max Tokens限制 - 设置max_tokens，验证输出不超限"""
-        test_logger.info(f"=== 测试开始: Max Tokens限制 (max_tokens={max_tokens}) ===")
+        """A8: Max Tokens限制 - 设置max_tokens，验证输出不超限
+
+        注意：思考模型在 max_tokens 较小时，reasoning 可能消耗全部 token，
+        导致 content 为空。本测试验证的是 token 数量限制，使用
+        assert_content_not_empty 确保 content 或 reasoning 至少有一个非空，
+        但不单独要求 content 非空。使用 temp=0 确保输出一致性。
+        """
+        test_logger.info(
+            f"=== 测试开始: Max Tokens限制 (max_tokens={max_tokens}) ==="
+        )
 
         messages = [{"role": "user", "content": "请写一段尽可能长的文字，越长越好"}]
         TestLogger.log_request(test_logger, messages)
 
-        response = api_client.chat_completion(messages, max_tokens=max_tokens)
-        TestLogger.log_response(test_logger, response, f"max_tokens={max_tokens}响应")
+        response = api_client.chat_completion(
+            messages, max_tokens=max_tokens, temperature=0.0
+        )
+        TestLogger.log_response(
+            test_logger, response, f"max_tokens={max_tokens}响应"
+        )
         self.log_full_response(test_logger, response, f"A8-max_tokens={max_tokens}")
 
         self.assert_response_success(response)
+        # 验证 content 或 reasoning 至少有一个非空
+        # （思考模型 reasoning 可能消耗全部 token，content 可能为空）
+        self.assert_content_not_empty(response)
         self.assert_max_tokens_limit(response, max_tokens)
 
         usage = response.get("usage", {})
         completion_tokens = usage.get("completion_tokens", 0)
         test_logger.info(
-            f"max_tokens={max_tokens}, 实际completion_tokens={completion_tokens}"
+            f"max_tokens={max_tokens}, "
+            f"实际completion_tokens={completion_tokens}"
         )
 
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        finish_reason = self._assert_finish_reason(response)
+
+        # 当输出接近 max_tokens 时，finish_reason 应为 "length"
         if completion_tokens >= max_tokens - 5:
             assert finish_reason == "length", (
-                f"When output reaches max_tokens limit, finish_reason should be 'length', got '{finish_reason}'"
+                f"When output reaches max_tokens limit "
+                f"(completion_tokens={completion_tokens}, "
+                f"max_tokens={max_tokens}), "
+                f"finish_reason should be 'length', got '{finish_reason}'"
             )
 
     @pytest.mark.a_basic
@@ -507,7 +665,12 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
     def test_stop_sequences(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """A9: Stop Sequences - 设置stop token，验证截断"""
+        """A9: Stop Sequences - 设置stop token，验证截断
+
+        注意：很多模型可能不支持 stop 参数，思考模型在思考模式下 stop
+        sequence 还可能不生效（在 reasoning 阶段不触发），因此统一使用
+        软告警而非硬断言，本测试作为诊断工具评估 stop 支持情况。
+        """
         test_logger.info("=== 测试开始: Stop Sequences ===")
 
         # 强制指定水果顺序，确保 stop sequence 必然被遇到
@@ -528,37 +691,38 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response, "A9-StopSequences")
 
         self.assert_response_success(response)
-        content = self.get_message_content(response, strip_reasoning=True)
-        test_logger.info(f"Stop Sequences 响应(仅正式content): {content}")
+        content = self._get_formal_content(response, test_logger, "A9")
+        test_logger.info(f"Stop Sequences 响应(仅正式content): {content[:2000]}")
 
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        finish_reason = self._assert_finish_reason(response)
+
+        is_thinking = api_client.config.get("thinking_mode", False)
+        thinking_note = "（思考模式下 stop 序列可能不生效）" if is_thinking else ""
 
         # 检查 stop sequence 是否被正确触发：输出不应包含 stop 词
+        # 很多模型可能不支持 stop 参数，统一使用软告警而非硬断言
         stop_words = ["苹果", "香蕉"]
         violations = [w for w in stop_words if w in content]
         if violations:
             msg = (
                 f"Stop sequence 未生效：输出中仍包含 stop 词 {violations}，"
-                f"模型可能不支持 stop 参数（思考模式下 stop 序列可能不生效）"
+                f"模型可能不支持 stop 参数{thinking_note}"
             )
             test_logger.warning(msg)
             record_warning(msg)
         else:
             test_logger.info(
-                f"Stop sequence 生效：输出中不包含 stop 词 {stop_words}，内容被正确截断"
+                f"Stop sequence 生效：输出中不包含 stop 词 {stop_words}，"
+                f"内容被正确截断"
             )
 
-        assert finish_reason in ("stop", "length"), (
-            f"When stop sequence is triggered, finish_reason should be 'stop' or 'length', got '{finish_reason}'"
-        )
-
-        # 验证内容确实被截断：不应包含全部5种水果（排除stop词后）
+        # 验证内容确实被截断：不应包含全部后续水果
         remaining_fruits = ["橙子", "葡萄", "西瓜"]
         mentioned_remaining = [f for f in remaining_fruits if f in content]
         if len(mentioned_remaining) >= 3:
             msg = (
-                f"Stop sequence 可能未触发：输出仍包含全部后续水果 {mentioned_remaining}，"
-                f"模型可能忽略了stop参数"
+                f"Stop sequence 可能未触发：输出仍包含全部后续水果 "
+                f"{mentioned_remaining}，模型可能忽略了stop参数"
             )
             test_logger.warning(msg)
             record_warning(msg)
@@ -573,10 +737,20 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
     def test_seed_reproducibility(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """A10: Seed 可复现性 - 相同seed+temp=0，验证输出一致"""
+        """A10: Seed 可复现性 - 相同seed+temp=0，验证输出一致
+
+        使用 _get_formal_content 获取正式回复进行比较，避免思考模型
+        reasoning 每次波动拉低相似度。
+
+        注意：很多模型不支持 seed 参数或无法保证完全可复现（受硬件浮点
+        差异、batching 策略等影响），因此所有不一致情况统一使用软告警，
+        本测试作为诊断工具评估 seed 支持情况，不作为硬性失败条件。
+        """
         test_logger.info("=== 测试开始: Seed 可复现性 ===")
 
-        messages = [{"role": "user", "content": "请用一个词形容天空"}]
+        messages = [
+            {"role": "user", "content": "请用一句话形容天空，并说明原因"}
+        ]
         TestLogger.log_request(test_logger, messages)
 
         # 第一次调用
@@ -586,8 +760,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response1, "A10-Seed-第1次")
 
         self.assert_response_success(response1)
-        content1 = self.get_message_content(response1)
-        test_logger.info(f"第一次响应: {content1}")
+        content1 = self._get_formal_content(response1, test_logger, "A10-1")
+        test_logger.info(f"第一次响应: {content1[:2000]}")
 
         # 第二次调用，相同参数
         test_logger.info("第二次调用 (seed=42, temp=0)")
@@ -596,20 +770,20 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.log_full_response(test_logger, response2, "A10-Seed-第2次")
 
         self.assert_response_success(response2)
-        content2 = self.get_message_content(response2)
-        test_logger.info(f"第二次响应: {content2}")
+        content2 = self._get_formal_content(response2, test_logger, "A10-2")
+        test_logger.info(f"第二次响应: {content2[:2000]}")
 
         if content1 == content2:
             test_logger.info("Seed 可复现性测试通过：两次输出完全一致")
         else:
             similarity = SequenceMatcher(None, content1, content2).ratio()
             test_logger.warning(f"两次输出不完全一致，相似度: {similarity:.4f}")
-            test_logger.warning(f"[1] {content1}")
-            test_logger.warning(f"[2] {content2}")
+            test_logger.warning(f"[1] {content1[:500]}")
+            test_logger.warning(f"[2] {content2[:500]}")
             if similarity < 0.3:
-                test_logger.warning("相似度极低，模型可能不支持seed参数，跳过严格断言")
-                record_warning("模型可能不支持seed参数")
-                test_logger.info("Seed 可复现性测试降级通过：模型可能不支持seed参数")
+                msg = f"相似度极低({similarity:.4f})，模型可能不支持seed参数"
+                test_logger.warning(msg)
+                record_warning(msg)
             elif similarity < 0.6:
                 msg = (
                     f"相似度较低({similarity:.4f})，模型可能仅部分支持seed参数，"
@@ -617,11 +791,16 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
                 )
                 test_logger.warning(msg)
                 record_warning(msg)
-                test_logger.info("Seed 可复现性测试降级通过：模型部分支持seed参数")
+            elif similarity < 0.9:
+                msg = (
+                    f"相似度较高但未完全一致({similarity:.4f})，seed 可复现性"
+                    f"基本正常但存在轻微波动"
+                )
+                test_logger.warning(msg)
+                record_warning(msg)
             else:
-                assert similarity >= 0.9, (
-                    f"Seed reproducibility: outputs with same seed should be nearly identical "
-                    f"(similarity={similarity:.4f})"
+                test_logger.info(
+                    f"Seed 可复现性基本通过：相似度 {similarity:.4f}（接近完全一致）"
                 )
 
     @pytest.mark.a_basic
@@ -641,7 +820,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             (
                 "fr",
                 "Présentez Paris en français",
-                r"[a-zA-ZàâéèêëïîôùûüçÀÂÉÈÊËÏÎÔÙÛÜÇ]",
+                r"[àâéèêëïîôùûüçÀÂÉÈÊËÏÎÔÙÛÜÇ]",
             ),
         ],
     )
@@ -653,7 +832,12 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         expected_chars: str,
         test_logger,
     ):
-        """A11: 多语言能力 - 中/英/日/韩/法等多语言输入输出"""
+        """A11: 多语言能力 - 中/英/日/韩/法等多语言输入输出
+
+        法语正则仅匹配法语特有字符（é/è/ç/ô 等），不包含 a-zA-Z，
+        避免英语回复误通过。使用 _get_formal_content 避免思考模型
+        reasoning 中的其他语言字符干扰。
+        """
         test_logger.info(f"=== 测试开始: 多语言能力 ({lang}) ===")
 
         messages = [{"role": "user", "content": prompt}]
@@ -666,15 +850,18 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
 
-        content = self.get_message_content(response)
-        test_logger.info(f"Language {lang} 响应: {content[:2000]}...")
+        content = self._get_formal_content(
+            response, test_logger, f"A11-{lang}"
+        )
+        test_logger.info(f"Language {lang} 响应: {content[:2000]}")
 
         assert len(content.strip()) > 10, (
             f"Response too short for {lang}: got {len(content.strip())} chars"
         )
 
         assert re.search(expected_chars, content) is not None, (
-            f"Response for {lang} should contain expected character patterns ({expected_chars}), got: {content[:200]}"
+            f"Response for {lang} should contain expected character patterns "
+            f"({expected_chars}), got: {content[:200]}"
         )
 
     @pytest.mark.a_basic
@@ -690,13 +877,17 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             (
                 "code",
                 "请解释以下Python代码：\n```python\ndef hello():\n    print('Hello World')\n```",
-                ["hello", "def", "print", "函数", "python"],
+                ["hello", "def", "print", "函数", "python", "调用"],
             ),
-            ("math", "请计算：∫₀² x² dx = ?", ["8/3", "2.667", "积分", "x²"]),
+            (
+                "math",
+                "请计算：∫₀² x² dx = ?",
+                ["8/3", "2.667", "2.67", "积分", "x²", "三分之八"],
+            ),
             (
                 "html",
                 "请解析以下HTML：<div class='container'><p>Hello</p></div>",
-                ["div", "p", "container", "html"],
+                ["div", "p", "container", "html", "标签", "class"],
             ),
         ],
     )
@@ -708,7 +899,11 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         expected_keywords: list,
         test_logger,
     ):
-        """A12: 特殊Token处理 - 含emoji、代码块、数学符号、HTML标签的输入"""
+        """A12: 特殊Token处理 - 含emoji、代码块、数学符号、HTML标签的输入
+
+        使用 _get_formal_content 避免 reasoning 中的关键词干扰，
+        最低匹配数从 1 提升到 2，扩充关键词列表。
+        """
         test_logger.info(f"=== 测试开始: 特殊Token处理 ({test_type}) ===")
 
         messages = [{"role": "user", "content": prompt}]
@@ -716,20 +911,25 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         response = api_client.chat_completion(messages)
         TestLogger.log_response(test_logger, response, f"{test_type}响应")
-        self.log_full_response(test_logger, response, f"A12-特殊Token-{test_type}")
+        self.log_full_response(
+            test_logger, response, f"A12-特殊Token-{test_type}"
+        )
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
 
-        content = self.get_message_content(response)
+        content = self._get_formal_content(
+            response, test_logger, f"A12-{test_type}"
+        )
         content_lower = content.lower()
 
         matched = [kw for kw in expected_keywords if kw.lower() in content_lower]
-        assert len(matched) >= 1, (
-            f"Response for {test_type} should contain at least one of {expected_keywords}, "
-            f"matched: {matched}, got: {content[:500]}"
+        assert len(matched) >= 2, (
+            f"Response for {test_type} should contain at least 2 of "
+            f"{expected_keywords}, matched: {matched}, got: {content[:500]}"
         )
 
         test_logger.info(
-            f"Special token test ({test_type}) passed, matched keywords: {matched}"
+            f"Special token test ({test_type}) passed, "
+            f"matched keywords: {matched}"
         )
