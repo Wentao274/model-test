@@ -97,6 +97,70 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "D. 长上下文处理"
 
+    # 合法的 finish_reason 值（非流式最终响应）
+    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
+    # 流式最后一chunk的 finish_reason 额外允许 None（中间chunk无 finish_reason）
+    VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)
+
+    # ------------------------------------------------------------------
+    # 辅助方法
+    # ------------------------------------------------------------------
+
+    def _get_formal_content(
+        self, response: Dict[str, Any], test_logger=None, context: str = ""
+    ) -> str:
+        """获取正式回复内容
+
+        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
+        reasoning_content 字段和 think 标签内容）。
+        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
+        回退到 content + reasoning_content，避免因思考模型 content 为空
+        导致后续断言失败。
+        """
+        content = self.get_message_content(
+            response, strip_reasoning=True, strip_thinking=True
+        )
+        if not content.strip():
+            full = self.get_message_content(response)
+            if test_logger and full.strip():
+                test_logger.info(
+                    f"[{context}] 正式content为空，回退到content+reasoning"
+                    f"（思考模型可能被reasoning消耗了max_tokens）"
+                )
+            return full
+        return content
+
+    def _assert_finish_reason(
+        self, response: Dict[str, Any], allow_none: bool = False
+    ) -> str:
+        """断言非流式响应 finish_reason 合法并返回其值"""
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        valid = (
+            self.VALID_STREAM_FINISH_REASONS
+            if allow_none
+            else self.VALID_FINISH_REASONS
+        )
+        assert finish_reason in valid, (
+            f"finish_reason should be one of {valid}, got '{finish_reason}'"
+        )
+        return finish_reason
+
+    def _assert_stream_finish_reason(self, result: Dict[str, Any]) -> str:
+        """断言流式响应最后 chunk 的 finish_reason 合法并返回其值
+
+        Args:
+            result: collect_stream_chunks 返回的字典
+        """
+        chunks = result.get("chunks", [])
+        assert len(chunks) > 0, "No streaming chunks received"
+        last_chunk = chunks[-1]
+        finish_reason = last_chunk.get("choices", [{}])[0].get("finish_reason")
+        assert finish_reason in self.VALID_STREAM_FINISH_REASONS, (
+            f"Last chunk finish_reason should be one of "
+            f"{self.VALID_STREAM_FINISH_REASONS}, got '{finish_reason}'"
+        )
+        return finish_reason
+
     @staticmethod
     def _get_max_context_len(model_info: dict) -> int:
         """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和 sglang(context-length) 以及部分模型(context_window)"""
@@ -188,7 +252,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         return (explicit_unknown and param_related) or (http_bad_request and param_related)
 
     def _check_has_thinking(self, response: dict, test_logger) -> bool:
-        """检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签）"""
+        """检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签）
+
+        标签检测复用基类 strip_thinking_content（兼容 MiniMax/kimi-k3 等格式），
+        避免与本类历史实现重复维护。
+        """
         reasoning = self.get_reasoning_content(response)
         content = self.get_message_content(response)
         finish_reason = response.get("choices", [{}])[0].get("finish_reason", "")
@@ -196,30 +264,21 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         has_thinking_tags = False
         thinking_content = ""
         if content:
-            if "<think>" in content and "</think>" in content:
-                start = content.find("<think>") + len("<think>")
-                end = content.find("</think>")
-                thinking_content = content[start:end].strip()
+            # 复用基类 strip_thinking_content 检测 content 中是否含思考标签：
+            # 若剥离后内容变短，说明存在思考标签
+            TS = chr(60) + "think" + chr(62)
+            TE = chr(60) + "/think" + chr(62)
+            stripped = self.strip_thinking_content(content)
+            if stripped != content:
+                thinking_content = content[: content.find(stripped)] if stripped else content
+                thinking_content = thinking_content.strip()
                 has_thinking_tags = len(thinking_content) > 0
-            elif content.startswith("<|im_start|>assistant\n\n"):
-                after_start = content.find("\n") + len("\n")
-                if "</think>" in content:
-                    end = content.find("</think>")
-                    thinking_content = content[after_start:end].strip()
-                    has_thinking_tags = len(thinking_content) > 0
-            elif "<|close|>think" in content and "<think>" not in content:
-                end = content.find("<|close|>think")
-                thinking_content = content[:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-                if has_thinking_tags:
+                if has_thinking_tags and "<|close|>think" in content and TS not in content:
                     test_logger.info("检测到 kimi-k3 格式（<|close|>think 分隔符）")
-            elif "</think>" in content and "<think>" not in content:
-                end = content.find("</think>")
-                thinking_content = content[:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-                test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
+                elif has_thinking_tags and TE in content and TS not in content:
+                    test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
             elif finish_reason == "length" and not has_reasoning_field:
-                # kimi-k3 思考被 max_tokens 截断：未输出 <|close|>think 结束标志，
+                # kimi-k3 思考被 max_tokens 截断：未输出思考结束标志，
                 # 整段 content 为被截断的思考。通过推理特征语言区分思考 vs 普通回答。
                 reasoning_markers = [
                     "the user", "i should", "i need to", "let me",
@@ -258,8 +317,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             0. {} - 不传 thinking 参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
             1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
             2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
-            3. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
-            4. chat_template_kwargs.thinking + reasoning_effort=high
+            3. {"chat_template_kwargs": {"enable_thinking": True}}  - chat_template 方式（vLLM/Qwen3 等）
+            4. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
+            5. chat_template_kwargs.thinking + reasoning_effort=high
                 - 部分 vLLM/SGLang 部署需要 reasoning_effort 才会触发思考
 
         遍历所有策略后，若均未获取到思考内容，则 fallback 到不传任何
@@ -275,6 +335,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             (
                 "chat_template_kwargs.thinking",
                 {"chat_template_kwargs": {"thinking": True}},
+            ),
+            (
+                "chat_template_kwargs.enable_thinking",
+                {"chat_template_kwargs": {"enable_thinking": True}},
             ),
             (
                 "thinking.type.enabled",
@@ -346,6 +410,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_short_context_baseline(self, api_client: ModelAPIClient, test_logger):
+        """D1: 短上下文基线 - input ~800 tokens，验证正常推理"""
         test_logger.info("=== 测试开始: 短上下文基线 ===")
 
         prompt = generate_mixed_content(800) + "\n\n请简要总结以上内容。"
@@ -359,9 +424,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
+        self._assert_finish_reason(response)
 
-        content = self.get_message_content(response)
-        assert len(content.strip()) > 20, (
+        content = self._get_formal_content(response, test_logger, "D1")
+        assert len(content.strip()) > 50, (
             f"Short context response should be substantive, got {len(content.strip())} chars"
         )
 
@@ -369,7 +435,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         assert usage.get("completion_tokens", 0) > 0, (
             "Should have completion_tokens > 0"
         )
-        assert usage.get("prompt_tokens", 0) > 0, "Should have prompt_tokens > 0"
+        assert usage.get("prompt_tokens", 0) > 400, (
+            f"Short context (~800 tokens input) should have prompt_tokens > 400, "
+            f"got {usage.get('prompt_tokens')}"
+        )
         test_logger.info(
             f"Short context baseline passed, prompt_tokens={usage.get('prompt_tokens')}, "
             f"completion_tokens={usage.get('completion_tokens')}"
@@ -392,15 +461,19 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
+        self._assert_finish_reason(response)
 
-        content = self.get_message_content(response)
+        content = self._get_formal_content(response, test_logger, "D2")
         assert len(content.strip()) > 50, (
             f"Medium context response should be substantive, got {len(content.strip())} chars"
         )
 
         usage = response.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
-        assert prompt_tokens > 0, "Should have prompt_tokens > 0 for medium context"
+        assert prompt_tokens > 4000, (
+            f"Medium context (~12K tokens input) should have prompt_tokens > 4000, "
+            f"got {prompt_tokens}"
+        )
         assert usage.get("completion_tokens", 0) > 0, (
             "Should have completion_tokens > 0"
         )
@@ -426,15 +499,19 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
+        self._assert_finish_reason(response)
 
-        content = self.get_message_content(response)
+        content = self._get_formal_content(response, test_logger, "D3")
         assert len(content.strip()) > 50, (
             f"Long context response should be substantive, got {len(content.strip())} chars"
         )
 
         usage = response.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
-        assert prompt_tokens > 0, "Should have prompt_tokens > 0 for long context"
+        assert prompt_tokens > 15000, (
+            f"Long context (~50K tokens input) should have prompt_tokens > 15000, "
+            f"got {prompt_tokens}"
+        )
         assert usage.get("completion_tokens", 0) > 0, (
             "Should have completion_tokens > 0"
         )
@@ -462,16 +539,18 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             self.log_full_response(test_logger, response, "D4-超长上下文")
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
+            self._assert_finish_reason(response)
 
-            content = self.get_message_content(response)
-            assert len(content.strip()) > 10, (
+            content = self._get_formal_content(response, test_logger, "D4")
+            assert len(content.strip()) > 50, (
                 f"Super long context response should not be trivial, got {len(content.strip())} chars"
             )
 
             usage = response.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
-            assert prompt_tokens > 0, (
-                "Should have prompt_tokens > 0 for super long context"
+            assert prompt_tokens > 50000, (
+                f"Super long context (~128K tokens input) should have prompt_tokens > 50000, "
+                f"got {prompt_tokens}"
             )
             assert usage.get("completion_tokens", 0) > 0, (
                 "Should have completion_tokens > 0"
@@ -481,8 +560,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 f"completion_tokens={usage.get('completion_tokens')}"
             )
         except Exception as e:
-            if "max_model_len" in str(e).lower() or "context" in str(e).lower():
-                pytest.skip(f"Model does not support this context length: {e}")
+            if self._is_over_limit_error(e):
+                pytest.skip(f"Model/proxy does not support this context length: {e}")
             raise
 
     @pytest.mark.d_long_context
@@ -505,7 +584,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         test_logger.info("=== 测试开始: 大海捞针 ===")
 
-        needle = "特殊标记：项目Alpha的第37号实验结果为42，这是唯一正确的数值。"
+        # 使用具有高区分度的needle：组合独特项目代号+实验编号+结果数值，
+        # 避免常见数字（如42）在reasoning_content中被讨论导致假阳性。
+        needle = "特殊标记：项目Phoenix-37号的实验结果为8742，这是唯一正确的数值。"
 
         def _is_garbled(text: str, threshold: float = 0.4) -> bool:
             """检测文本是否为乱码/噪声输出
@@ -574,6 +655,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             self.log_full_response(test_logger, response, f"D5-{scenario_name}")
 
             self.assert_response_success(response)
+            self._assert_finish_reason(response)
 
             usage = response.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
@@ -586,7 +668,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 )
 
             self.assert_content_not_empty(response)
-            content = self.get_message_content(response)
+            # 使用 _get_formal_content 排除 reasoning_content：思考模型的
+            # reasoning 中可能讨论 needle 关键词（如 "8742"、"Phoenix"），
+            # 若用 get_message_content（含 reasoning）会假阳性通过。
+            content = self._get_formal_content(response, test_logger, f"D5-{scenario_name}")
 
             assert prompt_tokens > 0, (
                 f"[{scenario_name}] Should have prompt_tokens > 0 for NIAH test, "
@@ -608,8 +693,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             content_lower = content.lower()
 
             needle_core_assertions = [
-                ("42", "42"),
-                ("alpha", "Alpha"),
+                ("8742", "8742"),
+                ("phoenix", "Phoenix"),
             ]
             needle_secondary = [
                 ("特殊标记", "特殊标记"),
@@ -723,15 +808,15 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             assert result["content"] or result["reasoning"], (
                 "Should have non-empty content or reasoning near context limit"
             )
+            self._assert_stream_finish_reason(result)
             test_logger.info(
                 f"接近上限场景通过, chunks={len(result['chunks'])}, "
                 f"content_len={len(result['content'])}"
             )
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(
-                kw in error_msg
-                for kw in ["413", "request entity too large", "timed out", "timeout"]
+            if self._is_over_limit_error(e) or any(
+                kw in str(e).lower()
+                for kw in ["timed out", "timeout"]
             ):
                 pytest.skip(
                     f"Request near max context length {max_len} failed due to "
@@ -781,6 +866,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             assert result["content"] or result["reasoning"], (
                 "Should have non-empty content or reasoning after truncation"
             )
+            self._assert_stream_finish_reason(result)
             test_logger.info(
                 f"Context truncation handled: chunks={len(result['chunks'])}, "
                 f"content_len={len(result['content'])}, "
@@ -845,7 +931,17 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             )
 
             assert len(result["chunks"]) > 0, "Should receive streaming chunks"
+            self._assert_stream_finish_reason(result)
             content = result["content"]
+
+            # 思考模型可能将 max_tokens 全部消耗于 reasoning，导致 formal content
+            # 为空。此时回退到 content + reasoning 以避免假阳性失败。
+            if not content.strip() and result["reasoning"]:
+                test_logger.info(
+                    "D8: 流式 content 为空，回退到 content+reasoning"
+                    f"（思考模型可能被reasoning消耗了max_tokens）"
+                )
+                content = result["content"] + result["reasoning"]
 
             # 流式无 usage，通过字符数估算: 4K tokens 约对应 2000+ 中文字符
             test_logger.info(
@@ -858,8 +954,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 f"Expected long output (>=2000 chars, ~4K tokens), got {len(content)} chars"
             )
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(kw in error_msg for kw in ["timed out", "timeout"]):
+            if any(kw in str(e).lower() for kw in ["timed out", "timeout"]):
                 pytest.skip(f"Long output generation timed out: {e}")
             raise
 
@@ -882,10 +977,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             TestLogger.log_response(test_logger, response, "超长上下文响应")
 
             self.assert_response_success(response)
+            self._assert_finish_reason(response)
             self.log_full_response(test_logger, response, "D9-超长上下文(非流式)")
 
             reasoning = self.get_reasoning_content(response)
-            content = self.get_message_content(response)
+            content = self._get_formal_content(response, test_logger, "D9")
 
             assert content and len(content.strip()) > 0, (
                 "Should have non-empty content in super long context"
@@ -909,17 +1005,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             )
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(
-                kw in error_msg
-                for kw in [
-                    "max_model_len",
-                    "context",
-                    "413",
-                    "request entity too large",
-                    "timed out",
-                    "timeout",
-                ]
+            if self._is_over_limit_error(e) or any(
+                kw in str(e).lower() for kw in ["timed out", "timeout"]
             ):
                 pytest.skip(f"Model/proxy does not support this context length: {e}")
             raise
@@ -959,10 +1046,25 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             assert result["content"] or result["reasoning"], (
                 "Should have non-empty content or reasoning in streaming response"
             )
+            self._assert_stream_finish_reason(result)
             if result["content"]:
                 assert len(result["content"].strip()) > 0, (
                     "Streaming content should not be empty"
                 )
+            # 检测流式响应是否被服务端积攒后一次性返回（软告警）
+            is_buffered, duplicate_groups, stats = self.detect_buffered_streaming(result)
+            if stats.get("skipped"):
+                test_logger.info(f"[D10] 流式积攒检测跳过: {stats.get('skip_reason')}")
+            else:
+                test_logger.info(
+                    f"[D10] 流式时间戳统计: 总chunk={stats['total_chunks']}, "
+                    f"唯一时间戳={stats['unique_timestamps']}, "
+                    f"重复chunk占比={stats['dup_ratio']:.2%}"
+                )
+                if is_buffered:
+                    self.log_buffered_streaming_warning(
+                        test_logger, result, duplicate_groups, stats, context="D10"
+                    )
             test_logger.info(
                 f"Streaming chunks: {len(result['chunks'])}, "
                 f"content length: {len(result['content'])}, "
@@ -970,17 +1072,8 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             )
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(
-                kw in error_msg
-                for kw in [
-                    "max_model_len",
-                    "context",
-                    "413",
-                    "request entity too large",
-                    "timed out",
-                    "timeout",
-                ]
+            if self._is_over_limit_error(e) or any(
+                kw in str(e).lower() for kw in ["timed out", "timeout"]
             ):
                 pytest.skip(f"Model/proxy does not support this context length: {e}")
             raise
@@ -1099,6 +1192,14 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 ok = len(result["chunks"]) > 0 and (
                     result["content"] or result["reasoning"]
                 )
+                if ok:
+                    try:
+                        self._assert_stream_finish_reason(result)
+                    except AssertionError as fre:
+                        test_logger.warning(
+                            f"长度 {size_tokens} finish_reason 异常: {fre}"
+                        )
+                        return False, fre
                 return ok, None
             except Exception as e:
                 test_logger.warning(f"长度 {size_tokens} 异常: {e}")
@@ -1232,8 +1333,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                     f"测试预算 {overall_budget}s 耗尽，仅验证至 "
                     f"{successful_len}/{max_len} ({ratio:.2%})，无法完成完整边界测试"
                 )
-            assert ratio > PASS_RATIO or successful_len >= max_len * PASS_RATIO, (
-                f"Model claims {max_len} but only supports ~{successful_len}"
+            assert ratio >= PASS_RATIO, (
+                f"Model claims {max_len} but only supports ~{successful_len} "
+                f"({ratio:.2%} < {PASS_RATIO:.0%})"
             )
             test_logger.info("上下文边界验证通过")
 
@@ -1325,9 +1427,10 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         self.assert_response_success(response)
         self.assert_content_not_empty(response)
+        self._assert_finish_reason(response)
 
         reasoning = self.get_reasoning_content(response)
-        content = self.get_message_content(response)
+        content = self._get_formal_content(response, test_logger, "D12")
 
         assert has_thinking, (
             "Thinking mode should return reasoning content (reasoning field or thinking tags) "
