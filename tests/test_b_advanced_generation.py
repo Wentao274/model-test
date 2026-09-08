@@ -208,53 +208,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
     def get_test_category(self) -> str:
         return "B. 高级生成功能"
 
-    # 合法的 finish_reason 值（非流式最终响应）
-    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
-    # 流式最后一chunk的 finish_reason 额外允许 None（中间chunk无 finish_reason）
-    VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)
-
     # ------------------------------------------------------------------
     # 辅助方法
     # ------------------------------------------------------------------
-
-    def _get_formal_content(
-        self, response: Dict[str, Any], test_logger=None, context: str = ""
-    ) -> str:
-        """获取正式回复内容
-
-        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
-        reasoning_content 字段和 think 标签内容）。
-        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
-        回退到 content + reasoning_content，避免因思考模型 content 为空
-        导致后续断言失败。
-        """
-        content = self.get_message_content(
-            response, strip_reasoning=True, strip_thinking=True
-        )
-        if not content.strip():
-            full = self.get_message_content(response)
-            if test_logger and full.strip():
-                test_logger.info(
-                    f"[{context}] 正式content为空，回退到content+reasoning"
-                    f"（思考模型可能被reasoning消耗了max_tokens）"
-                )
-            return full
-        return content
-
-    def _assert_finish_reason(
-        self, response: Dict[str, Any], allow_none: bool = False
-    ) -> str:
-        """断言 finish_reason 合法并返回其值"""
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        valid = (
-            self.VALID_STREAM_FINISH_REASONS
-            if allow_none
-            else self.VALID_FINISH_REASONS
-        )
-        assert finish_reason in valid, (
-            f"finish_reason should be one of {valid}, got '{finish_reason}'"
-        )
-        return finish_reason
 
     def _append_assistant_message(
         self, messages: List[Dict[str, Any]], response: Dict[str, Any]
@@ -323,203 +279,43 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             raise ValueError(f"Invalid expression syntax: {e}") from e
         return _eval_node(tree)
 
-    def _check_has_thinking(self, response: dict, test_logger) -> bool:
-        reasoning = self.get_reasoning_content(response)
-        content = self.get_message_content(response)
-        has_reasoning_field = reasoning is not None and len(reasoning.strip()) > 0
-        has_thinking_tags = False
-        thinking_content = ""
-        if content:
-            if "<think>" in content and "</think>" in content:
-                start = content.find("<think>") + len("<think>")
-                end = content.find("</think>")
-                thinking_content = content[start:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-            elif content.startswith("<|im_start|>assistant\n\n"):
-                after_start = content.find("\n") + len("\n")
-                if "</think>" in content:
-                    end = content.find("</think>")
-                    thinking_content = content[after_start:end].strip()
-                    has_thinking_tags = len(thinking_content) > 0
-            elif "<|close|>think" in content and "<think>" not in content:
-                end = content.find("<|close|>think")
-                thinking_content = content[:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-                if has_thinking_tags:
-                    test_logger.info("检测到 kimi-k3 格式（<|close|>think 分隔符）")
-            elif "</think>" in content and "<think>" not in content:
-                end = content.find("</think>")
-                thinking_content = content[:end].strip()
-                has_thinking_tags = len(thinking_content) > 0
-                test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
-        test_logger.info(
-            f"reasoning 字段: {reasoning[:2000] + '...' if reasoning else 'None'}"
+    # ------------------------------------------------------------------
+    # 工具调用辅助方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_tool_args(arguments_raw, context: str = "") -> dict:
+        """解析工具调用的 arguments 字段
+
+        兼容字符串（JSON）和已解析的 dict 两种格式。
+        解析失败时通过 pytest.fail 报告，避免静默忽略。
+        """
+        try:
+            return (
+                json.loads(arguments_raw)
+                if isinstance(arguments_raw, str)
+                else arguments_raw
+            )
+        except json.JSONDecodeError as e:
+            prefix = f"[{context}] " if context else ""
+            pytest.fail(
+                f"{prefix}Tool call arguments is not valid JSON: "
+                f"{arguments_raw}, error: {e}"
+            )
+
+    @staticmethod
+    def _assert_tool_finish_reason(response: Dict[str, Any], context: str = ""):
+        """断言工具调用场景的 finish_reason 为 tool_calls 或 length
+
+        工具调用阶段 finish_reason 通常是 'tool_calls'；思考模型在
+        reasoning 耗尽 max_tokens 时可能为 'length'，也视为合法。
+        """
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        assert finish_reason in ("tool_calls", "length"), (
+            f"{context + ': ' if context else ''}"
+            f"finish_reason should be 'tool_calls' or 'length', "
+            f"got '{finish_reason}'"
         )
-        test_logger.info(
-            f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
-        )
-        if thinking_content:
-            test_logger.info(f"思考内容: {thinking_content[:2000]}...")
-        return has_reasoning_field or has_thinking_tags
-
-    def _chat_with_thinking_fallback(
-        self,
-        api_client: ModelAPIClient,
-        messages: List[Dict[str, Any]],
-        test_logger,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any], str, bool]:
-        """
-        自动尝试多种思考模式参数格式（不依赖 config.yaml 配置）
-
-        策略顺序：
-            0. {} - 不传 thinking 参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
-            1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
-            2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
-            3. {"chat_template_kwargs": {"enable_thinking": True}}  - chat_template 方式（vLLM/Qwen3 等）
-            4. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
-            5. chat_template_kwargs.thinking + reasoning_effort=high
-                - 部分 vLLM/SGLang 部署需要 reasoning_effort 才会触发思考
-
-        Args:
-            api_client: API 客户端
-            messages: 请求消息列表
-            test_logger: 测试日志器
-
-        Returns:
-            (response, used_params, strategy_name, has_thinking)
-            - response: 最后一次（成功的或最后一次失败的）响应
-            - used_params: 实际生效的参数
-            - strategy_name: 策略名称（如 'enable_thinking'）
-            - has_thinking: 是否成功获取到思考内容
-        """
-        strategies = [
-            ("default", {}),
-            ("enable_thinking", {"enable_thinking": True}),
-            (
-                "chat_template_kwargs.thinking",
-                {"chat_template_kwargs": {"thinking": True}},
-            ),
-            (
-                "chat_template_kwargs.enable_thinking",
-                {"chat_template_kwargs": {"enable_thinking": True}},
-            ),
-            (
-                "thinking.type.enabled",
-                {"thinking": {"type": "enabled"}},
-            ),
-            (
-                "chat_template_kwargs.thinking+reasoning_effort",
-                {
-                    "chat_template_kwargs": {"thinking": True},
-                    "reasoning_effort": "high",
-                },
-            ),
-        ]
-
-        last_response = None
-        last_params = None
-        last_strategy = None
-
-        for idx, (strategy_name, params) in enumerate(strategies, 1):
-            test_logger.info(
-                f"[{idx}/{len(strategies)}] 尝试思考参数策略: "
-                f"{strategy_name} -> {params}"
-            )
-            try:
-                response = api_client.chat_completion(messages, extra_body=params)
-            except Exception as e:
-                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
-                last_strategy = strategy_name
-                last_params = params
-                continue
-
-            self.assert_response_success(response)
-            has_thinking = self._check_has_thinking(response, test_logger)
-
-            if has_thinking:
-                test_logger.info(f"策略 {strategy_name} 成功获取到思考内容")
-                return response, params, strategy_name, True
-
-            test_logger.warning(
-                f"策略 {strategy_name} 未获取到思考内容，将尝试下一策略"
-            )
-            last_response = response
-            last_params = params
-            last_strategy = strategy_name
-
-        return last_response, last_params, last_strategy, False
-
-    def _chat_without_thinking_fallback(
-        self,
-        api_client: ModelAPIClient,
-        messages: List[Dict[str, Any]],
-        test_logger,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any], str, bool]:
-        """
-        自动尝试多种关闭思考模式的参数格式（不依赖 config.yaml 配置）
-
-        策略顺序：
-            1. {} - 不传 thinking 参数（依赖模型默认行为）
-            2. {"enable_thinking": False} - 顶层字段显式关闭
-            3. {"chat_template_kwargs": {"thinking": False}} - chat_template 方式
-            4. {"chat_template_kwargs": {"enable_thinking": False}} - chat_template 方式（vLLM/Qwen3 等）
-            5. {"thinking": {"type": "disabled"}} - 顶层对象（DeepSeek/GLM 等）
-
-        任一策略无思考内容泄漏即返回；若全部仍泄漏，则 has_no_thinking=False。
-
-        Returns:
-            (response, used_params, strategy_name, has_no_thinking)
-        """
-        strategies = [
-            ("no_thinking_params", {}),
-            ("enable_thinking_false", {"enable_thinking": False}),
-            (
-                "chat_template_kwargs.thinking_false",
-                {"chat_template_kwargs": {"thinking": False}},
-            ),
-            (
-                "chat_template_kwargs.enable_thinking_false",
-                {"chat_template_kwargs": {"enable_thinking": False}},
-            ),
-            (
-                "thinking.type.disabled",
-                {"thinking": {"type": "disabled"}},
-            ),
-        ]
-
-        last_response = None
-        last_params = None
-        last_strategy = None
-
-        for idx, (strategy_name, params) in enumerate(strategies, 1):
-            display_params = params if params else "(空)"
-            test_logger.info(
-                f"[{idx}/{len(strategies)}] 尝试非思考策略: "
-                f"{strategy_name} -> {display_params}"
-            )
-            try:
-                response = api_client.chat_completion(messages, extra_body=params)
-            except Exception as e:
-                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
-                last_strategy = strategy_name
-                last_params = params
-                continue
-
-            self.assert_response_success(response)
-            has_thinking = self._check_has_thinking(response, test_logger)
-
-            if not has_thinking:
-                test_logger.info(f"策略 {strategy_name} 成功获取到无思考泄漏的响应")
-                return response, params, strategy_name, True
-
-            test_logger.warning(
-                f"策略 {strategy_name} 检测到思考内容泄漏，将尝试下一策略"
-            )
-            last_response = response
-            last_params = params
-            last_strategy = strategy_name
-
-        return last_response, last_params, last_strategy, False
 
     @pytest.mark.b_advanced
     @pytest.mark.p0
@@ -1102,25 +898,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         assert len(tool_calls[0].get("id", "")) > 0, "Tool call id should not be empty"
 
         arguments_raw = tool_calls[0].get("function", {}).get("arguments", "{}")
-        try:
-            args = (
-                json.loads(arguments_raw)
-                if isinstance(arguments_raw, str)
-                else arguments_raw
-            )
-        except json.JSONDecodeError as e:
-            pytest.fail(
-                f"Tool call arguments is not valid JSON: {arguments_raw}, error: {e}"
-            )
+        args = self._parse_tool_args(arguments_raw, "B4")
 
         assert "city" in args, f"Should have 'city' parameter, got args: {args}"
         assert args["city"].strip() != "", "City parameter should not be empty"
         test_logger.info(f"Tool call: {tool_name}({args})")
 
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("tool_calls", "length"), (
-            f"When tool is called, finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
-        )
+        self._assert_tool_finish_reason(response, "B4")
 
         final_content, final_response = self._execute_tool_call(
             api_client, messages, tool_calls[0], test_logger
@@ -1184,23 +968,13 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             )
 
             arguments_raw = tool_calls[0].get("function", {}).get("arguments", "{}")
-            try:
-                args = (
-                    json.loads(arguments_raw)
-                    if isinstance(arguments_raw, str)
-                    else arguments_raw
-                )
-            except json.JSONDecodeError as e:
-                pytest.fail(f"[测试{idx}] Invalid JSON in arguments: {arguments_raw}")
+            args = self._parse_tool_args(arguments_raw, f"测试{idx}")
 
             assert isinstance(args, dict) and len(args) > 0, (
                 f"[测试{idx}] Tool arguments should be non-empty dict, got: {args}"
             )
 
-            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-            assert finish_reason in ("tool_calls", "length"), (
-                f"[测试{idx}] finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
-            )
+            self._assert_tool_finish_reason(response, f"测试{idx}")
 
             final_content, final_response = self._execute_tool_call(
                 api_client, messages, tool_calls[0], test_logger
@@ -1236,10 +1010,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         test_logger.info(f"工具调用数量: {len(tool_calls)}")
         assert len(tool_calls) > 0, "Should have tool calls"
 
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in ("tool_calls", "length"), (
-            f"finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
-        )
+        self._assert_tool_finish_reason(response, "B6")
 
         called_tools = set()
         for tc in tool_calls:
@@ -1251,17 +1022,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             called_tools.add(fn_name)
 
             arguments_raw = tc.get("function", {}).get("arguments", "{}")
-            try:
-                args = (
-                    json.loads(arguments_raw)
-                    if isinstance(arguments_raw, str)
-                    else arguments_raw
-                )
-            except json.JSONDecodeError:
-                pytest.fail(
-                    f"Tool '{fn_name}' arguments is not valid JSON: {arguments_raw}"
-                )
-
+            args = self._parse_tool_args(arguments_raw, f"B6-{fn_name}")
             assert isinstance(args, dict), f"Tool '{fn_name}' arguments should be dict"
 
         test_logger.info(f"调用的工具集合: {called_tools}")
@@ -1403,10 +1164,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                 test_logger.info(f"第{step}步: 模型未调用工具，链式调用结束")
                 break
 
-            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-            assert finish_reason in ("tool_calls", "length"), (
-                f"第{step}步: finish_reason should be 'tool_calls' or 'length', got '{finish_reason}'"
-            )
+            self._assert_tool_finish_reason(response, f"第{step}步")
 
             # assistant 消息只 append 一次（包含全部 tool_calls），
             # 之后逐条 append tool 结果，避免重复 assistant 消息破坏对话历史

@@ -42,7 +42,10 @@ pytest tests/test_a_basic_reasoning.py --model=qwen35 -v
 验证模型能正确响应单条用户消息，返回有效的文本内容。
 
 ### test_multi_turn_conversation
-验证模型能在5轮对话中保持上下文连贯性，能记住之前对话中提到的信息。
+验证模型能在5轮对话中保持上下文连贯性，能记住之前对话中提到的信息。每轮通过
+`_multi_turn_round` 辅助方法执行公共流程（追加用户消息 → 请求 → 日志 → 断言成功/非空 →
+追加 assistant 消息），各轮特定的验证逻辑（如第2轮颜色召回、第3轮幻觉检测、第5轮总结
+完整性）在调用处内联处理。
 
 ### test_system_prompt
 验证模型能正确遵循system prompt设置的角色定位。

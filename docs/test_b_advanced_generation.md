@@ -151,6 +151,23 @@ B5/B7 的 `calculate` 工具使用 `_safe_eval_math` 基于 AST 的安全数学�
 仅允许数字与算术运算符（`+ - * / // % **` 及一元正负），拒绝函数调用、变量名等危险节点，
 替代了原先的 `eval()` 调用，避免代码注入风险。
 
+## 工具调用辅助方法
+
+> 以下方法为本类特有，用于 B4-B7 工具调用测试的公共断言逻辑：
+
+- `_assert_tool_finish_reason(response, label)`：断言工具调用步骤的 finish_reason 为
+  `tool_calls` 或 `length`，统一 B4/B5/B6/B7 各步的 finish_reason 校验。
+- `_parse_tool_args(tool_call, expected_keys, label)`：安全解析工具调用的 JSON 参数，
+  解析失败时 `pytest.fail`，返回参数 dict 供后续字段断言。替代各处内联的 `json.loads`。
+
+## 思考模式辅助方法
+
+> 以下方法从 `BaseTest` 继承，B1/B2/B3 使用：
+
+- `_check_has_thinking(response, test_logger)`：检测思考内容（reasoning 字段或 content 内思考标签）
+- `_chat_with_thinking_fallback(api_client, messages, test_logger, max_tokens=None)`：6 种开启思考策略 + no_params_fallback
+- `_chat_without_thinking_fallback(api_client, messages, test_logger, max_tokens=None)`：5 种关闭思考策略 + no_params_fallback
+
 ## 预期结果
 - **P0 测试必须全部通过**（B1 思考模式、B4 单工具调用、B8 JSON Mode、B9 结构化输出）
 - **P1 测试中核心功能为硬断言**：

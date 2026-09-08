@@ -29,66 +29,12 @@ from base.logger import TestLogger
 class TestBasicReasoning(BaseTest, StreamingTestMixin):
     """基础推理能力测试类"""
 
-    # 合法的 finish_reason 值（非流式最终响应）
-    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
-    # 流式最后一chunk的 finish_reason 额外允许 None（中间chunk无 finish_reason）
-    VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)
-
     def get_test_category(self) -> str:
         return "A. 基础推理能力"
 
     # ------------------------------------------------------------------
     # 辅助方法
     # ------------------------------------------------------------------
-
-    def _get_formal_content(
-        self, response: Dict[str, Any], test_logger=None, context: str = ""
-    ) -> str:
-        """获取正式回复内容
-
-        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
-        reasoning_content 字段和 <think> 标签内容）。
-        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
-        回退到 content + reasoning_content，避免因思考模型 content 为空
-        导致后续断言失败。
-
-        Args:
-            response: API 响应字典
-            test_logger: 日志器（可选），回退时记录提示信息
-            context: 日志上下文标识
-        """
-        content = self.get_message_content(
-            response, strip_reasoning=True, strip_thinking=True
-        )
-        if not content.strip():
-            full = self.get_message_content(response)
-            if test_logger and full.strip():
-                test_logger.info(
-                    f"[{context}] 正式content为空，回退到content+reasoning"
-                    f"（思考模型可能被reasoning消耗了max_tokens）"
-                )
-            return full
-        return content
-
-    def _assert_finish_reason(
-        self, response: Dict[str, Any], allow_none: bool = False
-    ) -> str:
-        """断言 finish_reason 合法并返回其值
-
-        Args:
-            response: API 响应字典
-            allow_none: 是否允许 None（流式中间chunk）
-        """
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        valid = (
-            self.VALID_STREAM_FINISH_REASONS
-            if allow_none
-            else self.VALID_FINISH_REASONS
-        )
-        assert finish_reason in valid, (
-            f"finish_reason should be one of {valid}, got '{finish_reason}'"
-        )
-        return finish_reason
 
     def _append_assistant_message(
         self, messages: List[Dict[str, Any]], response: Dict[str, Any]
@@ -101,6 +47,39 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         content = self.get_message_content(response, strip_reasoning=True)
         messages.append({"role": "assistant", "content": content})
         return messages
+
+    def _multi_turn_round(
+        self,
+        api_client: ModelAPIClient,
+        test_logger,
+        messages: List[Dict[str, Any]],
+        user_content: str,
+        round_label: str,
+    ) -> str:
+        """执行单轮多轮对话的公共流程
+
+        追加用户消息 → 发送请求 → 日志记录 → 断言成功/非空 →
+        获取正式回复 → 追加 assistant 消息。
+
+        Args:
+            user_content: 本轮用户消息内容
+            round_label: 轮次标签（如 "第1轮"），用于日志和断言消息
+        Returns:
+            本轮正式回复内容（已剥离思考内容）
+        """
+        test_logger.info(f"{round_label}: {user_content}")
+        messages.append({"role": "user", "content": user_content})
+        TestLogger.log_request(test_logger, messages)
+
+        response = api_client.chat_completion(messages)
+        TestLogger.log_response(test_logger, response, f"{round_label}响应")
+        self.log_full_response(test_logger, response, f"A2-{round_label}")
+
+        self.assert_response_success(response, round_label)
+        self.assert_content_not_empty(response, round_label)
+        content = self._get_formal_content(response, test_logger, f"A2-{round_label}")
+        self._append_assistant_message(messages, response)
+        return content
 
     # ------------------------------------------------------------------
     # 测试用例
@@ -148,51 +127,23 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         messages = []
 
         # 第1轮
-        test_logger.info("第1轮: 用户说我喜欢的颜色是蓝色")
-        messages.append({"role": "user", "content": "我喜欢的颜色是蓝色"})
-        TestLogger.log_request(test_logger, messages)
+        self._multi_turn_round(
+            api_client, test_logger, messages, "我喜欢的颜色是蓝色", "第1轮"
+        )
 
-        response1 = api_client.chat_completion(messages)
-        TestLogger.log_response(test_logger, response1, "第1轮响应")
-        self.log_full_response(test_logger, response1, "A2-第1轮")
-
-        self.assert_response_success(response1, "First round")
-        self.assert_content_not_empty(response1, "First round")
-        self._append_assistant_message(messages, response1)
-
-        # 第2轮
-        test_logger.info("第2轮: 追问刚才说的颜色")
-        messages.append({"role": "user", "content": "我刚才说我喜欢什么颜色？"})
-        TestLogger.log_request(test_logger, messages)
-
-        response2 = api_client.chat_completion(messages)
-        TestLogger.log_response(test_logger, response2, "第2轮响应")
-        self.log_full_response(test_logger, response2, "A2-第2轮")
-
-        self.assert_response_success(response2, "Second round")
-        self.assert_content_not_empty(response2, "Second round")
-        # 使用 _get_formal_content 只检查正式回复，避免 reasoning 中的关键词干扰
-        content2 = self._get_formal_content(response2, test_logger, "A2-第2轮")
+        # 第2轮: 追问刚才说的颜色
+        content2 = self._multi_turn_round(
+            api_client, test_logger, messages, "我刚才说我喜欢什么颜色？", "第2轮"
+        )
         test_logger.info(f"第2轮回答: {content2[:2000]}")
-
         assert "蓝色" in content2 or "blue" in content2.lower(), (
             "Model should remember the previous context about blue color"
         )
-        self._append_assistant_message(messages, response2)
 
         # 第3轮追问（用户从未提过水果，验证模型不产生幻觉）
-        test_logger.info("第3轮: 问水果（用户从未提过，验证不产生幻觉）")
-        messages.append({"role": "user", "content": "那我喜欢的水果是什么呢？"})
-        TestLogger.log_request(test_logger, messages)
-
-        response3 = api_client.chat_completion(messages)
-        TestLogger.log_response(test_logger, response3, "第3轮响应")
-        self.log_full_response(test_logger, response3, "A2-第3轮")
-
-        self.assert_response_success(response3, "Third round")
-        self.assert_content_not_empty(response3, "Third round")
-        # strip_reasoning 避免模型在 reasoning 中讨论水果名被误判为幻觉
-        content3 = self._get_formal_content(response3, test_logger, "A2-第3轮")
+        content3 = self._multi_turn_round(
+            api_client, test_logger, messages, "那我喜欢的水果是什么呢？", "第3轮"
+        )
 
         # 幻觉检测：用户从未提及水果，模型不应编造具体水果
         common_fruits = [
@@ -206,35 +157,16 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         else:
             test_logger.info("第3轮幻觉检测通过：模型未编造用户未提及的水果")
 
-        self._append_assistant_message(messages, response3)
-
         # 第4轮
-        test_logger.info("第4轮: 问城市")
-        messages.append({"role": "user", "content": "我居住的城市是上海"})
-        TestLogger.log_request(test_logger, messages)
-
-        response4 = api_client.chat_completion(messages)
-        TestLogger.log_response(test_logger, response4, "第4轮响应")
-        self.log_full_response(test_logger, response4, "A2-第4轮")
-
-        self.assert_response_success(response4, "Fourth round")
-        self.assert_content_not_empty(response4, "Fourth round")
-        self._append_assistant_message(messages, response4)
+        self._multi_turn_round(
+            api_client, test_logger, messages, "我居住的城市是上海", "第4轮"
+        )
 
         # 第5轮验证所有上下文
-        test_logger.info("第5轮: 验证之前所有上下文")
-        messages.append(
-            {"role": "user", "content": "请总结一下我们刚才谈论的所有内容"}
+        content5 = self._multi_turn_round(
+            api_client, test_logger, messages,
+            "请总结一下我们刚才谈论的所有内容", "第5轮",
         )
-        TestLogger.log_request(test_logger, messages)
-
-        response5 = api_client.chat_completion(messages)
-        TestLogger.log_response(test_logger, response5, "第5轮响应")
-        self.log_full_response(test_logger, response5, "A2-第5轮")
-
-        self.assert_response_success(response5, "Fifth round")
-        self.assert_content_not_empty(response5, "Fifth round")
-        content5 = self._get_formal_content(response5, test_logger, "A2-第5轮")
         test_logger.info(f"第5轮总结: {content5[:2000]}")
 
         has_blue = "蓝色" in content5 or "blue" in content5.lower()

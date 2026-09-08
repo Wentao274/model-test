@@ -34,24 +34,15 @@ pytest tests/test_f_stability.py -m p0 -v
 
 ## 辅助方法与常量
 
-### 类常量
+> 本测试类从 `BaseTest` 继承以下共享常量与方法，各测试类（A/B/D/F/G）统一复用，
+> 不再在子类中重复定义：
+
 - `VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")`：非流式合法 finish_reason
 - `VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)`：流式最后 chunk 合法 finish_reason
-
-### `_get_formal_content(response, test_logger, context)`
-提取正式回复内容（剥离 reasoning_content 字段与 think 标签）。
-若 formal content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
-回退到 content + reasoning_content，避免假阳性失败。
-
-### `_assert_finish_reason(response, allow_none=False)`
-断言非流式响应 finish_reason 合法并返回其值。
-
-### `_assert_stream_finish_reason(result)`
-断言流式响应最后 chunk 的 finish_reason 合法并返回其值。
-
-### `_is_over_limit_error(e)`
-判断异常是否表示上下文超限/连接中断/服务端边界失败。
-覆盖 context/length/exceed/limit/token/413/5xx/connection/reset/timeout 等。
+- `_get_formal_content(response, test_logger, context)`：提取正式回复内容（剥离 reasoning_content 字段与 think 标签），空时回退到 content + reasoning_content
+- `_assert_finish_reason(response, allow_none=False)`：断言非流式响应 finish_reason 合法并返回其值
+- `_assert_stream_finish_reason(result)`：断言流式响应最后 chunk 的 finish_reason 合法并返回其值
+- `_is_over_limit_error(e)`：判断异常是否表示上下文超限/连接中断/服务端边界失败（覆盖 context/length/exceed/limit/token/413/5xx/connection/reset/timeout 等）
 
 ## 测试用例说明
 

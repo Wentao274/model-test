@@ -38,30 +38,26 @@ pytest tests/test_d_long_context.py -m p0 -v
 
 ## 辅助方法与常量
 
-### 类常量
+> 本测试类从 `BaseTest` 继承以下共享常量与方法，各测试类（A/B/D/F/G）统一复用，
+> 不再在子类中重复定义：
+
 - `VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")`：非流式合法 finish_reason
 - `VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)`：流式最后 chunk 合法 finish_reason（中间 chunk 可为 None）
+- `_get_formal_content(response, test_logger, context)`：提取正式回复内容（剥离 reasoning_content 字段与 think 标签），空时回退到 content + reasoning_content
+- `_assert_finish_reason(response, allow_none=False)`：断言非流式响应 finish_reason 合法并返回其值
+- `_assert_stream_finish_reason(result)`：断言流式响应最后 chunk 的 finish_reason 合法并返回其值
+- `_check_has_thinking(response, test_logger)`：检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签），标签检测复用 `strip_thinking_content`（兼容 MiniMax M2 / kimi-k3 等格式），并检测 `finish_reason=length` 下的被截断思考
+- `_chat_with_thinking_fallback(api_client, messages, test_logger, max_tokens=None)`：自动尝试 6 种思考参数格式 + no_params_fallback
+- `_chat_without_thinking_fallback(api_client, messages, test_logger, max_tokens=None)`：自动尝试 5 种关闭思考参数格式 + no_params_fallback
+- `_get_max_context_len(default=202752)`：获取模型最大上下文长度（兼容 vLLM/sglang/context_window）
+- `_is_over_limit_error(e)`：判断异常是否表示上下文超限/连接中断/服务端边界失败
 
-### `_get_formal_content(response, test_logger, context)`
-提取正式回复内容（剥离 reasoning_content 字段与 think 标签）。
-若 formal content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
-回退到 content + reasoning_content，避免假阳性失败。
+### 本类特有方法
 
-### `_assert_finish_reason(response, allow_none=False)`
-断言非流式响应 finish_reason 合法并返回其值。
-
-### `_assert_stream_finish_reason(result)`
-断言流式响应最后 chunk 的 finish_reason 合法并返回其值。
-
-### `_check_has_thinking(response, test_logger)`
-检查响应中是否包含思考内容。标签检测复用基类 `strip_thinking_content`（兼容
-MiniMax M2 / kimi-k3 等格式），避免与本类历史实现重复维护。
-
-### `_chat_with_thinking_fallback(api_client, messages, test_logger, max_tokens)`
-自动尝试多种思考模式参数格式（6种策略 + no_params_fallback），与 test_b 策略对齐：
-`default` → `enable_thinking=true` → `chat_template_kwargs.thinking=true` →
-`chat_template_kwargs.enable_thinking=true` → `thinking.type=enabled` →
-`chat_template_kwargs.thinking=true + reasoning_effort=high` → `no_params_fallback`。
+### `_run_context_test(api_client, test_logger, label, context_tokens, prompt_suffix, min_prompt_tokens, max_tokens=2000)`
+执行单个上下文长度测试的公共流程：生成指定 token 数的混合内容 → 发送请求 →
+日志记录 → 断言响应成功/content 非空/finish_reason 合法 → 正式回复长度 > 50 →
+prompt_tokens 超过阈值 → completion_tokens > 0。D1/D2/D3 共用此方法。
 
 ## 测试用例说明
 

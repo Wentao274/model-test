@@ -17,6 +17,11 @@ class BaseTest(ABC):
     api_client = None
     config = None
 
+    # 合法的 finish_reason 值（非流式最终响应）
+    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
+    # 流式最后一chunk的 finish_reason 额外允许 None（中间chunk无 finish_reason）
+    VALID_STREAM_FINISH_REASONS = ("stop", "eos", "ended", "length", None)
+
     def assert_response_success(self, response: Dict[str, Any], message: str = ""):
         """断言响应成功"""
         assert response.get("choices") is not None, (
@@ -189,6 +194,360 @@ class BaseTest(ABC):
             test_logger.warning(f"序列化完整响应失败: {e}")
             test_logger.info(f"=== {title} 原始响应 ===\n{response}")
 
+    # ------------------------------------------------------------------
+    # finish_reason / content 辅助方法（跨测试类共享）
+    # ------------------------------------------------------------------
+
+    def _get_formal_content(
+        self, response: Dict[str, Any], test_logger=None, context: str = ""
+    ) -> str:
+        """获取正式回复内容
+
+        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
+        reasoning_content 字段和 think 标签内容）。
+        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
+        回退到 content + reasoning_content，避免因思考模型 content 为空
+        导致后续断言失败。
+
+        Args:
+            response: API 响应字典
+            test_logger: 日志器（可选），回退时记录提示信息
+            context: 日志上下文标识
+        """
+        content = self.get_message_content(
+            response, strip_reasoning=True, strip_thinking=True
+        )
+        if not content.strip():
+            full = self.get_message_content(response)
+            if test_logger and full.strip():
+                test_logger.info(
+                    f"[{context}] 正式content为空，回退到content+reasoning"
+                    f"（思考模型可能被reasoning消耗了max_tokens）"
+                )
+            return full
+        return content
+
+    def _assert_finish_reason(
+        self, response: Dict[str, Any], allow_none: bool = False
+    ) -> str:
+        """断言 finish_reason 合法并返回其值
+
+        Args:
+            response: API 响应字典
+            allow_none: 是否允许 None（流式中间chunk）
+        """
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+        valid = (
+            self.VALID_STREAM_FINISH_REASONS
+            if allow_none
+            else self.VALID_FINISH_REASONS
+        )
+        assert finish_reason in valid, (
+            f"finish_reason should be one of {valid}, got '{finish_reason}'"
+        )
+        return finish_reason
+
+    @staticmethod
+    def _get_max_context_len(model_info: dict, default: int = 202752) -> int:
+        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和
+        sglang(context-length) 以及部分模型(context_window)。
+
+        Args:
+            model_info: /v1/models 返回的模型信息字典
+            default: 未找到任何上下文长度字段时的回退值。边界探测测试
+                传 202752（假设大默认），显式判断测试传 0（跳过）。
+        """
+        for key in (
+            "max_model_len",
+            "context-length",
+            "context_length",
+            "context_window",
+        ):
+            val = model_info.get(key, 0)
+            if val:
+                return int(val)
+        return default
+
+    @staticmethod
+    def _is_over_limit_error(e) -> bool:
+        """判断异常是否表示上下文超限/连接中断/服务端边界失败
+
+        边界探测/超限测试中，服务端对超大输入的失败不一定带规范错误码：
+        - 显式 context/length/limit/token 错误
+        - HTTP 413 (Request Entity Too Large)
+        - HTTP 5xx 服务端错误（超大输入常引发 500/502/503/504）
+        - 流式传输中断（ChunkedEncodingError/ProtocolError）
+        - 连接重置/超时
+        """
+        if e is None:
+            return False
+        error_msg = str(e).lower()
+        exc_name = type(e).__name__.lower()
+        keywords = [
+            "context",
+            "length",
+            "too_many",
+            "exceed",
+            "limit",
+            "token",
+            "413",
+            "request entity too large",
+            "500",
+            "502",
+            "503",
+            "504",
+            "internal server",
+            "server error",
+            "chunked",
+            "protocol",
+            "premature",
+            "connection",
+            "reset",
+            "timeout",
+            "timed out",
+            "ended",
+        ]
+        return any(kw in error_msg or kw in exc_name for kw in keywords)
+
+    # ------------------------------------------------------------------
+    # 思考模式辅助方法（跨测试类共享）
+    # ------------------------------------------------------------------
+
+    def _check_has_thinking(self, response: dict, test_logger) -> bool:
+        """检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签）
+
+        标签检测复用基类 strip_thinking_content（兼容 MiniMax/kimi-k3 等格式），
+        避免与各测试类历史实现重复维护。
+        """
+        reasoning = self.get_reasoning_content(response)
+        content = self.get_message_content(response)
+        finish_reason = response.get("choices", [{}])[0].get("finish_reason", "")
+        has_reasoning_field = reasoning is not None and len(reasoning.strip()) > 0
+        has_thinking_tags = False
+        thinking_content = ""
+        if content:
+            # 复用基类 strip_thinking_content 检测 content 中是否含思考标签：
+            # 若剥离后内容变短，说明存在思考标签
+            TS = chr(60) + "think" + chr(62)
+            TE = chr(60) + "/think" + chr(62)
+            stripped = self.strip_thinking_content(content)
+            if stripped != content:
+                thinking_content = content[: content.find(stripped)] if stripped else content
+                thinking_content = thinking_content.strip()
+                has_thinking_tags = len(thinking_content) > 0
+                if has_thinking_tags and "<|close|>think" in content and TS not in content:
+                    test_logger.info("检测到 kimi-k3 格式（<|close|>think 分隔符）")
+                elif has_thinking_tags and TE in content and TS not in content:
+                    test_logger.info("检测到 MiniMax M2 格式（仅有结束标签）")
+            elif finish_reason == "length" and not has_reasoning_field:
+                # kimi-k3 思考被 max_tokens 截断：未输出思考结束标志，
+                # 整段 content 为被截断的思考。通过推理特征语言区分思考 vs 普通回答。
+                reasoning_markers = [
+                    "the user", "i should", "i need to", "let me",
+                    "i'll", "i must", "用户想", "用户问",
+                    "让我", "我需要", "我应该", "我来",
+                ]
+                cl = content.lower()
+                if len(content.strip()) > 100 and any(m in cl for m in reasoning_markers):
+                    thinking_content = content.strip()
+                    has_thinking_tags = len(thinking_content) > 0
+                    if has_thinking_tags:
+                        test_logger.info(
+                            "检测到被截断的思考内容（finish_reason=length，"
+                            "content 含推理特征语言且无思考结束标志）"
+                        )
+        test_logger.info(
+            f"reasoning 字段: {reasoning[:2000] + '...' if reasoning else 'None'}"
+        )
+        test_logger.info(
+            f"content 中的thinking标签: {'存在' if has_thinking_tags else '不存在'}"
+        )
+        if thinking_content:
+            test_logger.info(f"思考内容: {thinking_content[:2000]}...")
+        return has_reasoning_field or has_thinking_tags
+
+    # 思考模式参数下发策略（开启）
+    _THINKING_ON_STRATEGIES = [
+        ("default", {}),
+        ("enable_thinking", {"enable_thinking": True}),
+        (
+            "chat_template_kwargs.thinking",
+            {"chat_template_kwargs": {"thinking": True}},
+        ),
+        (
+            "chat_template_kwargs.enable_thinking",
+            {"chat_template_kwargs": {"enable_thinking": True}},
+        ),
+        (
+            "thinking.type.enabled",
+            {"thinking": {"type": "enabled"}},
+        ),
+        (
+            "chat_template_kwargs.thinking+reasoning_effort",
+            {
+                "chat_template_kwargs": {"thinking": True},
+                "reasoning_effort": "high",
+            },
+        ),
+    ]
+
+    # 思考模式参数下发策略（关闭）
+    _THINKING_OFF_STRATEGIES = [
+        ("no_thinking_params", {}),
+        ("enable_thinking_false", {"enable_thinking": False}),
+        (
+            "chat_template_kwargs.thinking_false",
+            {"chat_template_kwargs": {"thinking": False}},
+        ),
+        (
+            "chat_template_kwargs.enable_thinking_false",
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        ),
+        (
+            "thinking.type.disabled",
+            {"thinking": {"type": "disabled"}},
+        ),
+    ]
+
+    def _chat_with_thinking_fallback(
+        self,
+        api_client: "ModelAPIClient",
+        messages: List[Dict[str, Any]],
+        test_logger,
+        max_tokens: Optional[int] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any], str, bool]:
+        """自动尝试多种思考模式参数格式（不依赖 config.yaml 配置）
+
+        策略顺序：
+            0. {} - 不传 thinking 参数（依赖模型默认行为，部分推理模型默认即输出思考内容）
+            1. {"enable_thinking": True}  - 顶层字段（OpenAI/Qwen 等）
+            2. {"chat_template_kwargs": {"thinking": True}}  - chat_template 方式
+            3. {"chat_template_kwargs": {"enable_thinking": True}}  - chat_template 方式（vLLM/Qwen3 等）
+            4. {"thinking": {"type": "enabled"}}  - 顶层对象（DeepSeek/GLM 等）
+            5. chat_template_kwargs.thinking + reasoning_effort=high
+
+        遍历所有策略后，若均未获取到思考内容，则 fallback 到不传任何
+        thinking 参数发起请求（大部分模型的思考模式默认打开），以确认
+        长上下文请求本身可用。
+
+        Args:
+            max_tokens: 长上下文场景需传入较大值（如 20000）；
+                None 时不传该参数（短上下文，走 API 默认 2048）。
+        """
+        strategies = self._THINKING_ON_STRATEGIES
+
+        last_response = None
+        last_params = None
+        last_strategy = None
+
+        for idx, (strategy_name, params) in enumerate(strategies, 1):
+            test_logger.info(
+                f"[{idx}/{len(strategies)}] 尝试思考参数策略: "
+                f"{strategy_name} -> {params}"
+            )
+            try:
+                kwargs = {"extra_body": params}
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
+                response = api_client.chat_completion(messages, **kwargs)
+            except Exception as e:
+                if self._is_over_limit_error(e):
+                    pytest.skip(
+                        f"Model/proxy does not support long context with thinking: {e}"
+                    )
+                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
+                last_strategy = strategy_name
+                last_params = params
+                continue
+
+            self.assert_response_success(response)
+            has_thinking = self._check_has_thinking(response, test_logger)
+
+            if has_thinking:
+                test_logger.info(f"策略 {strategy_name} 成功获取到思考内容")
+                return response, params, strategy_name, True
+
+            test_logger.warning(
+                f"策略 {strategy_name} 未获取到思考内容，将尝试下一策略"
+            )
+            last_response = response
+            last_params = params
+            last_strategy = strategy_name
+
+        if last_response is None:
+            test_logger.info("所有思考参数策略均请求异常，fallback 到不传任何参数请求")
+            try:
+                kwargs = {}
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
+                fallback_response = api_client.chat_completion(messages, **kwargs)
+            except Exception as e:
+                if self._is_over_limit_error(e):
+                    pytest.skip(f"Model/proxy does not support long context: {e}")
+                raise
+            self.assert_response_success(fallback_response)
+            has_thinking = self._check_has_thinking(fallback_response, test_logger)
+            return fallback_response, {}, "no_params_fallback", has_thinking
+
+        return last_response, last_params, last_strategy, False
+
+    def _chat_without_thinking_fallback(
+        self,
+        api_client: "ModelAPIClient",
+        messages: List[Dict[str, Any]],
+        test_logger,
+        max_tokens: Optional[int] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any], str, bool]:
+        """自动尝试多种关闭思考模式的参数格式（不依赖 config.yaml 配置）
+
+        任一策略无思考内容泄漏即返回；若全部仍泄漏，则 has_no_thinking=False。
+
+        Args:
+            max_tokens: 长上下文场景需传入较大值；None 时不传该参数。
+        """
+        strategies = self._THINKING_OFF_STRATEGIES
+
+        last_response = None
+        last_params = None
+        last_strategy = None
+
+        for idx, (strategy_name, params) in enumerate(strategies, 1):
+            display_params = params if params else "(空)"
+            test_logger.info(
+                f"[{idx}/{len(strategies)}] 尝试非思考策略: "
+                f"{strategy_name} -> {display_params}"
+            )
+            try:
+                kwargs = {"extra_body": params}
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
+                response = api_client.chat_completion(messages, **kwargs)
+            except Exception as e:
+                if self._is_over_limit_error(e):
+                    pytest.skip(
+                        f"Model/proxy does not support long context without thinking: {e}"
+                    )
+                test_logger.warning(f"策略 {strategy_name} 请求异常: {e}，尝试下一策略")
+                last_strategy = strategy_name
+                last_params = params
+                continue
+
+            self.assert_response_success(response)
+            has_thinking = self._check_has_thinking(response, test_logger)
+
+            if not has_thinking:
+                test_logger.info(f"策略 {strategy_name} 成功获取到无思考泄漏的响应")
+                return response, params, strategy_name, True
+
+            test_logger.warning(
+                f"策略 {strategy_name} 检测到思考内容泄漏，将尝试下一策略"
+            )
+            last_response = response
+            last_params = params
+            last_strategy = strategy_name
+
+        return last_response, last_params, last_strategy, False
+
 
 class StreamingTestMixin:
     """流式测试Mixin"""
@@ -221,6 +580,22 @@ class StreamingTestMixin:
             "content": "".join(content_parts),
             "reasoning": "".join(reasoning_parts),
         }
+
+    def _assert_stream_finish_reason(self, result: Dict[str, Any]) -> str:
+        """断言流式响应最后 chunk 的 finish_reason 合法并返回其值
+
+        Args:
+            result: collect_stream_chunks 返回的字典
+        """
+        chunks = result.get("chunks", [])
+        assert len(chunks) > 0, "No streaming chunks received"
+        last_chunk = chunks[-1]
+        finish_reason = last_chunk.get("choices", [{}])[0].get("finish_reason")
+        assert finish_reason in self.VALID_STREAM_FINISH_REASONS, (
+            f"Last chunk finish_reason should be one of "
+            f"{self.VALID_STREAM_FINISH_REASONS}, got '{finish_reason}'"
+        )
+        return finish_reason
 
     def detect_buffered_streaming(
         self,

@@ -80,12 +80,14 @@ pytest tests/test_g_api_compatibility.py::TestAPICompatibility::test_chat_comple
 
 ## 辅助方法
 
+> 以下方法均从 `BaseTest` 继承，各测试类（A/B/D/F/G）统一复用：
+
 | 方法 | 说明 |
 |------|------|
 | `_get_formal_content` | 获取正式回复（排除 reasoning），空时回退到 content+reasoning |
 | `_assert_finish_reason` | 断言非流式 finish_reason 合法 |
 | `_is_over_limit_error` | 判断异常是否为超限/连接中断/服务端边界失败 |
-| `_get_max_context_len` | 获取模型最大上下文长度（兼容 vLLM/sglang/context_window） |
+| `_get_max_context_len` | 获取模型最大上下文长度（兼容 vLLM/sglang/context_window），default=0 时若取不到则返回 0 |
 
 ## 注意事项
 - 需要模型支持OpenAI兼容接口

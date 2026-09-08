@@ -14,7 +14,7 @@ G. API 兼容性测试
 """
 
 import pytest
-from typing import Dict, Any
+import requests
 
 from base.base_test import BaseTest
 from base.api_client import ModelAPIClient
@@ -24,79 +24,8 @@ from base.logger import TestLogger
 class TestAPICompatibility(BaseTest):
     """API兼容性测试类"""
 
-    # 合法的 finish_reason 值（非流式最终响应）
-    VALID_FINISH_REASONS = ("stop", "eos", "ended", "length")
-
     def get_test_category(self) -> str:
         return "G. API兼容性"
-
-    # ------------------------------------------------------------------
-    # 辅助方法
-    # ------------------------------------------------------------------
-
-    def _get_formal_content(
-        self, response: Dict[str, Any], test_logger=None, context: str = ""
-    ) -> str:
-        """获取正式回复内容
-
-        优先返回 strip_reasoning + strip_thinking 后的纯 content（排除
-        reasoning_content 字段和 think 标签内容）。
-        若 content 为空（思考模型可能被 reasoning 消耗完 max_tokens），
-        回退到 content + reasoning_content，避免因思考模型 content 为空
-        导致后续断言失败。
-        """
-        content = self.get_message_content(
-            response, strip_reasoning=True, strip_thinking=True
-        )
-        if not content.strip():
-            full = self.get_message_content(response)
-            if test_logger and full.strip():
-                test_logger.info(
-                    f"[{context}] 正式content为空，回退到content+reasoning"
-                    f"（思考模型可能被reasoning消耗了max_tokens）"
-                )
-            return full
-        return content
-
-    def _assert_finish_reason(self, response: Dict[str, Any]) -> str:
-        """断言非流式响应 finish_reason 合法并返回其值"""
-        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
-        assert finish_reason in self.VALID_FINISH_REASONS, (
-            f"finish_reason should be one of {self.VALID_FINISH_REASONS}, "
-            f"got '{finish_reason}'"
-        )
-        return finish_reason
-
-    @staticmethod
-    def _is_over_limit_error(e) -> bool:
-        """判断异常是否表示上下文超限/连接中断/服务端边界失败"""
-        if e is None:
-            return False
-        error_msg = str(e).lower()
-        exc_name = type(e).__name__.lower()
-        keywords = [
-            "context", "length", "too_many", "exceed", "limit",
-            "token", "413", "request entity too large",
-            "500", "502", "503", "504",
-            "internal server", "server error",
-            "chunked", "protocol", "premature",
-            "connection", "reset", "timeout", "timed out", "ended",
-        ]
-        return any(kw in error_msg or kw in exc_name for kw in keywords)
-
-    @staticmethod
-    def _get_max_context_len(model_info: dict) -> int:
-        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和 sglang(context-length) 以及部分模型(context_window)"""
-        for key in (
-            "max_model_len",
-            "context-length",
-            "context_length",
-            "context_window",
-        ):
-            val = model_info.get(key, 0)
-            if val:
-                return int(val)
-        return 0
 
     # ------------------------------------------------------------------
     # 测试用例
@@ -123,7 +52,7 @@ class TestAPICompatibility(BaseTest):
         params = {"max_tokens": 2048, "temperature": 0.0}
         TestLogger.log_request(test_logger, messages, params)
 
-        response = api_client.chat_completion(messages, temperature=0.0)
+        response = api_client.chat_completion(messages, max_tokens=2048, temperature=0.0)
         TestLogger.log_response(test_logger, response, "Chat Completions响应")
         self.log_full_response(test_logger, response, "G1-ChatCompletions")
 
@@ -210,11 +139,7 @@ class TestAPICompatibility(BaseTest):
         )
 
         # 验证 finish_reason
-        finish_reason = choices[0].get("finish_reason")
-        assert finish_reason in self.VALID_FINISH_REASONS, (
-            f"finish_reason should be one of {self.VALID_FINISH_REASONS}, "
-            f"got '{finish_reason}'"
-        )
+        self._assert_finish_reason(response)
 
         # 验证 usage（若存在）
         usage = response.get("usage", {})
@@ -231,7 +156,7 @@ class TestAPICompatibility(BaseTest):
         # 子测试: max_tokens 超出模型限制
         test_logger.info("--- 子测试: Completions API max_tokens 超限 ---")
         model_info = api_client.get_model_info()
-        max_len = self._get_max_context_len(model_info)
+        max_len = self._get_max_context_len(model_info, default=0)
 
         if max_len > 0:
             # 设置一个明显超过模型限制的 max_tokens
@@ -251,11 +176,7 @@ class TestAPICompatibility(BaseTest):
                 # 成功路径：服务端应截断，finish_reason 为 length
                 over_choices = resp_over.get("choices", [])
                 assert len(over_choices) > 0, "Should have choices in overlimit response"
-                over_finish = over_choices[0].get("finish_reason")
-                assert over_finish in self.VALID_FINISH_REASONS, (
-                    f"overlimit finish_reason should be one of "
-                    f"{self.VALID_FINISH_REASONS}, got '{over_finish}'"
-                )
+                over_finish = self._assert_finish_reason(resp_over)
                 over_usage = resp_over.get("usage", {})
                 test_logger.info(
                     f"Completions overlimit handled, finish_reason={over_finish}, "
@@ -357,7 +278,7 @@ class TestAPICompatibility(BaseTest):
         params = {"max_tokens": 100, "temperature": 0.0}
         TestLogger.log_request(test_logger, messages, params)
 
-        response = api_client.chat_completion(messages, temperature=0.0)
+        response = api_client.chat_completion(messages, max_tokens=100, temperature=0.0)
         TestLogger.log_response(test_logger, response, "Usage统计响应")
         self.log_full_response(test_logger, response, "G4-Usage统计")
 
@@ -417,19 +338,18 @@ class TestAPICompatibility(BaseTest):
         messages = [{"role": "user", "content": "测试"}]
 
         # 测试 401 认证错误（无效的API key）
+        invalid_client = ModelAPIClient(
+            base_url=api_client.base_url,
+            api_key="invalid_key_12345",
+            model_name=api_client.model_name,
+        )
         try:
-            invalid_client = ModelAPIClient(
-                base_url=api_client.base_url,
-                api_key="invalid_key_12345",
-                model_name=api_client.model_name,
-            )
             TestLogger.log_request(test_logger, messages, {"invalid_api_key": True})
             response = invalid_client.chat_completion(messages)
             self.log_full_response(test_logger, response, "G5-401认证错误")
             # 未抛异常说明无效 key 被接受，记录软告警
             test_logger.warning("401 test: no error returned for invalid API key")
             record_warning("401未返回错误")
-            invalid_client.close()
         except Exception as e:
             self.log_full_response(
                 test_logger, {"error": str(e)}, "G5-401认证错误(异常)"
@@ -440,6 +360,8 @@ class TestAPICompatibility(BaseTest):
             assert any(
                 kw in error_msg for kw in ["401", "unauthorized", "auth"]
             ), f"Should be authentication error, got: {e}"
+        finally:
+            invalid_client.close()
 
         # 测试 400 错误（无效请求 - 空 content）
         try:
@@ -464,7 +386,6 @@ class TestAPICompatibility(BaseTest):
 
         # 测试 404 错误（不存在的端点）
         try:
-            import requests
             url = f"{api_client.base_url}/v1/nonexistent_endpoint"
             TestLogger.log_request(test_logger, messages, {"url": url})
             resp = requests.get(url, timeout=10, headers=api_client.session.headers)
@@ -511,12 +432,11 @@ class TestAPICompatibility(BaseTest):
             return
 
         # SDK 已安装，以下为硬断言
+        client = OpenAI(
+            api_key=api_client.api_key or "dummy",
+            base_url=f"{api_client.base_url}/v1",
+        )
         try:
-            client = OpenAI(
-                api_key=api_client.api_key or "dummy",
-                base_url=f"{api_client.base_url}/v1",
-            )
-
             messages = [{"role": "user", "content": "测试SDK兼容性"}]
             TestLogger.log_request(test_logger, messages, {"max_tokens": 100})
 
@@ -537,8 +457,11 @@ class TestAPICompatibility(BaseTest):
             )
             # 思考模型可能 content 为空（全在 reasoning），使用宽松检查
             content = response.choices[0].message.content or ""
-            reasoning = getattr(response.choices[0].message, "reasoning_content", None) or \
-                getattr(response.choices[0].message, "reasoning", None) or ""
+            reasoning = (
+                getattr(response.choices[0].message, "reasoning_content", None)
+                or getattr(response.choices[0].message, "reasoning", None)
+                or ""
+            )
             assert len(content.strip()) > 0 or len(str(reasoning).strip()) > 0, (
                 "Should have non-empty content or reasoning"
             )
@@ -578,3 +501,5 @@ class TestAPICompatibility(BaseTest):
                 test_logger, {"error": str(e)}, "G6-SDK兼容(失败)"
             )
             pytest.fail(f"SDK compatibility test failed: {e}")
+        finally:
+            client.close()
