@@ -87,7 +87,7 @@ prompt = "\n".join(conversation)
 
 ## 核心检测逻辑
 
-复用 `ResponseRelevanceChecker` 工具类，与 H 类测试共享相同的检测逻辑：
+复用 `ResponseRelevanceChecker` 工具类（定义于共享模块 `base/relevance_checker.py`，与 H 类测试共享相同的检测逻辑）：
 
 - `contains_garbled_text()` - 乱码检测
 - `check_domain_relevance()` - 领域相关性检测

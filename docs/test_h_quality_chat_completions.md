@@ -55,7 +55,7 @@ pytest tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::tes
 
 ### ResponseRelevanceChecker 工具类
 
-提供三个核心检测方法：
+`ResponseRelevanceChecker` 定义在共享模块 `base/relevance_checker.py`，供 H 类与 I 类测试共用。提供三个核心检测方法：
 
 #### 1. contains_garbled_text()
 检测乱码输出，支持以下模式：
@@ -115,7 +115,7 @@ is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(questi
 乱码检测测试，验证输出不是乱码。容忍阈值：乱码率 < 20%。
 
 ### test_nonsensical_response_detection (H10)
-无意义回答检测：关键词重叠度分析、Trivial response 检测。容忍阈值：无意义率 < 20%。
+无意义回答检测：关键词重叠度分析、Trivial response 检测。容忍阈值：无意义率 <= 40%。
 
 ### test_cross_domain_relevance (H11)
 跨领域相关性测试（参数化）：weather/cooking 领域验证回答不混淆领域。

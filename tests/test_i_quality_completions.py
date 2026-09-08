@@ -19,670 +19,27 @@ I. Completions API 质量评估与回答相关性测试
 - I13: 回答具体性 - 确保回答不是泛泛而谈 [P2]
 """
 
-import re
 import json
 import pytest
-from typing import List, Dict, Any, Set, Tuple, Optional
+from typing import List, Dict, Any
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
 from base.logger import TestLogger
-
-
-class ResponseRelevanceChecker:
-    """回答相关性检查器"""
-
-    DOMAIN_KEYWORDS = {
-        "programming": {
-            "keywords": [
-                "python",
-                "java",
-                "javascript",
-                "code",
-                "function",
-                "class",
-                "def",
-                "编程",
-                "代码",
-                "函数",
-                "变量",
-                "算法",
-                "数据结构",
-                "loop",
-                "if",
-                "return",
-                "import",
-                "module",
-                "api",
-                "sdk",
-                "compiler",
-                "debug",
-                "类",
-                "对象",
-                "封装",
-                "继承",
-                "多态",
-                "抽象",
-                "方法",
-                "属性",
-                "实例",
-                "接口",
-                "面向对象",
-                "递归",
-                "调用",
-                "参数",
-                "返回值",
-                "语法",
-                "编译",
-            ],
-            "negative_keywords": [
-                "天气",
-                "weather",
-                "水果",
-                "fruit",
-                "电影",
-                "movie",
-                "音乐",
-                "music",
-            ],
-        },
-        "math": {
-            "keywords": [
-                "计算",
-                "数学",
-                "math",
-                "equation",
-                "公式",
-                "加",
-                "减",
-                "乘",
-                "除",
-                "等于",
-                "结果",
-                "答案",
-                "number",
-                "数字",
-                "sum",
-                "difference",
-                "积分",
-                "微分",
-                "导数",
-                "函数",
-                "equation",
-                "solve",
-                "解",
-            ],
-            "negative_keywords": ["天气", "weather", "旅游", "travel"],
-        },
-        "science": {
-            "keywords": [
-                "science",
-                "物理",
-                "化学",
-                "生物",
-                "实验",
-                "原子",
-                "分子",
-                "元素",
-                "反应",
-                "力",
-                "能量",
-                "光",
-                "电",
-                "磁场",
-                "gravity",
-                "electron",
-                "proton",
-                "chemical",
-                "reaction",
-                "cell",
-                "DNA",
-                "RNA",
-            ],
-            "negative_keywords": ["烹饪", "cooking", "娱乐", "entertainment"],
-        },
-        "general_knowledge": {
-            "keywords": [
-                "是什么",
-                "什么是",
-                "介绍",
-                "解释",
-                "历史",
-                "文化",
-                "国家",
-                "城市",
-                "what is",
-                "explain",
-                "introduce",
-                "history",
-                "culture",
-                "country",
-                "city",
-            ],
-            "negative_keywords": [],
-        },
-        "weather": {
-            "keywords": [
-                "天气",
-                "weather",
-                "温度",
-                "temperature",
-                "雨",
-                "雪",
-                "晴",
-                "多云",
-                "humidity",
-                "湿度",
-                "预报",
-                "forecast",
-                "气候",
-                "climate",
-            ],
-            "negative_keywords": ["python", "代码", "算法"],
-        },
-        "cooking": {
-            "keywords": [
-                "烹饪",
-                "做饭",
-                "菜谱",
-                "食材",
-                "调料",
-                "cook",
-                "recipe",
-                "food",
-                "dishes",
-                "ingredient",
-                "spice",
-                "味道",
-                "taste",
-                "厨房",
-                "kitchen",
-                "炒",
-                "煮",
-                "炖",
-                "蒸",
-                "煎",
-                "炸",
-                "烤",
-                "焖",
-                "焯水",
-                "翻炒",
-                "收汁",
-                "调味",
-                "火候",
-                "下锅",
-                "出锅",
-                "切丝",
-                "切块",
-                "切片",
-                "搅拌",
-                "沥干",
-                "爆香",
-                "糖色",
-                "料酒",
-                "生抽",
-                "老抽",
-                "食盐",
-                "白糖",
-                "冰糖",
-                "葱花",
-                "蒜末",
-                "姜片",
-                "油温",
-                "大火",
-                "小火",
-                "中火",
-                "毫升",
-                "克",
-                "汤匙",
-            ],
-            "negative_keywords": ["python", "算法", "物理"],
-        },
-    }
-
-    @staticmethod
-    def contains_garbled_text(text: str) -> Tuple[bool, str]:
-        """
-        检测乱码
-        返回: (是否乱码, 乱码类型描述)
-        """
-        if not text or len(text.strip()) == 0:
-            return True, "empty_text"
-
-        text_clean = text.strip()
-
-        math_expression_pattern = r"^[\d\s\+\-\*/=<>±×÷≤≥≠≈∞√∫∑∏∂∇²³ⁿπ\u03b1-\u03c9\u0391-\u03a9\u3000-\u303f\uff00-\uffef\(\)\[\]\.,:;!?]+$"
-        if re.match(math_expression_pattern, text_clean):
-            return False, ""
-
-        garbled_patterns = [
-            (r"^[�]+$", "replacement_char_only"),
-            (r"^[\u0000-\u001F\u007F-\u009F]+$", "control_chars_only"),
-            (
-                r"^[^a-zA-Z\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\uac00-\ud7af\u0400-\u04ff]+$",
-                "non_text_chars",
-            ),
-            (r"^[\d\W]+$", "only_digits_and_symbols"),
-        ]
-
-        for pattern, pattern_name in garbled_patterns:
-            if re.match(pattern, text_clean):
-                return True, pattern_name
-
-        if (
-            len(text_clean) < 5
-            and not re.search(r"[\u4e00-\u9fff]", text_clean)
-            and not re.search(r"[a-zA-Z]{2,}", text_clean)
-        ):
-            return True, "too_short_and_no_language_chars"
-
-        control_char_ratio = sum(
-            1 for c in text if ord(c) < 32 and c not in "\n\r\t"
-        ) / max(len(text), 1)
-        if control_char_ratio > 0.1:
-            return True, "too_many_control_chars"
-
-        return False, ""
-
-    @staticmethod
-    def detect_spam_content(text: str) -> Tuple[bool, str]:
-        """检测SEO垃圾内容、关键词堆砌和重复内容
-
-        返回: (是否垃圾内容, 垃圾类型描述)
-        """
-        if not text or len(text.strip()) == 0:
-            return True, "empty_text"
-
-        text_clean = text.strip()
-        from collections import Counter
-
-        # 1. 检测重复句子（同一句子出现3次以上）
-        # 注意：过滤掉纯markdown格式行（代码围栏```、分隔线---等），
-        # 避免将编程回答中多个代码块的```python标记误判为重复句子。
-        # 同样需过滤代码注释行（#、//、; 等）：编程回答中多个示例常含
-        # 相同注释（如 "# 调用函数"），属于正常代码文档，不应判为堆砌。
-        # 额外：先剥离代码块内容再做散文句子分析——代码块中的重复语句
-        # （如多个示例中的 "import json"）是正常代码，不是散文堆砌。
-        prose_text = re.sub(r"```[^\n]*\n.*?```", "", text_clean, flags=re.DOTALL)
-        sentences = re.split(r"[。！？\n.!?]", prose_text)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 5]
-        sentences = [
-            s
-            for s in sentences
-            if not re.match(r"^(?:```+[\w]*|---+|===+|\*\*\*+|___+)\s*$", s)
-            and not re.match(r"^(?:#{1,6}\s+|//|;|/\*|<!--)", s)
-        ]
-
-        if sentences:
-            sentence_counts = Counter(sentences)
-            for sent, count in sentence_counts.items():
-                if count >= 3:
-                    return True, f"repeated_sentence: '{sent[:30]}...' x{count}"
-
-        # 2. 检测关键词堆砌（同一中文词组出现频率过高）
-        # 注意：原逻辑对任意子串重复都判违规，会将"天气"在"天气App"/
-        # "墨迹天气"/"实时天气"等不同复合词中的合理使用误判为堆砌。
-        # 改进：区分"连续机械重复"（真堆砌）与"在不同复合词中作为语素"
-        # （正常）。对领域问题的回答中，主题词（如天气领域的"天气"）
-        # 反复出现是合理的，不应判失败。
-        for ngram_len in range(2, 7):
-            cn_words = re.findall(
-                rf"[\u4e00-\u9fff]{{{ngram_len},{ngram_len}}}", text_clean
-            )
-            if cn_words:
-                word_counts = Counter(cn_words)
-                total_words = len(cn_words)
-                for word, count in word_counts.items():
-                    # 2a. 检测连续重复（如"优惠优惠优惠"），这是最典型的堆砌
-                    # 同一词连续出现3次及以上视为机械堆砌
-                    consecutive_pattern = rf"(?:{re.escape(word)}){{3,}}"
-                    if re.search(consecutive_pattern, text_clean):
-                        return (
-                            True,
-                            f"keyword_stuffing: '{word}' x{count} ({count / total_words:.0%})",
-                        )
-                    # 2b. 检测高频孤立重复：仅统计该词作为"独立词"（前后为非
-                    # 中文字符）出现的次数，排除作为子串嵌在其他词中的情况。
-                    # 例如"天气"在"天气App"中算独立词，但在"墨迹天气"中不算。
-                    # 阈值放宽到>8次且>8%，避免领域回答中主题词的正常重复。
-                    isolated_pattern = (
-                        rf"(?:^|[^\u4e00-\u9fff]){re.escape(word)}"
-                        rf"(?=[^\u4e00-\u9fff]|$)"
-                    )
-                    isolated_count = len(re.findall(isolated_pattern, text_clean))
-                    if isolated_count > 8 and count / total_words > 0.08:
-                        return (
-                            True,
-                            f"keyword_stuffing: '{word}' x{count} ({count / total_words:.0%})",
-                        )
-
-        # 3. 检测SEO式内容（大量短行包含相似关键词）
-        # 注意：仅"短行多"不足以判定为SEO垃圾——格式良好的markdown回复
-        # （列表、标题）也会产生大量短行。需额外检查短行的词汇多样性：
-        # SEO垃圾的短行反复使用相同关键词（多样性低），而markdown列表项
-        # 内容各异（多样性高）。
-        lines = [l.strip() for l in text_clean.split("\n") if l.strip()]
-        if len(lines) > 10:
-            short_lines = [l for l in lines if len(l) < 30]
-            if len(short_lines) > len(lines) * 0.6:
-                # 检查短行的词汇多样性：提取2字中文n-gram，计算 unique/total
-                short_text = "".join(short_lines)
-                short_cn_words = re.findall(r"[\u4e00-\u9fff]{2}", short_text)
-                if short_cn_words:
-                    short_word_counts = Counter(short_cn_words)
-                    short_diversity = len(short_word_counts) / len(short_cn_words)
-                    # 多样性低于0.4表示短行高度重复（典型SEO垃圾特征）
-                    if short_diversity < 0.4:
-                        return (
-                            True,
-                            f"seo_style_content: {len(short_lines)}/{len(lines)} short lines, diversity={short_diversity:.2f}",
-                        )
-
-        # 4. 检测重复模式（高相似度句子过多）
-        # 注意：排除含内联代码(backticks)的行——这类结构化对比行
-        # （如 "传统：`GET /api/...`" vs "RESTful：`GET /api/...`"）
-        # 格式相似但属正常技术对比，不应判为重复模式。
-        prose_sentences = [s for s in sentences if "`" not in s]
-        if len(prose_sentences) > 10:
-            similar_count = 0
-            for i in range(len(prose_sentences)):
-                for j in range(i + 1, min(i + 10, len(prose_sentences))):
-                    set_i = set(prose_sentences[i])
-                    set_j = set(prose_sentences[j])
-                    if set_i and set_j:
-                        overlap = len(set_i & set_j) / max(len(set_i | set_j), 1)
-                        if overlap > 0.7 and len(prose_sentences[i]) > 10:
-                            similar_count += 1
-                if similar_count > 5:
-                    break
-
-            if similar_count > 5:
-                return (
-                    True,
-                    f"repetitive_pattern: {similar_count} similar sentence pairs",
-                )
-
-        return False, ""
-
-    @staticmethod
-    def check_sentence_relevance(
-        answer: str, keywords: List[str], min_ratio: float = 0.15
-    ) -> Dict[str, Any]:
-        """检查句子级别的相关性 - 有多少比例的句子包含相关关键词"""
-        sentences = re.split(r"[。！？\n.!?]", answer)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 3]
-
-        if not sentences:
-            return {
-                "relevant": False,
-                "ratio": 0.0,
-                "total_sentences": 0,
-                "relevant_sentences": 0,
-                "reason": "no_valid_sentences",
-            }
-
-        relevant_sentences = 0
-        for s in sentences:
-            if any(kw.lower() in s.lower() for kw in keywords):
-                relevant_sentences += 1
-
-        ratio = relevant_sentences / len(sentences)
-
-        return {
-            "relevant": ratio >= min_ratio,
-            "ratio": ratio,
-            "total_sentences": len(sentences),
-            "relevant_sentences": relevant_sentences,
-            "reason": f"{relevant_sentences}/{len(sentences)} sentences ({ratio:.0%})",
-        }
-
-    @staticmethod
-    def check_response_quality(
-        question: str, answer: str, expected_keywords: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
-        """综合质量检查 - 检查垃圾内容、相关性和长度适当性"""
-        issues = []
-
-        # 1. 垃圾内容检测
-        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(answer)
-        if is_spam:
-            issues.append(f"spam: {spam_reason}")
-
-        # 2. 乱码检测
-        is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
-            answer
-        )
-        if is_garbled:
-            issues.append(f"garbled: {garbled_type}")
-
-        # 3. 句子级相关性检查
-        sentence_relevance = None
-        if expected_keywords:
-            sentence_relevance = ResponseRelevanceChecker.check_sentence_relevance(
-                answer, expected_keywords, min_ratio=0.15
-            )
-            if not sentence_relevance["relevant"]:
-                issues.append(f"low_sentence_relevance: {sentence_relevance['reason']}")
-
-        # 4. 响应长度适当性检查
-        # 对于简短问题，响应不应过长且答案不在前部
-        if len(question) < 30 and len(answer) > 3000 and expected_keywords:
-            first_portion = answer[:500]
-            has_early_answer = any(
-                kw.lower() in first_portion.lower() for kw in expected_keywords
-            )
-            if not has_early_answer:
-                issues.append("answer_not_in_early_portion")
-
-        return {
-            "quality_passed": len(issues) == 0,
-            "issues": issues,
-            "is_spam": is_spam,
-            "spam_reason": spam_reason if is_spam else "",
-            "is_garbled": is_garbled,
-            "sentence_relevance": sentence_relevance,
-        }
-
-    @staticmethod
-    def check_domain_relevance(
-        question: str, answer: str, domain: str
-    ) -> Dict[str, Any]:
-        """
-        检查回答在指定领域的相关性
-        返回: {relevant: bool, score: float, matched_keywords: [], reason: str}
-        """
-        domain_info = ResponseRelevanceChecker.DOMAIN_KEYWORDS.get(domain, {})
-
-        question_lower = question.lower()
-        answer_lower = answer.lower()
-
-        # 垃圾内容检测 - 垃圾内容直接0分
-        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(answer)
-        if is_spam:
-            return {
-                "relevant": False,
-                "score": 0.0,
-                "matched_keywords": [],
-                "negative_keywords": [],
-                "reason": f"spam_content: {spam_reason}",
-                "is_spam": True,
-            }
-
-        matched_positive = []
-        for kw in domain_info.get("keywords", []):
-            if kw.lower() in answer_lower:
-                matched_positive.append(kw)
-
-        matched_negative = []
-        for kw in domain_info.get("negative_keywords", []):
-            if kw.lower() in answer_lower:
-                matched_negative.append(kw)
-
-        positive_score = len(matched_positive) / max(
-            len(domain_info.get("keywords", [])), 1
-        )
-        # 负向词惩罚：单个负向词常出现在类比/举例中（如用"电影院"解释递归），
-        # 不应直接否定整段领域回答。按命中比例扣分，仅当负向词较多时才显著降分。
-        negative_count = len(matched_negative)
-        negative_ratio = negative_count / max(
-            len(domain_info.get("negative_keywords", [])), 1
-        )
-        negative_penalty = negative_ratio * 0.5
-
-        score = max(0, positive_score - negative_penalty)
-
-        # 句子级相关性调节 - 如果大部分句子不含领域关键词，降低分数
-        all_keywords = domain_info.get("keywords", [])
-        if all_keywords and len(answer) > 100:
-            sent_rel = ResponseRelevanceChecker.check_sentence_relevance(
-                answer, all_keywords, min_ratio=0.0
-            )
-            if sent_rel["total_sentences"] > 0:
-                score = score * (0.4 + 0.6 * sent_rel["ratio"])
-
-        # 仅当负向词数量较多（>=2）或超过正向词数量时才判不相关；
-        # 单个负向词通常只是举例/类比，不应否定整段领域回答。
-        is_relevant = (
-            score >= 0.1
-            and negative_count < 2
-            and negative_count <= len(matched_positive)
-        )
-
-        reason = f"matched {len(matched_positive)}/{len(domain_info.get('keywords', []))} positive keywords"
-        if matched_negative:
-            reason += f", {len(matched_negative)} negative keywords found"
-
-        return {
-            "relevant": is_relevant,
-            "score": score,
-            "matched_keywords": matched_positive,
-            "negative_keywords": matched_negative,
-            "reason": reason,
-            "is_spam": False,
-        }
-
-    @staticmethod
-    def _detect_primary_domain(text: str):
-        """检测文本主要所属领域，返回 (domain, score) 或 (None, 0)"""
-        text_lower = text.lower()
-        domain_scores = {}
-        for domain, domain_info in ResponseRelevanceChecker.DOMAIN_KEYWORDS.items():
-            score = sum(
-                1 for kw in domain_info.get("keywords", []) if kw.lower() in text_lower
-            )
-            if score > 0:
-                domain_scores[domain] = score
-
-        if not domain_scores:
-            return None, 0
-
-        best_domain = max(domain_scores.keys(), key=lambda d: domain_scores[d])
-        best_score = domain_scores[best_domain]
-        total = sum(domain_scores.values())
-
-        if best_score >= 2 and best_score / total > 0.4:
-            return best_domain, best_score / total
-
-        return None, 0
-
-    @staticmethod
-    def _extract_bigrams(text: str) -> set:
-        """提取文本的2字符滑动窗口集合，用于中文细粒度匹配"""
-        result = set()
-        cn_chars = re.findall(r"[\u4e00-\u9fff]", text)
-        for i in range(len(cn_chars) - 1):
-            result.add(cn_chars[i] + cn_chars[i + 1])
-        return result
-
-    @staticmethod
-    def is_nonsensical_response(question: str, answer: str) -> Tuple[bool, str]:
-        """
-        检测无意义回答（与问题完全不相关）
-        返回: (是否无意义, 原因)
-        """
-        question_lower = question.lower()
-        answer_lower = answer.lower()
-
-        nonsensical_patterns = [
-            (r"^[\s\n]*$", "empty_response"),
-            (r"^(好的|ok|okay|yep|yes|no)\s*[.。]?\s*$", "trivial_affirmation"),
-            (r"^对不起|抱歉|我不明白|无法回答", "refusal_or_uncertainty"),
-        ]
-
-        for pattern, pattern_name in nonsensical_patterns:
-            if re.match(pattern, answer_lower):
-                return True, pattern_name
-
-        if len(answer_lower) < 3:
-            return True, "too_short"
-
-        # 垃圾内容检测 - SEO堆砌、关键词重复等视为无意义
-        is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(answer)
-        if is_spam:
-            return True, f"spam_content: {spam_reason}"
-
-        q_bigrams = ResponseRelevanceChecker._extract_bigrams(question_lower)
-        a_bigrams = ResponseRelevanceChecker._extract_bigrams(answer_lower)
-
-        q_en_words = set(re.findall(r"[a-zA-Z]{3,}", question_lower))
-        a_en_words = set(re.findall(r"[a-zA-Z]{3,}", answer_lower))
-
-        cn_overlap = len(q_bigrams & a_bigrams) / max(len(q_bigrams), 1)
-        en_overlap = (
-            len(q_en_words & a_en_words) / max(len(q_en_words), 1)
-            if q_en_words
-            else 1.0
-        )
-
-        has_cn_overlap = cn_overlap >= 0.15
-        # 只有当问题本身包含英文单词时，英文重叠才有意义
-        # 纯中文问题不应该因为"没有英文可匹配"就自动通过
-        has_en_overlap = bool(q_en_words) and en_overlap >= 0.2
-
-        if not has_cn_overlap and not has_en_overlap:
-            if len(answer_lower) > 50:
-                return True, "no_keyword_overlap"
-            if len(answer_lower) > 10:
-                return True, "no_keyword_overlap_short"
-
-        # 对于简短问题和长回答，检查是否有任何句子与问题相关
-        if len(question) < 50 and len(answer) > 1000 and q_bigrams:
-            answer_sentences = re.split(r"[。！？\n.!?]", answer)
-            answer_sentences = [
-                s.strip() for s in answer_sentences if len(s.strip()) > 5
-            ]
-            has_relevant_sentence = False
-            for sent in answer_sentences:
-                sent_bigrams = ResponseRelevanceChecker._extract_bigrams(sent)
-                if len(q_bigrams & sent_bigrams) > 0:
-                    has_relevant_sentence = True
-                    break
-            if not has_relevant_sentence:
-                return True, "long_response_no_question_relevance"
-
-        q_domain, q_confidence = ResponseRelevanceChecker._detect_primary_domain(
-            question
-        )
-        a_domain, a_confidence = ResponseRelevanceChecker._detect_primary_domain(answer)
-
-        if (
-            q_domain
-            and a_domain
-            and q_domain != a_domain
-            and q_confidence > 0.3
-            and a_confidence > 0.3
-        ):
-            if not has_cn_overlap and not has_en_overlap:
-                return (
-                    True,
-                    f"domain_mismatch: question({q_domain}) vs answer({a_domain})",
-                )
-
-        return False, ""
+from base.relevance_checker import ResponseRelevanceChecker
 
 
 class TestQualityCompletions(BaseTest, StreamingTestMixin):
     """Completions API 质量评估与回答相关性测试类"""
+
+    # 通过率/阈值集中管理
+    MIN_QUALITY_LENGTH = 20
+    MIN_PASS_RATE = 0.5
+    MAX_HALLUCINATION_RATE = 0.2
+    MIN_CONSISTENCY_SIMILARITY = 0.3
+    MAX_NONSENSICAL_RATE = 0.4
+    MAX_GARBLED_RATE = 0.2
+    DOMAIN_RELEVANCE_THRESHOLD = 0.1
 
     def get_test_category(self) -> str:
         return "I. Completions API 质量评估与回答相关性"
@@ -717,12 +74,43 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         """Completions API 不支持 reasoning_content"""
         return None
 
+    @staticmethod
+    def _trunc(text: str, n: int = 2000) -> str:
+        """截断文本用于日志，超长时附加省略号"""
+        return text[:n] + ("..." if len(text) > n else "")
+
+    def _complete_and_get_content(
+        self,
+        api_client: ModelAPIClient,
+        test_logger,
+        prompt: str,
+        label: str,
+        **kwargs,
+    ) -> str:
+        """发起 completion 请求并返回正式回复内容
+
+        封装 请求/响应日志/断言/取正文 的通用流程。思考模型在 max_tokens
+        被 reasoning 耗尽导致 content 为空时，通过 _get_formal_content 回退
+        到 content+reasoning，避免误判。不适用于需严格区分正式回复与思考
+        内容的用例（JSON 指令遵循、多轮上下文拼接、回答具体性跳过逻辑）。
+        """
+        params = {"max_tokens": 2000, **kwargs}
+        TestLogger.log_request(
+            test_logger, [{"role": "user", "content": prompt}], params
+        )
+        response = api_client.completion(prompt, **params)
+        TestLogger.log_response(test_logger, response, "响应")
+        self.log_full_response(test_logger, response, label)
+        self.assert_response_success(response)
+        self.assert_content_not_empty(response)
+        return self._get_formal_content(response, test_logger, label)
+
     def _log_relevance_result(
         self, test_logger, question: str, answer: str, result: Dict[str, Any]
     ):
         """记录相关性检查结果"""
         test_logger.info(f"问题: {question}")
-        test_logger.info(f"回答: {answer[:2000]}...")
+        test_logger.info(f"回答: {self._trunc(answer)}")
         test_logger.info(
             f"相关性得分: {result['score']:.2f}, 相关: {result['relevant']}"
         )
@@ -746,35 +134,28 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         quality_scores = []
         for idx, prompt in enumerate(test_cases):
             test_logger.info(f"测试: {prompt}")
-            TestLogger.log_request(
-                test_logger, [{"role": "user", "content": prompt}], {"max_tokens": 2000}
+            content = self._complete_and_get_content(
+                api_client, test_logger, prompt, f"I1-生成质量-{idx + 1}"
             )
 
-            response = api_client.completion(prompt, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, f"质量测试响应")
-            self.log_full_response(test_logger, response, f"I1-生成质量-{idx + 1}")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
-            )
-
-            min_length = 20
             is_spam, spam_reason = ResponseRelevanceChecker.detect_spam_content(content)
-            passed = len(content.strip()) >= min_length and not is_spam
+            passed = len(content.strip()) >= self.MIN_QUALITY_LENGTH and not is_spam
             if is_spam:
                 test_logger.warning(f"检测到垃圾内容: {spam_reason}")
             quality_scores.append(passed)
             test_logger.info(
-                f"响应长度: {len(content)}, 通过: {passed} (最低要求: {min_length})"
+                f"响应长度: {len(content)}, 通过: {passed} "
+                f"(最低要求: {self.MIN_QUALITY_LENGTH})"
             )
 
         pass_rate = sum(quality_scores) / len(test_cases)
         test_logger.info(
-            f"质量通过率: {pass_rate * 100:.0f}%, 通过: {sum(quality_scores)}/{len(test_cases)}"
+            f"质量通过率: {pass_rate * 100:.0f}%, "
+            f"通过: {sum(quality_scores)}/{len(test_cases)}"
         )
-        assert pass_rate >= 0.5, f"Quality pass rate too low: {pass_rate * 100:.0f}%"
+        assert pass_rate >= self.MIN_PASS_RATE, (
+            f"Quality pass rate too low: {pass_rate * 100:.0f}%"
+        )
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -783,27 +164,15 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         test_logger.info("=== 测试开始: 生成一致性 (Completions API) ===")
 
         prompt = "请用一句话介绍长江"
-        TestLogger.log_request(
-            test_logger,
-            [{"role": "user", "content": prompt}],
-            {"max_tokens": 2000, "temperature": 0},
-        )
-
         responses = []
         for i in range(3):
             test_logger.info(f"第{i + 1}次请求")
-            response = api_client.completion(prompt, max_tokens=2000, temperature=0)
-            TestLogger.log_response(
-                test_logger, response, f"生成一致性-第{i + 1}次响应"
-            )
-            self.log_full_response(test_logger, response, f"I2-生成一致性-第{i + 1}次")
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
+            content = self._complete_and_get_content(
+                api_client, test_logger, prompt, f"I2-生成一致性-第{i + 1}次",
+                temperature=0,
             )
             responses.append(content)
-            test_logger.info(f"第{i + 1}次响应: {content[:2000]}...")
+            test_logger.info(f"第{i + 1}次响应: {self._trunc(content)}")
 
         assert all(r and len(r.strip()) > 0 for r in responses), (
             "All responses should be non-empty"
@@ -824,7 +193,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             f"char-level similarity: {similarity:.2%}, "
             f"lengths: {[len(r) for r in responses]}"
         )
-        assert similarity > 0.3, (
+        assert similarity > self.MIN_CONSISTENCY_SIMILARITY, (
             f"Responses should be consistent at temperature=0, "
             f"char-level similarity too low: {similarity:.2%}"
         )
@@ -845,20 +214,8 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         hallucination_count = 0
         for idx, (question, expected) in enumerate(test_facts):
             test_logger.info(f"测试问题: {question}")
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": question}],
-                {"max_tokens": 2000},
-            )
-
-            response = api_client.completion(question, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "幻觉检测响应")
-            self.log_full_response(test_logger, response, f"I3-幻觉检测-{idx + 1}")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
+            content = self._complete_and_get_content(
+                api_client, test_logger, question, f"I3-幻觉检测-{idx + 1}"
             )
 
             is_nonsensical, nonsensical_reason = (
@@ -889,7 +246,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         hallucination_rate = hallucination_count / len(test_facts)
         test_logger.info(f"Hallucination rate: {hallucination_rate * 100:.0f}%")
-        assert hallucination_rate < 0.2, (
+        assert hallucination_rate < self.MAX_HALLUCINATION_RATE, (
             f"Hallucination rate too high: {hallucination_rate * 100:.0f}%"
         )
 
@@ -915,9 +272,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         )
 
         try:
-            import json as _json
-
-            data = _json.loads(content)
+            data = json.loads(content)
             assert "name" in data and "age" in data, (
                 f"JSON should contain both 'name' and 'age' fields, got: {list(data.keys())}"
             )
@@ -943,19 +298,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         relevant_count = 0
         for idx, (prompt, keywords) in enumerate(test_cases):
             test_logger.info(f"测试问题: {prompt}")
-            TestLogger.log_request(
-                test_logger, [{"role": "user", "content": prompt}], {"max_tokens": 2000}
+            content = self._complete_and_get_content(
+                api_client, test_logger, prompt, f"I5-回答相关性-{idx + 1}"
             )
-
-            response = api_client.completion(prompt, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "相关性响应")
-            self.log_full_response(test_logger, response, f"I5-回答相关性-{idx + 1}")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
-            ).lower()
 
             is_nonsensical, nonsensical_reason = (
                 ResponseRelevanceChecker.is_nonsensical_response(prompt, content)
@@ -966,7 +311,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             )
             if (
                 not is_nonsensical
-                and any(kw.lower() in content for kw in keywords)
+                and any(kw.lower() in content.lower() for kw in keywords)
                 and quality["quality_passed"]
             ):
                 relevant_count += 1
@@ -981,7 +326,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         relevance_rate = relevant_count / len(test_cases)
         test_logger.info(f"Relevance rate: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.5, f"Low relevance: {relevance_rate * 100:.0f}%"
+        assert relevance_rate >= self.MIN_PASS_RATE, (
+            f"Low relevance: {relevance_rate * 100:.0f}%"
+        )
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -1013,22 +360,10 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": case["question"]}],
-                {"max_tokens": 2000},
+            content = self._complete_and_get_content(
+                api_client, test_logger, case["question"], f"I6-编程领域-{idx + 1}"
             )
-
-            response = api_client.completion(case["question"], max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "响应")
-            self.log_full_response(test_logger, response, f"I6-编程领域-{idx + 1}")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
-            )
-            test_logger.info(f"回答: {content[:2000]}...")
+            test_logger.info(f"回答: {self._trunc(content)}")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
                 content
@@ -1040,7 +375,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             )
             self._log_relevance_result(test_logger, case["question"], content, result)
 
-            if result["relevant"] and result["score"] >= 0.1:
+            if result["relevant"] and result["score"] >= self.DOMAIN_RELEVANCE_THRESHOLD:
                 quality = ResponseRelevanceChecker.check_response_quality(
                     case["question"], content, case["expected_keywords"]
                 )
@@ -1054,7 +389,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"\n编程领域相关性通过率: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.5, f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
+        assert relevance_rate >= self.MIN_PASS_RATE, (
+            f"编程领域相关性过低: {relevance_rate * 100:.0f}%"
+        )
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -1082,26 +419,12 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         ]
 
         passed_count = 0
-        for case in test_cases:
+        for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": case["question"]}],
-                {"max_tokens": 2000},
+            content = self._complete_and_get_content(
+                api_client, test_logger, case["question"], f"I7-数学领域-{idx + 1}"
             )
-
-            response = api_client.completion(case["question"], max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "响应")
-            self.log_full_response(
-                test_logger, response, f"I7-数学领域-{test_cases.index(case) + 1}"
-            )
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
-            )
-            test_logger.info(f"回答: {content[:2000]}...")
+            test_logger.info(f"回答: {self._trunc(content)}")
 
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
                 content
@@ -1129,7 +452,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"\n数学领域相关性通过率: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.5, f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
+        assert relevance_rate >= self.MIN_PASS_RATE, (
+            f"数学领域相关性过低: {relevance_rate * 100:.0f}%"
+        )
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -1141,37 +466,25 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             {
                 "question": "水的化学式是什么？",
                 "domain": "science",
-                "expected": ["H2O", "氢", "氧"],
+                "expected_keywords": ["H2O", "氢", "氧"],
             },
             {
                 "question": "什么是光合作用？",
                 "domain": "science",
-                "expected": ["光", "叶绿体", "二氧化碳", "氧气"],
+                "expected_keywords": ["光", "叶绿体", "二氧化碳", "氧气"],
             },
             {
                 "question": "解释牛顿第一定律",
                 "domain": "science",
-                "expected": ["惯性", "力", "运动", "定律"],
+                "expected_keywords": ["惯性", "力", "运动", "定律"],
             },
         ]
 
         passed_count = 0
         for idx, case in enumerate(test_cases):
             test_logger.info(f"\n--- 测试: {case['question']} ---")
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": case["question"]}],
-                {"max_tokens": 2000},
-            )
-
-            response = api_client.completion(case["question"], max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "API 响应")
-            self.log_full_response(test_logger, response, f"I8-科学领域-{idx + 1}")
-
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
+            content = self._complete_and_get_content(
+                api_client, test_logger, case["question"], f"I8-科学领域-{idx + 1}"
             )
             test_logger.info(f"回答内容: {content}")
 
@@ -1184,10 +497,11 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             self._log_relevance_result(test_logger, case["question"], content, result)
 
             quality = ResponseRelevanceChecker.check_response_quality(
-                case["question"], content, case["expected"]
+                case["question"], content, case["expected_keywords"]
             )
             if (
-                result["relevant"] or any(kw in content for kw in case["expected"])
+                result["relevant"]
+                or any(kw in content for kw in case["expected_keywords"])
             ) and quality["quality_passed"]:
                 passed_count += 1
                 test_logger.info("✓ 相关性验证通过")
@@ -1198,7 +512,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         relevance_rate = passed_count / len(test_cases)
         test_logger.info(f"科学领域相关性通过率: {relevance_rate * 100:.0f}%")
-        assert relevance_rate >= 0.5, f"科学领域相关性过低"
+        assert relevance_rate >= self.MIN_PASS_RATE, f"科学领域相关性过低"
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -1216,21 +530,10 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         ]
 
         garbled_count = 0
-        for prompt in test_prompts:
+        for idx, prompt in enumerate(test_prompts):
             test_logger.info(f"\n测试: {prompt}")
-            TestLogger.log_request(
-                test_logger, [{"role": "user", "content": prompt}], {"max_tokens": 2000}
-            )
-
-            response = api_client.completion(prompt, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "响应")
-            self.log_full_response(
-                test_logger, response, f"I9-乱码检测-{test_prompts.index(prompt) + 1}"
-            )
-
-            self.assert_response_success(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
+            content = self._complete_and_get_content(
+                api_client, test_logger, prompt, f"I9-乱码检测-{idx + 1}"
             )
             test_logger.info(f"回答长度: {len(content)}")
 
@@ -1242,7 +545,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             if is_garbled:
                 garbled_count += 1
                 test_logger.error(f"✗ 检测到乱码: {garbled_type}")
-                test_logger.error(f"乱码内容: {content[:2000]}...")
+                test_logger.error(f"乱码内容: {self._trunc(content)}")
             elif is_spam:
                 # 垃圾内容（如关键词堆砌、SEO式排版）不等同于乱码。
                 # 模型可能使用markdown格式化（列表、标题）导致短行较多，
@@ -1255,7 +558,9 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         garbled_rate = garbled_count / len(test_prompts)
         test_logger.info(f"\n乱码率: {garbled_rate * 100:.0f}%")
-        assert garbled_rate < 0.2, f"乱码率过高: {garbled_rate * 100:.0f}%"
+        assert garbled_rate < self.MAX_GARBLED_RATE, (
+            f"乱码率过高: {garbled_rate * 100:.0f}%"
+        )
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -1274,27 +579,12 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         ]
 
         nonsensical_count = 0
-        for question in test_cases:
+        for idx, question in enumerate(test_cases):
             test_logger.info(f"\n问题: {question}")
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": question}],
-                {"max_tokens": 2000},
+            content = self._complete_and_get_content(
+                api_client, test_logger, question, f"I10-无意义检测-{idx + 1}"
             )
-
-            response = api_client.completion(question, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "响应")
-            self.log_full_response(
-                test_logger,
-                response,
-                f"I10-无意义检测-{test_cases.index(question) + 1}",
-            )
-
-            self.assert_response_success(response)
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
-            )
-            test_logger.info(f"回答: {content[:2000]}...")
+            test_logger.info(f"回答: {self._trunc(content)}")
 
             is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(
                 question, content
@@ -1308,7 +598,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
 
         nonsensical_rate = nonsensical_count / len(test_cases)
         test_logger.info(f"\n无意义回答率: {nonsensical_rate * 100:.0f}%")
-        assert nonsensical_rate <= 0.4, (
+        assert nonsensical_rate <= self.MAX_NONSENSICAL_RATE, (
             f"无意义回答率过高: {nonsensical_rate * 100:.0f}%"
         )
 
@@ -1342,21 +632,10 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         passed_count = 0
         for idx, question in enumerate(questions):
             test_logger.info(f"\n问题: {question}")
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": question}],
-                {"max_tokens": 2000},
+            content = self._complete_and_get_content(
+                api_client, test_logger, question, f"I11-{domain}领域-{idx + 1}"
             )
-            response = api_client.completion(question, max_tokens=2000)
-            TestLogger.log_response(test_logger, response, "响应")
-            self.log_full_response(test_logger, response, f"I11-{domain}领域-{idx + 1}")
-            self.assert_response_success(response)
-            self.assert_content_not_empty(response)
-
-            content = self.get_message_content(
-                response, strip_reasoning=True, strip_thinking=True
-            )
-            test_logger.info(f"回答: {content[:2000]}...")
+            test_logger.info(f"回答: {self._trunc(content)}")
 
             is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(content)
             assert not is_garbled, f"检测到乱码"
@@ -1367,14 +646,15 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
                 question, content, domain
             )
             test_logger.info(
-                f"相关性得分: {result['score']:.2f}, 匹配关键词: {result['matched_keywords']}"
+                f"相关性得分: {result['score']:.2f}, "
+                f"匹配关键词: {result['matched_keywords']}"
             )
 
             if result["relevant"]:
                 passed_count += 1
 
         rate = passed_count / len(questions)
-        assert rate >= 0.5, f"{domain}领域相关性过低: {rate * 100:.0f}%"
+        assert rate >= self.MIN_PASS_RATE, f"{domain}领域相关性过低: {rate * 100:.0f}%"
 
     @pytest.mark.i_quality_completions
     @pytest.mark.p1
@@ -1402,7 +682,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         self.assert_content_not_empty(r1)
         c1 = self.get_message_content(r1, strip_reasoning=True, strip_thinking=True)
         conversation.append(f"助手: {c1}")
-        test_logger.info(f"第1轮回答: {c1[:2000]}...")
+        test_logger.info(f"第1轮回答: {self._trunc(c1)}")
 
         q2 = "我刚才说我喜欢吃什么水果？"
         test_logger.info(f"第2轮: {q2}")
@@ -1419,7 +699,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         self.assert_response_success(r2)
         self.assert_content_not_empty(r2)
         c2 = self.get_message_content(r2, strip_reasoning=True, strip_thinking=True)
-        test_logger.info(f"第2轮回答: {c2[:2000]}...")
+        test_logger.info(f"第2轮回答: {self._trunc(c2)}")
 
         assert "苹果" in c2 or "apple" in c2.lower(), (
             f"模型应该记住上下文，但回答为: {c2[:2000]}"
@@ -1441,7 +721,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         self.assert_content_not_empty(r3)
         c3 = self.get_message_content(r3, strip_reasoning=True, strip_thinking=True)
         conversation.append(f"助手: {c3}")
-        test_logger.info(f"第3轮回答: {c3[:2000]}...")
+        test_logger.info(f"第3轮回答: {self._trunc(c3)}")
 
         q4 = "我刚才说了我喜欢哪两种水果？"
         test_logger.info(f"第4轮: {q4}")
@@ -1458,7 +738,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         self.assert_response_success(r4)
         self.assert_content_not_empty(r4)
         c4 = self.get_message_content(r4, strip_reasoning=True, strip_thinking=True)
-        test_logger.info(f"第4轮回答: {c4[:2000]}...")
+        test_logger.info(f"第4轮回答: {self._trunc(c4)}")
 
         has_apple = "苹果" in c4 or "apple" in c4.lower()
         has_banana = "香蕉" in c4 or "banana" in c4.lower()
@@ -1524,7 +804,7 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
             content = self.get_message_content(
                 response, strip_reasoning=True, strip_thinking=True
             )
-            test_logger.info(f"回答内容: {content[:500]}...")
+            test_logger.info(f"回答内容: {self._trunc(content, 500)}")
 
             if not content or not content.strip():
                 test_logger.warning(
@@ -1558,4 +838,6 @@ class TestQualityCompletions(BaseTest, StreamingTestMixin):
         if total_evaluated == 0:
             pytest.skip("模型未生成任何正式回复，无法评估回答具体性")
         specificity_rate = passed_count / total_evaluated
-        assert specificity_rate >= 0.5, f"回答具体性过低: {specificity_rate * 100:.0f}%"
+        assert specificity_rate >= self.MIN_PASS_RATE, (
+            f"回答具体性过低: {specificity_rate * 100:.0f}%"
+        )
