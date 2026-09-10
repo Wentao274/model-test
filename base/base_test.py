@@ -684,17 +684,34 @@ class StreamingTestMixin:
 
 
 class MultimodalTestMixin:
-    """多模态测试Mixin"""
+    """多模态测试Mixin - 统一的多模态识别失败检测与图片消息构建"""
 
-    _UNSUPPORTED_STRONG = [
+    # 占位符关键词（响应中出现即判定为未真实识别）
+    PLACEHOLDER_KEYWORDS = [
+        "placeholder",
+        "占位符",
+        "视频占位",
+        "image_placeholder",
+        "video_placeholder",
+        "<|",
+    ]
+
+    # 强拒绝关键词：模型明确声明无法处理图片/视频输入。出现即判定多模态不支持，
+    # 不受 positive_phrases 影响。用于避免模型在拒绝后追加"例如图片中有什么"
+    # 等澄清性提问，导致 positive_phrases 误判为已识别图片。
+    STRONG_REFUSAL_COMMON = [
+        "无法看到或处理",
+        # "查看/直接" 变体：模型常以"无法直接查看或处理您上传的图片"明确拒绝
+        "无法查看或处理",
+        "无法直接看到或处理",
+        "无法直接查看或处理",
         "作为纯文本",
         "作为一个纯文本",
         "纯文本模型",
         "纯文本ai",
         "纯文本的人工智能",
+        # "基于文本的AI/模型" 自述（明确声明自身为文本模型）
         "基于文本",
-        "text-only",
-        "text-based ai",
         "没有多模态",
         "没有多模态输入",
         "没有多模态能力",
@@ -705,14 +722,15 @@ class MultimodalTestMixin:
         "没有视觉处理能力",
         "没有图像识别能力",
         "没有图片识别能力",
+        "text-only",
+        "text-based ai",
         "no visual capability",
         "no multimodal",
         "unable to see",
         "unable to analyze",
-        "无法看到或处理",
-        "无法查看或处理",
-        "无法直接看到或处理",
-        "无法直接查看或处理",
+    ]
+
+    STRONG_REFUSAL_IMAGE = [
         "无法处理图片",
         "无法处理图像",
         "无法看到图片",
@@ -722,10 +740,14 @@ class MultimodalTestMixin:
         "cannot process image",
         "unable to process image",
         "cannot analyze image",
+    ]
+
+    STRONG_REFUSAL_VIDEO = [
         "无法处理视频",
         "无法看到视频",
         "无法查看视频",
         "无法分析视频",
+        # "观看" 是视频专属动词，模型常以"无法观看视频"拒绝
         "无法观看视频",
         "无法观看或处理",
         "无法直接观看或处理",
@@ -735,26 +757,45 @@ class MultimodalTestMixin:
         "cannot analyze video",
     ]
 
-    _UNSUPPORTED_IMAGE = [
-        "看不到图片",
-        "看不到图像",
-        "看不到上传的图",
-        "无法看到图片",
-        "无法看到图像",
-        "没有上传图片",
-        "没有收到图片",
+    # 一般多模态识别失败关键词（受 positive_phrases 保护）
+    NO_IMAGE_KEYWORDS = [
+        # 中文 - 无法看到
+        "没有看到",
+        "看不到",
+        "无法看到",
+        "无法查看",
+        "无法识别",
+        "无法访问",
+        # 中文 - 未上传/未提供
+        "没有上传",
+        "没有附上",
+        "没有附带",
+        "没有提供",
+        "没有收到",
+        "没有附件",
+        "没有成功上传",
+        "没有图片",
+        "未上传",
+        "未提供",
+        "未收到",
+        "未附",
         "没有任何图片",
         "没有任何图像",
-        "没有图片",
+        "忘记上传",
+        "忘记附",
+        # 中文 - 请求提供
         "请上传图片",
         "请提供图片",
         "请发送图片",
         "请重新上传",
-        "未上传图片",
-        "i don't see any image",
-        "i don't see the image",
-        "i cannot see the image",
-        "i can't see the image",
+        "请上传",
+        "请提供",
+        "请将图片",
+        "请补充相关",
+        # 英文
+        "i don't see",
+        "i cannot see",
+        "i can't see",
         "i am unable to see",
         "no image",
         "don't see any image",
@@ -765,25 +806,55 @@ class MultimodalTestMixin:
         "as an ai",
         "as a text model",
         "as a language model",
+        "text-based ai",
+        # 模型自述为纯文本模型（受 positive_phrases 保护）
+        "纯文本",
+        # "无法直接看到/查看/识别" 等带修饰词的变体
+        "无法直接看到",
+        "无法直接查看",
+        "无法直接识别",
+        # "没有视觉" 原子词（受 positive_phrases 保护）
+        "没有视觉",
     ]
 
-    _UNSUPPORTED_VIDEO = [
-        "看不到视频",
-        "看不到上传的视频",
-        "无法看到视频",
-        "无法观看视频",
-        "没有上传视频",
-        "没有收到视频",
-        "没有任何视频",
+    NO_VIDEO_KEYWORDS = [
+        # 中文 - 无法看到
+        "没有看到",
+        "看不到",
+        "无法看到",
+        "无法查看",
+        "无法识别",
+        "无法访问",
+        # 中文 - 未上传/未提供
+        "没有上传",
+        "没有附上",
+        "没有附带",
+        "没有提供",
+        "没有收到",
+        "没有附件",
+        "没有成功上传",
         "没有视频",
+        "未上传",
+        "未提供",
+        "未收到",
+        "未附",
+        "没有任何视频",
+        "忘记上传",
+        "忘记附",
+        # 中文 - 请求提供
         "请上传视频",
         "请提供视频",
         "请发送视频",
-        "未上传视频",
-        "i don't see any video",
-        "i don't see the video",
-        "i cannot see the video",
-        "i can't see the video",
+        "请重新上传",
+        "请上传",
+        "请提供",
+        "请将视频",
+        "请补充相关",
+        # 英文
+        "i don't see",
+        "i cannot see",
+        "i can't see",
+        "i am unable to see",
         "no video",
         "don't see any video",
         "cannot see the video",
@@ -793,6 +864,66 @@ class MultimodalTestMixin:
         "as an ai",
         "as a text model",
         "as a language model",
+        "text-based ai",
+        "纯文本",
+        "无法直接看到",
+        "无法直接查看",
+        "无法直接识别",
+        # "观看" 是视频专属动词
+        "无法观看",
+        "无法直接观看",
+        "没有视觉",
+    ]
+
+    # 仅当响应中明确包含"正在描述媒体内容"的短语时，才认为失败关键词是误报。
+    # 要求短语带描述动词（显示/可以看到/有/包含等），避免"图片中的问题"等
+    # 引用用户问题的措辞被误判为正面。
+    POSITIVE_PHRASES = [
+        "图片中显示",
+        "图片中可以看到",
+        "图片中有",
+        "图片中包含",
+        "图片中呈现",
+        "图片中是",
+        "图片里显示",
+        "图片里可以看到",
+        "图片里有",
+        "图片里包含",
+        "画面中显示",
+        "画面中可以看到",
+        "画面中有",
+        "画面里显示",
+        "画面里可以看到",
+        "图像中显示",
+        "图像中可以看到",
+        "图像中有",
+        "图中显示",
+        "图中可以看到",
+        "图中有",
+        "图中包含",
+        "图中呈现",
+        "从图可以",
+        "从图片可以",
+        "从图中可以",
+        "可以看到",
+        "呈现出",
+        "显示了一张",
+        "显示了一个",
+        "展示了",
+        "视频中显示",
+        "视频中可以看到",
+        "视频中有",
+        "视频中包含",
+        "视频里显示",
+        "视频里可以看到",
+        "the image shows",
+        "the picture shows",
+        "the video shows",
+        "in the image, we can see",
+        "in the image, there is",
+        "this image contains",
+        "this image shows",
+        "in the video, we can see",
     ]
 
     @staticmethod
@@ -811,69 +942,182 @@ class MultimodalTestMixin:
         return "image"
 
     @staticmethod
-    def _check_content_unsupported(response, media_type="image"):
-        """检查响应内容是否表明模型不支持多模态
+    def check_multimodal_failure(
+        response: dict, media_type: str = "image", use_positive_phrases: bool = True
+    ):
+        """检查多模态响应是否包含识别失败的关键词
 
-        与 test_c_multimodal.py 中的 check_multimodal_failure 不同，
-        此方法不使用 positive_phrases 覆盖——只要检测到拒绝关键词即判定
-        不支持。这避免了模型说"看不到图片，但图片中显示的应该是红色"
-        时因 positive_phrases 误判为已识别的情况。
+        仅检查 message.content（模型给用户的最终回复），不检查
+        reasoning_content（内部思维链），因为 reasoning 常引用用户问题中的
+        "图片中"等措辞，会导致误判为"已看到图片"。
+
+        Args:
+            use_positive_phrases: True 时（实际测试用），若响应中明确包含
+                "正在描述媒体内容"的短语，则失败关键词视为误报；False 时
+                （能力探测用），任何失败关键词即判定不支持，避免模型说
+                "看不到图片，但图片中显示的应该是红色"时被误判为已识别。
+
+        Returns:
+            匹配到的失败关键词，未匹配返回 None
+        """
+        message = response.get("choices", [{}])[0].get("message", {})
+        content = message.get("content") or ""
+        if not content:
+            return None
+        content_lower = content.lower()
+
+        for keyword in MultimodalTestMixin.PLACEHOLDER_KEYWORDS:
+            if keyword in content_lower:
+                return keyword
+
+        strong_keywords = MultimodalTestMixin.STRONG_REFUSAL_COMMON[:]
+        if media_type == "image":
+            strong_keywords += MultimodalTestMixin.STRONG_REFUSAL_IMAGE
+        else:
+            strong_keywords += MultimodalTestMixin.STRONG_REFUSAL_VIDEO
+        for keyword in strong_keywords:
+            if keyword in content_lower:
+                return keyword
+
+        keywords = (
+            MultimodalTestMixin.NO_IMAGE_KEYWORDS
+            if media_type == "image"
+            else MultimodalTestMixin.NO_VIDEO_KEYWORDS
+        )
+        if use_positive_phrases:
+            has_positive = any(
+                phrase in content_lower
+                for phrase in MultimodalTestMixin.POSITIVE_PHRASES
+            )
+        else:
+            has_positive = False
+        for keyword in keywords:
+            if keyword in content_lower:
+                if has_positive:
+                    continue
+                return keyword
+        return None
+
+    @staticmethod
+    def _check_content_unsupported(response, media_type="image"):
+        """检查响应内容是否表明模型不支持多模态（能力探测用）
+
+        等价于 check_multimodal_failure(use_positive_phrases=False)：任何失败
+        关键词即判定不支持，不使用 positive_phrases 覆盖，避免"看不到图片，
+        但图片中显示的应该是红色"被误判为已识别。
 
         Returns:
             matched keyword if unsupported, None otherwise
         """
-        try:
-            message = response.get("choices", [{}])[0].get("message", {})
-            content = message.get("content") or ""
-        except (IndexError, AttributeError, TypeError):
-            return None
-
-        if not content:
-            return None
-
-        content_lower = content.lower()
-
-        for keyword in MultimodalTestMixin._UNSUPPORTED_STRONG:
-            if keyword in content_lower:
-                return keyword
-
-        patterns = (
-            MultimodalTestMixin._UNSUPPORTED_VIDEO
-            if media_type == "video"
-            else MultimodalTestMixin._UNSUPPORTED_IMAGE
+        return MultimodalTestMixin.check_multimodal_failure(
+            response, media_type, use_positive_phrases=False
         )
-        for pattern in patterns:
-            if pattern in content_lower:
-                return pattern
 
-        return None
+    def skip_if_unsupported(
+        self, response: dict, media_type: str, test_logger, context: str = ""
+    ):
+        """检测多模态识别失败则跳过测试，并记录告警日志"""
+        failed_keyword = self.check_multimodal_failure(response, media_type)
+        if failed_keyword:
+            test_logger.warning(
+                f"模型可能不支持多模态（{context}）。"
+                f"Response contains: '{failed_keyword}'"
+            )
+            pytest.skip(
+                f"Model may not support multimodal ({context} failed). "
+                f"Response contains: '{failed_keyword}'"
+            )
+
+    @staticmethod
+    def load_image_as_base64(path) -> str:
+        """读取图片文件并返回 base64 编码字符串"""
+        import base64
+
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+
+    @staticmethod
+    def generate_solid_image_base64(color, size=(100, 100), fmt: str = "PNG") -> str:
+        """生成纯色图片并返回 base64 编码字符串"""
+        import base64
+        import io
+        from PIL import Image
+
+        img = Image.new("RGB", size, color=color)
+        buf = io.BytesIO()
+        img.save(buf, format=fmt)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    @staticmethod
+    def generate_text_image_base64(
+        lines, size=(800, 400), bg="white", fg="black", font_size: int = 48
+    ) -> str:
+        """生成包含文字的图片并返回 base64 编码
+
+        优先使用系统 TTF 字体（大字号，提升 OCR 可识别性），失败回退默认字体。
+        """
+        import base64
+        import io
+        from PIL import Image, ImageDraw, ImageFont
+
+        img = Image.new("RGB", size, color=bg)
+        draw = ImageDraw.Draw(img)
+
+        font = None
+        for font_path in (
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/msyh.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ):
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                break
+            except Exception:
+                continue
+
+        y = 60
+        for line in lines:
+            draw.text((60, y), line, fill=fg, font=font)
+            y += font_size + 30
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    @staticmethod
+    def build_image_messages(text: str, img_b64: str, mime: str = "image/png") -> list:
+        """构建单图+文本的用户消息列表"""
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{img_b64}"},
+                    },
+                ],
+            }
+        ]
 
     @staticmethod
     def create_image_message(image_path: str, text: str = None) -> Dict[str, Any]:
         """创建图片消息（Base64编码）"""
-        import base64
-
-        with open(image_path, "rb") as f:
-            image_data = base64.b64encode(f.read()).decode("utf-8")
-
+        image_data = MultimodalTestMixin.load_image_as_base64(image_path)
         content = [
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{image_data}"},
             }
         ]
-
         if text:
             content.insert(0, {"type": "text", "text": text})
-
         return {"role": "user", "content": content}
 
     @staticmethod
     def create_url_image_message(image_url: str, text: str = None) -> Dict[str, Any]:
         """创建图片消息（URL）"""
         content = [{"type": "image_url", "image_url": {"url": image_url}}]
-
         if text:
             content.insert(0, {"type": "text", "text": text})
-
         return {"role": "user", "content": content}

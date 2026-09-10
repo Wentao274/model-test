@@ -8,7 +8,7 @@
 |------|---------|---------|
 | [test_a_basic_reasoning.md](test_a_basic_reasoning.md) | A. 基础推理能力 | 12 |
 | [test_b_advanced_generation.md](test_b_advanced_generation.md) | B. 高级生成功能 | 11 |
-| [test_c_multimodal.md](test_c_multimodal.md) | C. 多模态能力 | 8 |
+| [test_c_multimodal.md](test_c_multimodal.md) | C. 多模态能力 | 12 |
 | [test_d_long_context.md](test_d_long_context.md) | D. 长上下文处理 | 12 |
 | [test_e_performance.md](test_e_performance.md) | E. 性能指标 | 12 |
 | [test_f_stability.md](test_f_stability.md) | F. 稳定性与边界 | 8 |
