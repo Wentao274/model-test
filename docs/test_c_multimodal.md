@@ -73,3 +73,4 @@ pytest tests/test_c_multimodal.py::TestMultimodal::test_single_image_understandi
 - 需要在 `fixtures/images`、`fixtures/code`、`fixtures/tool` 目录下放置测试素材
 - 测试启动前会进行多模态能力探测（按模型名隔离缓存），探测失败则跳过所有 C 类用例
 - WebP 编码依赖 PIL 的 libwebp 支持，缺失时该格式用例自动跳过
+- 跳过原因会记录在测试报告的"跳过用例说明"区域。当模型不支持多模态时，C 类整类跳过，报告显示一行汇总（如"C. 多模态能力（全部 12 个用例跳过）：Model does not support multimodal input"）

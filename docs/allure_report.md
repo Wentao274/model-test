@@ -98,6 +98,8 @@ allure serve allure-results
    - Markdown 格式汇总（`allure-report/summary.md`）
    - 统计信息：总数、通过、失败、跳过
    - 分类统计
+   - 跳过用例说明：列出所有跳过用例的原因，整类全部跳过时显示一行汇总，部分跳过时逐条列出
+   - 测试结论：按用例优先级（P0/P1/P2）自动判定
 
 ## 报告结构
 

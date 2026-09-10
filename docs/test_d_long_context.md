@@ -49,7 +49,7 @@ pytest tests/test_d_long_context.py -m p0 -v
 - `_check_has_thinking(response, test_logger)`：检查响应中是否包含思考内容（reasoning 字段或 content 中的思考标签），标签检测复用 `strip_thinking_content`（兼容 MiniMax M2 / kimi-k3 等格式），并检测 `finish_reason=length` 下的被截断思考
 - `_chat_with_thinking_fallback(api_client, messages, test_logger, max_tokens=None)`：自动尝试 6 种思考参数格式 + no_params_fallback
 - `_chat_without_thinking_fallback(api_client, messages, test_logger, max_tokens=None)`：自动尝试 5 种关闭思考参数格式 + no_params_fallback
-- `_get_max_context_len(default=202752)`：获取模型最大上下文长度（兼容 vLLM/sglang/context_window）
+- `_get_max_context_len(default=202752)`：获取模型最大上下文长度（兼容 vLLM `max_model_len` / sglang `context-length` / `context_window` / `max_context_len` / `max_seq_len` / `max_sequence_length` 等多种字段名）
 - `_is_over_limit_error(e)`：判断异常是否表示上下文超限/连接中断/服务端边界失败
 
 ### 本类特有方法
@@ -184,6 +184,25 @@ timeout 关键词判定后 skip。
 - 通过阈值 80%（`PASS_RATIO`），达到即提前结束
 - 总体墙钟预算保护，超时以已得最大成功值判定
 
+**预算控制**：总墙钟预算按模型 `max_len` 动态计算，公式为 `min(600 + max_len × 0.006, 7200)` 秒：
+
+| 模型 max_len | 动态预算 |
+|-------------|---------|
+| 8K | ~648s |
+| 32K | ~792s |
+| 128K | ~1368s |
+| 512K | ~3672s |
+| 1M | ~6744s |
+
+**无法获取 max_len 的情况**：部分推理框架部署（如某些 vLLM/sglang 配置）的
+`/v1/models` 接口不返回上下文长度字段。此时：
+- 使用默认探测目标 1M tokens（1048576）
+- 使用 2 小时（7200s）默认预算进行边界测试
+
+可通过 model config 的 `boundary_test_budget` 字段显式覆盖（优先级最高）。
+预算耗尽且未达到通过阈值时，用例以 `pytest.skip` 跳过（不视为失败），跳过原因记录在报告
+"跳过用例说明"区域（如"测试预算 6744s 耗尽，仅验证至 32768/1048576 (3.12%)"）。
+
 验证项（每次探测）：
 - 流式 chunks 数 > 0、content 或 reasoning 非空
 - 流式 finish_reason 合法（`_assert_stream_finish_reason`）
@@ -224,4 +243,5 @@ no_params_fallback，与 test_b 策略对齐。
   - D5 512K 场景：模型最大上下文 < 512K 或不支持 512K 时 record_warning 跳过
   - D10 缓冲流式：proxy 积攒后一次性返回时 `log_buffered_streaming_warning`
   - D11 探测失败：超限/响应为空时 record_warning，不视为失败
+  - D11 预算耗尽：总预算（按 max_len 动态计算，上限 7200s；无法获取 max_len 时默认 7200s）耗尽且未达通过阈值时 skip，跳过原因记录在报告中
 - 软告警信息会记录在测试报告中，用于评估模型对该特性的支持情况

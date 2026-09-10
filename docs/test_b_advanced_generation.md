@@ -128,6 +128,10 @@ reasoning 提取（亦告警）。验证：
 - **Prefix 测试**：请求 `prefix="答案是："`，验证回答是否以"答案是："开头
 - **Suffix 测试**：请求 `suffix="完毕。"`，验证回答是否以"完毕。"结尾
 
+**API 不支持参数时的处理**：若 API 返回 400 等错误且错误信息含 `prefix`/`suffix` 或 `unsupported` 关键字
+（表明推理框架不支持该参数），用例以 `pytest.skip(f"API不支持prefix参数: {e}")` 跳过，**不视为失败**。
+跳过原因会记录在测试报告的"跳过用例说明"区域。
+
 两个子测试均使用 `_get_formal_content` 提取正式回复（避免 reasoning 干扰），验证 finish_reason
 合法。约束未遵循时 `record_warning`（软告警，模型可能不支持 prefix/suffix 参数）。
 
@@ -181,6 +185,7 @@ B5/B7 的 `calculate` 工具使用 `_safe_eval_math` 基于 AST 的安全数学�
   - B6 并行调用：模型可能仅调用 1 个工具，未实现并行调用
   - B9 JSON 提取失败：content 或 reasoning 中 JSON 提取失败时告警
   - B10 Prefix/Suffix 未遵循：模型可能不支持 prefix/suffix 参数
+  - B10 API 拒绝：API 返回 400 不支持 prefix/suffix 参数时 skip + 告警，不视为失败
   - B11 reasoning_effort：所有策略均请求异常时 skip + 告警；completion_tokens 反向时告警；
     所有策略均未给出正确答案时告警
 - 软告警信息会记录在测试报告中，用于评估模型对该特性的支持情况

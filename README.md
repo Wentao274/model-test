@@ -272,7 +272,7 @@ pytest -m slow -v                           # 慢速测试
 
 测试结束后，`conftest.py` 会自动生成两类报告：
 
-1. **Markdown 汇总报告**：含统计汇总、分类统计、测试结论，输出到 `--summary-report-dir`（默认 `allure-report/`）及 `test_reports/`
+1. **Markdown 汇总报告**：含统计汇总、分类统计、跳过用例说明、测试结论，输出到 `--summary-report-dir`（默认 `allure-report/`）及 `test_reports/`
 2. **Allure 原始数据**：输出到 `--alluredir`（未指定时按 `allure-results/{chip}/{model}/{timestamp}` 自动生成）
 
 ### 目录结构
@@ -365,7 +365,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | 3. 运行测试 | 执行 pytest：若 `SPECIFIC_TEST` 不为 `none` 则仅运行该指定用例（忽略 `MARKER`）；否则按 `MARKER` 运行（`all` 不加 `-m`，其他加 `-m <marker>`）。根据 `THINKING_MODE` 选择 `--thinking-mode` / `--no-thinking-mode`。输出 Allure 数据与 Markdown 汇总到构建产物目录。该阶段失败仅将 stage 标记为 FAILURE，构建结果置为 UNSTABLE，不中断后续报告阶段 |
 | 4. 生成 Allure 报告 | 远程调用 `allure generate` 生成 HTML 报告 |
 | 5. 拉取报告到 Jenkins | 将 Markdown 报告、`allure-results`、`allure-html` 通过 `scp` + `tar` 拉取到 Jenkins 的 `reports/${BUILD_NUMBER}/` |
-| 6. 发送邮件 | 解析 Markdown 报告，提取统计汇总/分类统计/测试结论，渲染为 HTML 邮件发送；附件为完整 Markdown 报告 |
+| 6. 发送邮件 | 解析 Markdown 报告，提取统计汇总/分类统计/跳过用例说明/测试结论，渲染为 HTML 邮件发送；附件为完整 Markdown 报告 |
 | 7. 清理旧构建 | 远程保留最近 20 次构建记录，自动清理更早的 |
 
 ### 远程构建输出目录
@@ -399,8 +399,9 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式、执行时间、构建状态
 2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
-3. **分类统计** — 按 9 大分类的通过率统计
-4. **测试结论** — 按用例优先级（P0/P1/P2）自动判定（详见[测试结论判定](#测试结论判定)）
+3. **分类统计** — 按 10 大分类的通过率统计
+4. **跳过用例说明** — 列出所有跳过用例的原因。整类全部跳过时仅显示一行汇总（如"C 类多模态能力：全部 12 个用例跳过：Model does not support multimodal input"），部分跳过时逐条列出（如"B10 Prefix/Suffix约束：API不支持prefix参数"）
+5. **测试结论** — 按用例优先级（P0/P1/P2）自动判定（详见[测试结论判定](#测试结论判定)）
 
 附件包含完整的 Markdown 测试报告。模型名中的路径分隔符（如 `org/model`）会自动取最后一段作为展示名。
 
@@ -440,7 +441,9 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | ⚠️ 有条件通过 | 已运行用例全部通过但存在警告项 | 所有已运行用例通过，警告项需关注 |
 | ✅ 通过 | 已运行用例全部通过且无警告 | 测试结果可接受 |
 
-> **关于未运行（SKIPPED）用例**：未运行的用例**不参与**结论判定，既不计入失败，也不计入通过。在统计汇总中，`通过率 = 通过 / (通过 + 未通过)`，`未测试` 单独展示但不参与分母。
+> **关于未运行（SKIPPED）用例**：未运行的用例**不参与**结论判定，既不计入失败，也不计入通过。在统计汇总中，`通过率 = 通过 / (通过 + 未通过)`，`未测试` 单独展示但不参与分母。跳过原因会记录在报告的"跳过用例说明"区域，区分以下场景：
+> - **整类全部跳过**：如 C 类多模态（模型不支持多模态输入）、E 类性能/I 类 Completions（已禁用），仅显示一行汇总原因
+> - **个别用例跳过**：如 B10 Prefix/Suffix（API 不支持 prefix 参数）、B11 reasoning_effort（模型不支持该参数），逐条列出跳过原因
 
 ### 结论展示内容
 

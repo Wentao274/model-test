@@ -344,6 +344,7 @@ fi
                         def summaryHtml = ""
                         def categoryHtml = ""
                         def conclusionHtml = ""
+                        def skipSummaryHtml = ""
 
                         if (reportFile && fileExists(reportFile)) {
                             def content = readFile(reportFile)
@@ -360,6 +361,24 @@ fi
                             if (categoryMatch) {
                                 def categoryMd = categoryMatch.group(1).trim()
                                 categoryHtml = convertMarkdownTableToHtml(categoryMd)
+                            }
+
+                            // 提取跳过用例说明 section
+                            def skipMatch = content =~ /(?s)## 跳过用例说明\n(.*?)(?=\n##\s+\S|\Z)/
+                            if (skipMatch) {
+                                def skipMd = skipMatch.group(1).trim()
+                                if (skipMd) {
+                                    def skipConverted = skipMd
+                                        .replaceAll(/\*\*(.+?)\*\*/, '<strong>$1</strong>')
+                                        .replaceAll(/(?m)^  - (.+)$/, '<div style="padding-left:30px;color:#757575;font-size:13px;margin:2px 0;">$1</div>')
+                                        .replaceAll(/(?m)^- (.+)$/, '<div style="margin:4px 0;">$1</div>')
+                                        .replaceAll(/\n\n/, '<br/>')
+                                        .replaceAll(/\n/, '')
+                                    skipSummaryHtml = """<div style="background-color: #fff8e1; border-left: 4px solid #ff9800; padding: 12px 15px; margin-top: 15px; border-radius: 3px;">
+    <h4 style="margin-top: 0; color: #e65100;">跳过用例说明</h4>
+    ${skipConverted}
+</div>"""
+                                }
                             }
 
                             // 提取测试结论 section
@@ -441,6 +460,7 @@ fi
 
             ${summaryHtml ? "<h3>统计汇总</h3>" + summaryHtml : ""}
             ${categoryHtml ? "<h3>分类统计</h3>" + categoryHtml : ""}
+            ${skipSummaryHtml ?: ""}
             ${conclusionHtml ? "<h3>测试结论</h3><div class=\"conclusion\">" + conclusionHtml + "</div>" : ""}
 
             <p style="margin-top: 20px;">详细测试报告请查看附件中的 Markdown 文件。</p>

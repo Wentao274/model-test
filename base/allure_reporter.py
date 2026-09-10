@@ -23,6 +23,80 @@ def _split_reason(reason: str):
     return reason, reason
 
 
+def _build_skip_summary(
+    test_results: Dict[str, str],
+    failure_reasons: Dict[str, str],
+) -> List[str]:
+    """构建"跳过用例说明"部分。
+
+    对每个测试分类：
+    - 若全部用例均跳过，仅输出一行汇总（不逐条列出）
+    - 若仅部分用例跳过，逐条列出每个跳过用例及原因
+
+    Returns:
+        Markdown 行列表
+    """
+    lines = []
+    has_any_skip = False
+
+    for marker, category in TEST_CATEGORIES.items():
+        tests = category["tests"]
+        if not tests:
+            continue
+
+        skipped_items = []  # (test_idx, test_name, detail)
+        for test_info in tests:
+            test_idx = test_info[0]
+            test_name = test_info[1]
+            key = f"{marker}_{test_idx}"
+            status = test_results.get(key, "未运行")
+            if status in ("SKIPPED", "未运行"):
+                reason = failure_reasons.get(key, "未运行此测试")
+                _, detail = _split_reason(reason)
+                skipped_items.append((test_idx, test_name, detail))
+
+        if not skipped_items:
+            continue
+
+        if not has_any_skip:
+            lines.append("## 跳过用例说明")
+            lines.append("")
+            has_any_skip = True
+
+        total = len(tests)
+        all_skipped = len(skipped_items) == total
+
+        if all_skipped:
+            # 整类全部跳过 — 仅输出一行汇总
+            reasons_set = []
+            seen = set()
+            for _, _, detail in skipped_items:
+                if detail not in seen:
+                    seen.add(detail)
+                    reasons_set.append(detail)
+            if len(reasons_set) == 1:
+                reason_text = reasons_set[0]
+            else:
+                reason_text = "; ".join(reasons_set[:3])
+                if len(reasons_set) > 3:
+                    reason_text += " 等"
+            lines.append(
+                f"- ⏳ **{category['name']}**（全部 {total} 个用例跳过）：{reason_text}"
+            )
+        else:
+            # 部分跳过 — 逐条列出
+            lines.append(
+                f"- ⏳ **{category['name']}**（{len(skipped_items)}/{total} 个用例跳过）："
+            )
+            for test_idx, test_name, detail in skipped_items:
+                lines.append(f"  - {test_idx} {test_name}：{detail}")
+
+    if has_any_skip:
+        lines.append("")
+
+    return lines
+
+
 class AllureReporter:
     """Allure 报告生成器"""
 
@@ -380,6 +454,8 @@ def generate_allure_summary_report(
                 category_stats[category_name]["skipped"] += 1
                 reason = failure_reasons.get(key, "未运行此测试")
                 remark, detail = _split_reason(reason)
+                if remark == "跳过" and detail:
+                    remark = detail[:20] + ("..." if len(detail) > 20 else "")
                 issue_notes.append((test_idx, test_name, detail))
 
             total_tests += 1
@@ -393,9 +469,33 @@ def generate_allure_summary_report(
             )
 
         if issue_notes:
-            lines.append("")
-            for test_idx, test_name, reason in issue_notes:
-                lines.append(f"- **{test_idx} {test_name}**: {reason}")
+            cat_total = category_stats[category_name]["total"]
+            cat_skipped = category_stats[category_name]["skipped"]
+            if cat_skipped == cat_total and cat_total > 0:
+                # 整类全部跳过 — 仅输出一行汇总，不逐条列出
+                reasons = []
+                seen = set()
+                for test_info in tests:
+                    key = f"{marker}_{test_info[0]}"
+                    reason = failure_reasons.get(key, "未运行此测试")
+                    _, detail = _split_reason(reason)
+                    if detail not in seen:
+                        seen.add(detail)
+                        reasons.append(detail)
+                if len(reasons) == 1:
+                    reason_text = reasons[0]
+                else:
+                    reason_text = "; ".join(reasons[:3])
+                    if len(reasons) > 3:
+                        reason_text += " 等"
+                lines.append("")
+                lines.append(
+                    f"> ⏳ 本类全部 {cat_total} 个用例已跳过：{reason_text}"
+                )
+            else:
+                lines.append("")
+                for test_idx, test_name, reason in issue_notes:
+                    lines.append(f"- **{test_idx} {test_name}**: {reason}")
 
         lines.append("")
 
@@ -450,6 +550,9 @@ def generate_allure_summary_report(
         )
 
     lines.append("")
+
+    # 跳过用例说明
+    lines.extend(_build_skip_summary(test_results, failure_reasons))
 
     conclusion_lines = _build_conclusion(
         category_stats, test_results, failure_reasons, test_warnings

@@ -622,81 +622,115 @@ def _summarize_error(message: str):
 
 
 def _get_skip_reason(report) -> str:
-    """获取跳过原因"""
-    if hasattr(report, "wasxfail"):
-        detail = report.wasxfail[:100]
+    """获取跳过原因
+
+    对于 pytest.skip() 调用，report.longrepr 是一个三元组 (path, lineno, reason)。
+    对于 @pytest.mark.skip(reason=...) 标记，格式相同。
+    对于 xfail 预期失败，report.wasxfail 存储原因字符串。
+    """
+    wasxfail = getattr(report, "wasxfail", None)
+    if wasxfail:
+        detail = wasxfail[:300]
         return f"预期失败|{detail}"
-    return ""
+    longrepr = getattr(report, "longrepr", None)
+    if longrepr is not None:
+        if isinstance(longrepr, (tuple, list)) and len(longrepr) >= 3:
+            reason = str(longrepr[2])
+            # 去掉 pytest 自动添加的 "Skipped: " 前缀
+            if reason.startswith("Skipped: "):
+                reason = reason[len("Skipped: "):]
+            return f"跳过|{reason[:300]}"
+        if isinstance(longrepr, str):
+            return f"跳过|{longrepr[:300]}"
+    return "跳过|未知原因"
+
+
+def _match_test_category(report):
+    """将测试报告匹配到测试分类和测试编号。
+
+    Returns:
+        (marker, test_idx) 或 None
+    """
+    test_id = report.nodeid
+    test_file = test_id.split("::")[0]
+    test_func = test_id.split("::")[-1].split("[")[0]
+
+    marker_from_file = None
+    test_file_basename = test_file.replace("\\", "/").split("/")[-1]
+    if test_file_basename.startswith("test_h_"):
+        marker_from_file = "h_quality_chat_completions"
+    elif test_file_basename.startswith("test_i_"):
+        marker_from_file = "i_quality_completions"
+    elif test_file_basename.startswith("test_j_"):
+        marker_from_file = "j_clear_thinking"
+
+    test_func_base = (
+        test_func.replace("test_", "")
+        if test_func.startswith("test_")
+        else test_func
+    )
+
+    for marker, category in TEST_CATEGORIES.items():
+        if marker_from_file and marker != marker_from_file:
+            continue
+        for test_info in category["tests"]:
+            if len(test_info) >= 4:
+                test_idx, test_name, test_desc, test_func_name = test_info[:4]
+            else:
+                test_idx, test_name, test_desc = test_info
+                test_func_name = test_name.replace("-", "_").replace(" ", "_")
+            if test_func_base == test_func_name:
+                return marker, test_idx
+    return None
 
 
 def pytest_runtest_logreport(report):
     """收集测试结果并输出分隔线，同时记录到 Allure"""
     global _test_results, _last_test_file, _last_test_func
 
-    if report.when == "call":
-        test_id = report.nodeid
-        test_file = test_id.split("::")[0]
-        test_func = test_id.split("::")[-1].split("[")[0]
+    # 处理 setup 阶段的跳过（@pytest.mark.skip 标记、fixture 中的 pytest.skip）
+    # 这类跳过不会产生 call 阶段报告，需要在此捕获
+    if report.when == "setup" and report.skipped:
+        matched = _match_test_category(report)
+        if matched:
+            marker, test_idx = matched
+            key = f"{marker}_{test_idx}"
+            # 仅在尚未记录时写入，避免覆盖 call 阶段的结果
+            if key not in _test_results:
+                _test_results[key] = "SKIPPED"
+                _failure_reasons[key] = _get_skip_reason(report)
+        return
 
-        if _last_test_file and _last_test_file != test_file:
-            print("\n" + "=" * 60)
+    if report.when != "call":
+        return
 
-        if _last_test_func and _last_test_func != test_func:
-            print("-" * 40)
+    test_id = report.nodeid
+    test_file = test_id.split("::")[0]
+    test_func = test_id.split("::")[-1].split("[")[0]
 
-        _last_test_file = test_file
-        _last_test_func = test_func
+    if _last_test_file and _last_test_file != test_file:
+        print("\n" + "=" * 60)
 
-        # 从 test_id 中提取测试文件名，用于确定 marker 前缀
-        # test_h_quality_chat_completions.py → h_quality_chat_completions
-        # test_i_quality_completions.py → i_quality_completions
-        marker_from_file = None
-        test_file_basename = test_file.replace("\\", "/").split("/")[-1]
-        if test_file_basename.startswith("test_h_"):
-            marker_from_file = "h_quality_chat_completions"
-        elif test_file_basename.startswith("test_i_"):
-            marker_from_file = "i_quality_completions"
-        elif test_file_basename.startswith("test_j_"):
-            marker_from_file = "j_clear_thinking"
+    if _last_test_func and _last_test_func != test_func:
+        print("-" * 40)
 
-        # 提取测试函数名（去掉 test_ 前缀）
-        test_func_base = (
-            test_func.replace("test_", "")
-            if test_func.startswith("test_")
-            else test_func
-        )
+    _last_test_file = test_file
+    _last_test_func = test_func
 
-        # 遍历所有测试分类，匹配测试函数名
-        matched = False
-        for marker, category in TEST_CATEGORIES.items():
-            # 如果已从文件名确定了 marker，跳过不匹配的 marker
-            if marker_from_file and marker != marker_from_file:
-                continue
-
-            for test_info in category["tests"]:
-                if len(test_info) >= 4:
-                    test_idx, test_name, test_desc, test_func_name = test_info[:4]
-                else:
-                    test_idx, test_name, test_desc = test_info
-                    test_func_name = test_name.replace("-", "_").replace(" ", "_")
-
-                # 匹配测试函数名
-                if test_func_base == test_func_name:
-                    key = f"{marker}_{test_idx}"
-                    if report.passed:
-                        _test_results[key] = "PASSED"
-                    elif report.failed:
-                        _test_results[key] = "FAILED"
-                        _failure_reasons[key] = _extract_failure_reason(report)
-                    else:
-                        _test_results[key] = "SKIPPED"
-                        skip_reason = _get_skip_reason(report)
-                        if skip_reason:
-                            _failure_reasons[key] = skip_reason
-                    matched = True
-                    break
-            if matched:
-                break
+    matched = _match_test_category(report)
+    if matched:
+        marker, test_idx = matched
+        key = f"{marker}_{test_idx}"
+        if report.passed:
+            _test_results[key] = "PASSED"
+        elif report.failed:
+            _test_results[key] = "FAILED"
+            _failure_reasons[key] = _extract_failure_reason(report)
+        else:
+            _test_results[key] = "SKIPPED"
+            skip_reason = _get_skip_reason(report)
+            if skip_reason:
+                _failure_reasons[key] = skip_reason
 
 
 def pytest_runtest_setup(item):

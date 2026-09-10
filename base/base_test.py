@@ -249,8 +249,16 @@ class BaseTest(ABC):
 
     @staticmethod
     def _get_max_context_len(model_info: dict, default: int = 202752) -> int:
-        """获取模型最大上下文长度，兼容 vLLM(max_model_len) 和
-        sglang(context-length) 以及部分模型(context_window)。
+        """获取模型最大上下文长度，兼容多种推理框架与模型字段命名。
+
+        支持的字段名（按探测顺序）：
+            max_model_len       - vLLM 标准字段
+            context-length      - sglang 标准字段（连字符）
+            context_length      - sglang / 部分模型（下划线）
+            context_window      - 部分模型 / sglang 简化输出
+            max_context_len     - 部分自定义部署
+            max_seq_len         - 部分训练框架字段名
+            max_sequence_length - 部分模型字段名
 
         Args:
             model_info: /v1/models 返回的模型信息字典
@@ -262,6 +270,9 @@ class BaseTest(ABC):
             "context-length",
             "context_length",
             "context_window",
+            "max_context_len",
+            "max_seq_len",
+            "max_sequence_length",
         ):
             val = model_info.get(key, 0)
             if val:

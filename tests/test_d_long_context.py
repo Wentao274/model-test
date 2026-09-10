@@ -107,12 +107,17 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         与 _get_max_context_len 不同，此方法在未找到任何上下文长度字段时
         返回 False（而非回退默认值），用于区分"真实声明"与"回退默认值"。
+
+        支持的字段名与 _get_max_context_len 保持一致（兼容 vLLM/sglang 等）。
         """
         for key in (
             "max_model_len",
             "context-length",
             "context_length",
             "context_window",
+            "max_context_len",
+            "max_seq_len",
+            "max_sequence_length",
         ):
             if model_info.get(key):
                 return True
@@ -796,12 +801,17 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         # 通过阈值：断言只要求 >=80%，达到即可提前结束
         PASS_RATIO = 0.8
-        # 总体墙钟预算（秒），避免单测超时；可经 model config 覆盖
-        overall_budget = 1500
+        # 总体墙钟预算动态计算（基于 max_len），可经 model config 覆盖
+        # 公式: min(BASE + max_len * PER_TOKEN, MAX)
+        #   8K → ~648s, 32K → ~792s, 128K → ~1368s, 512K → ~3672s, 1M → ~6744s
+        BUDGET_BASE = 600          # 小模型基础预算（秒）
+        BUDGET_PER_TOKEN = 0.006   # 每 token 追加预算（秒/token）
+        BUDGET_MAX = 7200          # 总预算上限（秒，2 小时）
+        # 无法获取 max_len 时的默认预算（秒，2 小时）
+        BUDGET_DEFAULT = 7200
+        config_budget = None
         try:
-            overall_budget = int(
-                (api_client.config or {}).get("boundary_test_budget", overall_budget)
-            )
+            config_budget = (api_client.config or {}).get("boundary_test_budget")
         except (TypeError, ValueError):
             pass
 
@@ -917,13 +927,39 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         try:
             model_info = api_client.get_model_info()
-            max_len = self._get_max_context_len(model_info)
-            test_logger.info(f"模型定义的最大上下文长度: {max_len}")
-            if max_len <= 0:
-                pytest.skip("无法获取模型最大上下文长度")
+            has_explicit_max = self._has_explicit_max_context_len(model_info)
+
+            if has_explicit_max:
+                max_len = self._get_max_context_len(model_info)
+                test_logger.info(f"模型定义的最大上下文长度: {max_len}")
+            else:
+                # 无法获取模型声明的最大上下文长度（部分 vLLM/sglang 部署
+                # /v1/models 不返回 max_model_len / context-length 等字段）
+                # 使用默认探测目标，配合 2 小时默认预算进行边界测试
+                max_len = self._get_max_context_len(model_info, default=0)
+                if max_len <= 0:
+                    max_len = 1048576  # 默认探测目标 1M tokens
+                test_logger.warning(
+                    f"模型未显式声明最大上下文长度，使用探测目标 {max_len} tokens"
+                )
 
             # 校准字符/token 比，使后续探测真正逼近声明的 token 边界
             calibrate_chars_per_token()
+
+            # 动态计算总预算：按 max_len 缩放，config 显式指定时优先使用
+            if config_budget:
+                overall_budget = int(config_budget)
+            elif has_explicit_max:
+                overall_budget = min(
+                    BUDGET_BASE + int(max_len * BUDGET_PER_TOKEN), BUDGET_MAX
+                )
+            else:
+                overall_budget = BUDGET_DEFAULT
+            test_logger.info(
+                f"总预算: {overall_budget}s "
+                f"(max_len={max_len}, explicit={has_explicit_max}, "
+                f"上限{BUDGET_MAX}s, 无声明默认{BUDGET_DEFAULT}s)"
+            )
 
             tolerance = max(int(max_len * 0.01), 1024)
             pass_threshold = int(max_len * PASS_RATIO)
