@@ -280,6 +280,29 @@ class BaseTest(ABC):
         return default
 
     @staticmethod
+    def _is_read_timeout(e) -> bool:
+        """判断异常是否为读取超时（服务端已接受请求但响应超时）
+
+        读取超时意味着服务端正在处理请求，只是计算耗时超过了客户端
+        超时阈值。这与"上下文超限被服务端拒绝"是本质不同的故障：
+        - 上下文超限：服务端拒绝请求（413/context length exceeded）→ 模型不支持
+        - 读取超时：服务端接受请求但处理太慢 → 可能是计算量大，非能力限制
+
+        在 _chat_with_thinking_fallback 等多策略回退场景中，读取超时
+        不应触发 skip（误判为不支持），而应继续尝试下一策略或抛出真实
+        超时错误，以便定位性能瓶颈。
+        """
+        if e is None:
+            return False
+        exc_name = type(e).__name__.lower()
+        error_msg = str(e).lower()
+        return (
+            "readtimeout" in exc_name
+            or "readtimeouterror" in exc_name
+            or "read timed out" in error_msg
+        )
+
+    @staticmethod
     def _is_over_limit_error(e) -> bool:
         """判断异常是否表示上下文超限/连接中断/服务端边界失败
 
@@ -289,6 +312,12 @@ class BaseTest(ABC):
         - HTTP 5xx 服务端错误（超大输入常引发 500/502/503/504）
         - 流式传输中断（ChunkedEncodingError/ProtocolError）
         - 连接重置/超时
+
+        注意：此方法也将读取超时（timeout/timed out）归为"超限"，这在
+        边界探测场景（D2/D3/F2 等超大输入测试）是合理的——超时往往意味
+        着模型无法在合理时间内处理该规模输入。但在多策略回退场景
+        （_chat_with_thinking_fallback）中，超时应由 _is_read_timeout
+        单独处理以避免误跳过。
         """
         if e is None:
             return False
@@ -462,6 +491,16 @@ class BaseTest(ABC):
                     kwargs["max_tokens"] = max_tokens
                 response = api_client.chat_completion(messages, **kwargs)
             except Exception as e:
+                # 读取超时不是上下文超限——服务端已接受请求，只是计算
+                # 耗时超过超时阈值。继续尝试下一策略而非误跳过。
+                if self._is_read_timeout(e):
+                    test_logger.warning(
+                        f"策略 {strategy_name} 读取超时（非上下文超限），"
+                        f"尝试下一策略: {e}"
+                    )
+                    last_strategy = strategy_name
+                    last_params = params
+                    continue
                 if self._is_over_limit_error(e):
                     pytest.skip(
                         f"Model/proxy does not support long context with thinking: {e}"
@@ -493,6 +532,8 @@ class BaseTest(ABC):
                     kwargs["max_tokens"] = max_tokens
                 fallback_response = api_client.chat_completion(messages, **kwargs)
             except Exception as e:
+                if self._is_read_timeout(e):
+                    raise
                 if self._is_over_limit_error(e):
                     pytest.skip(f"Model/proxy does not support long context: {e}")
                 raise
@@ -534,6 +575,14 @@ class BaseTest(ABC):
                     kwargs["max_tokens"] = max_tokens
                 response = api_client.chat_completion(messages, **kwargs)
             except Exception as e:
+                if self._is_read_timeout(e):
+                    test_logger.warning(
+                        f"策略 {strategy_name} 读取超时（非上下文超限），"
+                        f"尝试下一策略: {e}"
+                    )
+                    last_strategy = strategy_name
+                    last_params = params
+                    continue
                 if self._is_over_limit_error(e):
                     pytest.skip(
                         f"Model/proxy does not support long context without thinking: {e}"

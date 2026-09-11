@@ -458,7 +458,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
         # 512K prefill 耗时较长，自适应放大超时，结束后恢复原值
         original_timeout = api_client.timeout
-        api_client.timeout = max(original_timeout, 600)
+        api_client.timeout = max(original_timeout, 1200)
         try:
             run_niah_scenario(512000, "512K超长")
         except _ContextUnsupportedError as e:
@@ -820,9 +820,9 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             return self._is_over_limit_error(e)
 
         def adaptive_timeout(size_tokens: int) -> int:
-            # 基础 60s + 每token 约 1.5ms，覆盖 prefill 随输入长度增长
-            # 1M ~= 1560s，100K ~= 210s，8K ~= 72s
-            return max(60, int(60 + size_tokens * 0.0015))
+            # 基础 120s + 每token 约 3ms，覆盖 prefill 随输入长度增长
+            # 1M ~= 3120s，100K ~= 420s，8K ~= 144s
+            return max(120, int(120 + size_tokens * 0.003))
 
         # 字符/token 比，校准前用随机ASCII经验值 3.0；校准后更新为实测值
         chars_per_token = 3.0

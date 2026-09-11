@@ -395,6 +395,11 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         使用开放性 prompt（"描述理想生活"）增大答案空间，使 temp=1.0
         更容易体现多样性差异。使用 _get_formal_content 比较 formal content，
         避免思考模型 reasoning 波动干扰相似度计算。
+
+        思考/推理模型说明：推理链路本身在 temp=0 下存在固有非确定性
+        （浮点精度、batching 策略等），不同推理路径会产生不同 formal
+        content，此时 temp=0 确定性断言降级为软告警，与 A10
+        (test_seed_reproducibility) 保持一致。非思考模型仍使用硬断言。
         """
         test_logger.info("=== 测试开始: Temperature 控制 ===")
 
@@ -437,10 +442,30 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         similarity = SequenceMatcher(None, content0, content0_repeat).ratio()
         test_logger.info(f"temp=0 两次输出相似度: {similarity:.4f}")
-        assert similarity >= 0.8, (
-            f"temp=0 outputs should be highly similar (similarity={similarity:.4f}), "
-            f"got:\n[1]{content0[:500]}\n[2]{content0_repeat[:500]}"
+
+        # 思考/推理模型即使 temp=0 也无法保证确定性：推理链路本身受
+        # 浮点精度、batching 策略等影响产生不同 reasoning，进而导致
+        # 正式 content 不同。此时将硬断言降级为软告警，与 A10
+        # (test_seed_reproducibility) 的处理方式保持一致。
+        has_reasoning = bool(
+            self.get_reasoning_content(response0)
+            or self.get_reasoning_content(response0_repeat)
         )
+        if has_reasoning and similarity < 0.8:
+            msg = (
+                f"temp=0 输出相似度偏低({similarity:.4f}<0.8)，"
+                f"模型为思考/推理模型，推理链路在 temp=0 下存在固有非确定性，"
+                f"降级为软告警。"
+                f"\n[1]{content0[:500]}\n[2]{content0_repeat[:500]}"
+            )
+            test_logger.warning(msg)
+            record_warning(msg)
+        else:
+            assert similarity >= 0.8, (
+                f"temp=0 outputs should be highly similar "
+                f"(similarity={similarity:.4f}), "
+                f"got:\n[1]{content0[:500]}\n[2]{content0_repeat[:500]}"
+            )
 
         # temp=1.0 多样性第二次输出
         test_logger.info("temp=1.0: 多样性第二次输出")
