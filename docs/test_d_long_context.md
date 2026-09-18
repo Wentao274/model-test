@@ -144,6 +144,8 @@ timeout 关键词判定后 skip。
 - 流式 finish_reason 合法
 
 **异常处理**：超限时通过 `_is_over_limit_error` 统一判定，为预期行为。
+**静默失败**：服务端返回流式 chunk 但 content+reasoning 均为空时（输入已超
+max_model_len），视为超限静默失败，record_warning 跳过（不作为硬性失败）。
 
 ### test_long_output_generation（D8）
 测试长文本生成能力，要求生成 4K-8K tokens 的长文章（不少于 4000 字）。
