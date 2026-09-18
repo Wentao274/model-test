@@ -99,9 +99,9 @@ class TestAPICompatibility(BaseTest):
         若服务端不支持 Completions API，会抛出异常并降级为软告警；
         但若 API 已支持却因参数错误失败，不应被静默吞没。
 
-        额外验证 max_tokens 超出模型限制时的行为：
-        - 成功路径：finish_reason 为 length，输出被截断
-        - 异常路径：返回超限错误
+        本用例仅验证 /v1/completions 接口的兼容性（响应格式、字段、
+        finish_reason、usage），max_tokens 超限行为由 D（长上下文）
+        与 F（稳定性）测试套件覆盖，此处不重复测试。
         """
         test_logger.info("=== 测试开始: Completions API ===")
 
@@ -152,47 +152,6 @@ class TestAPICompatibility(BaseTest):
             )
 
         test_logger.info(f"Completions API: OK, text={text[:100]}, usage={usage}")
-
-        # 子测试: max_tokens 超出模型限制
-        test_logger.info("--- 子测试: Completions API max_tokens 超限 ---")
-        model_info = api_client.get_model_info()
-        max_len = self._get_max_context_len(model_info, default=0)
-
-        if max_len > 0:
-            # 设置一个明显超过模型限制的 max_tokens
-            over_max = max_len + 1000
-            TestLogger.log_request(
-                test_logger, [{"role": "user", "content": prompt}],
-                {"max_tokens": over_max},
-            )
-            try:
-                resp_over = api_client.completion(prompt=prompt, max_tokens=over_max)
-                TestLogger.log_response(
-                    test_logger, resp_over, "Completions超限max_tokens响应"
-                )
-                self.log_full_response(
-                    test_logger, resp_over, "G2-Completions(max_tokens超限-成功)"
-                )
-                # 成功路径：服务端应截断，finish_reason 为 length
-                over_choices = resp_over.get("choices", [])
-                assert len(over_choices) > 0, "Should have choices in overlimit response"
-                over_finish = self._assert_finish_reason(resp_over)
-                over_usage = resp_over.get("usage", {})
-                test_logger.info(
-                    f"Completions overlimit handled, finish_reason={over_finish}, "
-                    f"usage={over_usage}"
-                )
-            except Exception as e:
-                # 异常路径：应为超限错误
-                self.log_full_response(
-                    test_logger, {"error": str(e)}, "G2-Completions(max_tokens超限-异常)"
-                )
-                assert self._is_over_limit_error(e), (
-                    f"Should return proper error for overlimit max_tokens, got: {e}"
-                )
-                test_logger.info(f"Completions overlimit rejected: {e}")
-        else:
-            test_logger.info("无法获取模型最大上下文长度，跳过 max_tokens 超限子测试")
 
     @pytest.mark.g_api
     @pytest.mark.p0

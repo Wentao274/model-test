@@ -77,6 +77,10 @@ pytest tests/test_a_basic_reasoning.py --model=qwen35 -v
 ### test_special_tokens_handling
 测试特殊token（emoji、代码块、数学符号、HTML标签）的处理能力。
 
+4 个用例统一采用"分析型"prompt（解释/计算/解析），关键词匹配分析输出而非
+原样复述，避免模型将输入误解为对话而无法命中关键词。通过 `_get_formal_content`
+排除 reasoning 中的关键词干扰，最低匹配数 ≥ 2。
+
 ## 预期结果
 - P0 测试必须全部通过（A1-A5, A8）
 - P1 测试中核心功能为硬断言（A6 temperature 效果、A7 采样基本可用性、A11 多语言输出、A12 特殊 Token 处理）

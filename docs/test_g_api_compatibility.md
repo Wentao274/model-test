@@ -8,7 +8,7 @@
 | ID  | 测试点 | 测试内容 | 验证要点 | 优先级 |
 |-----|--------|---------|---------|--------|
 | G1  | OpenAI Chat Completions | /v1/chat/completions 接口兼容 | 响应格式、字段完整性、finish_reason、usage | P0 |
-| G2  | OpenAI Completions | /v1/completions 接口兼容 | 传统 completion 格式支持、finish_reason、max_tokens超限 | P1 |
+| G2  | OpenAI Completions | /v1/completions 接口兼容 | 传统 completion 格式支持、finish_reason、usage | P1 |
 | G3  | 模型列表 | /v1/models 返回可用模型 | 响应格式、当前模型在列表中、object字段 | P0 |
 | G4  | Usage 统计 | 返回中 usage 字段准确 | prompt_tokens + completion_tokens 与 total_tokens 关系 | P0 |
 | G5  | 错误码规范 | 401/400/404 错误码 | 符合 OpenAI 错误格式 | P1 |
@@ -42,7 +42,7 @@ pytest tests/test_g_api_compatibility.py::TestAPICompatibility::test_chat_comple
 - 验证 choices[0].text 非空
 - 验证 finish_reason 合法
 - 验证 usage 字段（若存在）
-- **max_tokens 超限子测试**：设置 max_tokens 超过模型最大上下文长度，验证服务端截断或返回超限错误
+- 仅验证 /v1/completions 接口兼容性，max_tokens 超限行为由 D/F 测试套件覆盖
 - 若 Completions API 不被支持，降级为软告警
 
 ### G3: test_models_list

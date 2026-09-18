@@ -320,13 +320,19 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             ratio = garbled_chars / max(len(clean), 1)
             return ratio > threshold
 
-        def run_niah_scenario(context_tokens: int, scenario_name: str):
+        def run_niah_scenario(context_tokens: int, scenario_name: str, max_tokens: int = 8000):
             """执行单个大海捞针场景
 
             在生成的长文本中间插入needle，验证模型能否正确召回。
             当检测到模型不支持该上下文长度时（静默失败），抛出
             _ContextUnsupportedError 而非 pytest.skip，以便调用方
             区分处理：8K 不可支持则 FAIL，512K 不可支持则 PASS+警告。
+
+            Args:
+                context_tokens: 目标上下文长度（tokens）
+                scenario_name: 场景名称（用于日志/断言）
+                max_tokens: 生成最大 tokens。超长上下文场景因推理搜索
+                    耗时大，需放大 max_tokens 避免推理耗尽后 content=null。
             """
             test_logger.info(f"--- {scenario_name}: ~{context_tokens} tokens ---")
 
@@ -341,11 +347,11 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
             messages = [{"role": "user", "content": prompt}]
             thinking_budget = {"type": "enabled", "budget": 1000}
-            TestLogger.log_request(test_logger, messages, {"max_tokens": 8000, "thinking": thinking_budget})
+            TestLogger.log_request(test_logger, messages, {"max_tokens": max_tokens, "thinking": thinking_budget})
 
             try:
                 response = api_client.chat_completion(
-                    messages, max_tokens=8000, thinking=thinking_budget
+                    messages, max_tokens=max_tokens, thinking=thinking_budget
                 )
             except Exception as e:
                 if self._is_unknown_param_error(e):
@@ -353,7 +359,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                         f"[{scenario_name}] thinking budget not supported, "
                         f"retrying without: {e}"
                     )
-                    response = api_client.chat_completion(messages, max_tokens=8000)
+                    response = api_client.chat_completion(messages, max_tokens=max_tokens)
                 else:
                     raise
             TestLogger.log_response(test_logger, response, f"{scenario_name}响应")
@@ -440,6 +446,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
         # 先判断模型是否支持512K上下文长度：若模型显式声明的最大上下文 < 512K，
         # 则跳过该场景；若模型信息未声明最大上下文长度，则正常测试并根据结果断言
         model_info = api_client.get_model_info()
+        max_len = 0
         if self._has_explicit_max_context_len(model_info):
             max_len = self._get_max_context_len(model_info)
             if max_len < 512000:
@@ -456,11 +463,23 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 "512K场景: 模型信息未声明最大上下文长度，正常执行512K测试并根据结果断言"
             )
 
+        # 计算 512K 场景的 max_tokens：取模型最大上下文长度的 25% 作为生成上限。
+        # 不取较大比例的原因：虽然模型声明支持 1M 上下文，但 GPU 显存实际往往
+        # 支持不到满载；prompt 已占约 512K，生成上限过大易触发 OOM/显存不足。
+        # 25%（如 1M 模型 = 262144）在保留充足推理/生成空间的同时降低显存压力。
+        # 模型找到 needle 后会提前 stop，不会真正生成到上限；无法获取模型最大
+        # 上下文时回退到 64k。
+        niah_max_tokens = (int(max_len * 0.25)) if max_len > 0 else 64000
+        test_logger.info(
+            f"512K场景: max_tokens={niah_max_tokens} "
+            f"({'max_model_len*25%' if max_len > 0 else 'fallback 64k'})"
+        )
+
         # 512K prefill 耗时较长，自适应放大超时，结束后恢复原值
         original_timeout = api_client.timeout
         api_client.timeout = max(original_timeout, 1200)
         try:
-            run_niah_scenario(512000, "512K超长")
+            run_niah_scenario(512000, "512K超长", max_tokens=niah_max_tokens)
         except _ContextUnsupportedError as e:
             test_logger.warning(str(e))
             record_warning("模型可能不支持512K上下文长度，跳过512K大海捞针测试")

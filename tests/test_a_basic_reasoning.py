@@ -828,8 +828,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         [
             (
                 "emoji",
-                "请回复以下内容：Hello 👋 World 🌍",
-                ["👋", "🌍", "hello", "world"],
+                "请解释以下内容中emoji的含义：Hello 👋 World 🌍",
+                ["你好", "挥手", "世界", "地球", "hello", "表情"],
             ),
             (
                 "code",
@@ -858,6 +858,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
     ):
         """A12: 特殊Token处理 - 含emoji、代码块、数学符号、HTML标签的输入
 
+        4 个用例均采用"分析型"prompt（解释/计算/解析），关键词匹配分析
+        输出而非原样复述，避免模型将输入误解为对话而无法命中关键词。
         使用 _get_formal_content 避免 reasoning 中的关键词干扰，
         最低匹配数从 1 提升到 2，扩充关键词列表。
         """

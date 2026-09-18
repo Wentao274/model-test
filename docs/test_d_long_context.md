@@ -111,6 +111,12 @@ prompt_tokens 超过阈值 → completion_tokens > 0。D1/D2/D3 共用此方法�
 排除 reasoning_content。思考模型的 reasoning 中可能讨论 needle 关键词（如
 "8742"、"Phoenix"），若用 `get_message_content`（含 reasoning）会假阳性通过。
 
+**max_tokens 动态计算**：512K 场景的 `max_tokens` 取模型 `max_model_len` 的 25%
+（如 1M 模型 = 262144），无法获取时回退 64k。原因：超长上下文下推理搜索耗时长，
+固定 8000 会被推理耗尽导致 `content=null`、`finish_reason=length`；不取更大比例
+是因为 prompt 已占约 512K，且 GPU 显存实际往往支持不到满载 max_model_len。
+8K 基线场景沿用默认 8000。模型找到 needle 后会提前 `stop`，不会真正生成到上限。
+
 验证项：
 - 响应成功、finish_reason 合法
 - `prompt_tokens > 0`
@@ -231,6 +237,8 @@ no_params_fallback，与 test_b 策略对齐。
   流式测试同理（D8/D10/D11）
 - D5 NIAH 测试的 needle 使用高区分度关键词（Phoenix-37/8742），避免在
   reasoning_content 中被讨论导致假阳性
+- D5 512K 场景 max_tokens 取 `max_model_len * 25%`（回退 64k），避免推理耗尽
+  导致 content=null，同时兼顾 GPU 显存实际承载能力
 
 ## 预期结果
 - **P0 测试必须全部通过**（D1 短上下文基线、D4 超长上下文、D5 NIAH、D12 长上下文+思考）
