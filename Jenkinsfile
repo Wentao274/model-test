@@ -12,6 +12,8 @@ pipeline {
         string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080', description: 'API 地址（必填）')
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
+        choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
+        string(name: 'SEED', defaultValue: '', description: '全局 seed 参数（留空表示不传该参数；输入数字时所有对话请求均携带该参数）')
         choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型（当SPECIFIC_TEST不为none时此项被忽略）')
         choice(name: 'SPECIFIC_TEST', choices: [
             'none',
@@ -122,6 +124,8 @@ pipeline {
                     println("模型服务名称: ${params.MODEL}")
                     println("BASE_URL:     ${params.BASE_URL}")
                     println("思考模式:     ${params.THINKING_MODE}")
+                    println("ReasoningEffort: ${params.REASONING_EFFORT ?: '(空)'}")
+                    println("Seed:         ${params.SEED ?: '(空)'}")
                     println("测试标记:     ${params.MARKER}")
                     println("指定用例:     ${params.SPECIFIC_TEST}")
                     println("模型描述:     ${params.DESCRIPTION}")
@@ -172,6 +176,8 @@ ENDSSH"""
                 script {
                     def apiKey = params.API_KEY ? params.API_KEY.toString().trim() : ''
                     def thinkingFlag = params.THINKING_MODE ? '--thinking-mode' : '--no-thinking-mode'
+                    def reasoningEffortFlag = params.REASONING_EFFORT ? "--reasoning-effort ${params.REASONING_EFFORT}" : ''
+                    def seedFlag = params.SEED ? "--seed ${params.SEED}" : ''
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """
@@ -197,7 +203,7 @@ if [ -n "${params.SPECIFIC_TEST}" ] && [ "${params.SPECIFIC_TEST}" != "none" ]; 
         --tester "${params.TESTER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${seedFlag}
 elif [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
     pytest -v \\
         --base-url "${params.BASE_URL}" \\
@@ -209,7 +215,7 @@ elif [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
         --tester "${params.TESTER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${seedFlag}
 else
     pytest -v -m "${params.MARKER}" \\
         --base-url "${params.BASE_URL}" \\
@@ -221,7 +227,7 @@ else
         --tester "${params.TESTER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${seedFlag}
 fi
 ENDSSH"""
                         }
@@ -453,6 +459,8 @@ fi
                 <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
                 <tr><th>指定用例</th><td>${params.SPECIFIC_TEST}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
+                <tr><th>ReasoningEffort</th><td>${params.REASONING_EFFORT ?: '(空)'}</td></tr>
+                <tr><th>Seed</th><td>${params.SEED ?: '(空)'}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>
             </table>

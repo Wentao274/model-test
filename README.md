@@ -150,7 +150,9 @@ pytest -v \
   --engine vllm \
   --pd-mode agg \
   --tester yourname \
-  --thinking-mode
+  --thinking-mode \
+  --reasoning-effort high \
+  --seed 42
 ```
 
 > **关于 `--base-url`**：无需带 `/v1` 后缀，框架会自动拼接 `/v1/chat/completions`；若误带 `/v1` 也会被自动去除。
@@ -250,6 +252,8 @@ pytest -m slow -v                           # 慢速测试
 | `--chip` | `CHIP` | 否 | 芯片平台名称（自动转小写，用于日志/报告目录标识） |
 | `--thinking-mode` | `THINKING_MODE=true` | 否 | 启用思考模式 |
 | `--no-thinking-mode` | — | 否 | 显式关闭思考模式 |
+| `--reasoning-effort` | — | 否 | 全局 `reasoning_effort` 参数（`low`/`high`/`max`）；留空则不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
+| `--seed` | — | 否 | 全局 `seed` 参数（整数）；留空则不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
 | `--engine` | — | 否 | 推理框架（vllm / sglang，仅用于报告标识） |
 | `--pd-mode` | — | 否 | PD 分离模式（agg / disagg，仅用于报告标识） |
 | `--tester` | — | 否 | 测试人员名称（仅用于报告标识） |
@@ -340,6 +344,8 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `BASE_URL` | string | `http://10.201.149.10:8080` | API 地址（必填，**无需带 `/v1`**） |
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
+| `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
+| `SEED` | string | 空 | 全局 `seed` 参数（整数）；留空表示不传该参数，输入数字时自动注入到所有 `chat_completion` 请求 |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
 | `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_j（跳过 test_e、test_i）下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |
@@ -397,7 +403,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 邮件正文包含：
 
-1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式、执行时间、构建状态
+1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式/ReasoningEffort/Seed、执行时间、构建状态
 2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
 3. **分类统计** — 按 10 大分类的通过率统计
 4. **跳过用例说明** — 列出所有跳过用例的原因。整类全部跳过时仅显示一行汇总（如"C 类多模态能力：全部 12 个用例跳过：Model does not support multimodal input"），部分跳过时逐条列出（如"B10 Prefix/Suffix约束：API不支持prefix参数"）

@@ -45,6 +45,8 @@ class ModelAPIClient:
         model_name: str,
         timeout: int = 120,
         config: Dict[str, Any] = None,
+        reasoning_effort: Optional[str] = None,
+        seed: Optional[str] = None,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -53,11 +55,36 @@ class ModelAPIClient:
         self.model_name = model_name
         self.timeout = timeout
         self.config = config or {}
+        # 全局 reasoning_effort / seed：非空时自动注入到每次 chat_completion 请求；
+        # 调用方显式传入的同名参数优先级更高（不会被子覆盖）。
+        self.reasoning_effort = reasoning_effort.strip() if reasoning_effort else None
+        self.seed = seed.strip() if seed else None
         self.session = requests.Session()
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         self.session.headers.update(headers)
+
+    def _inject_global_params(self, kwargs: Dict[str, Any]) -> None:
+        """将全局 reasoning_effort / seed 注入到请求 kwargs 中（原地修改）
+
+        仅当全局值非空、且调用方未显式指定该参数时注入。显式参数可能位于：
+        - kwargs 顶层（如 seed=42）
+        - kwargs["extra_body"]（如 {"reasoning_effort": "low"}）
+
+        因此同时检查两层，避免与调用方显式值冲突。
+        """
+        if self.reasoning_effort:
+            extra_body = kwargs.get("extra_body") or {}
+            if "reasoning_effort" not in kwargs and "reasoning_effort" not in extra_body:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+        if self.seed:
+            extra_body = kwargs.get("extra_body") or {}
+            if "seed" not in kwargs and "seed" not in extra_body:
+                try:
+                    kwargs["seed"] = int(self.seed)
+                except (ValueError, TypeError):
+                    kwargs["seed"] = self.seed
 
     def get_thinking_params(self, enabled: bool = None) -> Dict[str, Any]:
         """根据模型配置生成思考模式参数
@@ -103,6 +130,7 @@ class ModelAPIClient:
             非流式: 完整响应字典
             流式: SSE事件迭代器
         """
+        self._inject_global_params(kwargs)
         if stream:
             return self.chat_completion_stream(
                 messages, model, temperature, max_tokens, **kwargs
@@ -153,6 +181,7 @@ class ModelAPIClient:
         **kwargs,
     ) -> Iterator[Dict[str, Any]]:
         """发送聊天完成请求（流式）"""
+        self._inject_global_params(kwargs)
         extra_body = kwargs.pop("extra_body", None)
 
         url = f"{self.base_url}/v1/chat/completions"

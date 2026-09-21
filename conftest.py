@@ -134,6 +134,11 @@ def api_client(
     cmd_model_name = request.config.getoption("--model-name", default=None)
     cmd_thinking_mode = request.config.getoption("--thinking-mode", default=None)
     cmd_model_key = request.config.getoption("--model", default=None)
+    # 全局 reasoning_effort / seed（空字符串归一为 None，表示不传该参数）
+    cmd_reasoning_effort = request.config.getoption("--reasoning-effort", default=None)
+    cmd_reasoning_effort = cmd_reasoning_effort.strip() if cmd_reasoning_effort else None
+    cmd_seed = request.config.getoption("--seed", default=None)
+    cmd_seed = cmd_seed.strip() if cmd_seed else None
 
     # 如果有命令行参数，使用命令行参数
     if cmd_base_url:
@@ -171,6 +176,8 @@ def api_client(
             model_name=model_name,
             timeout=config["global"]["timeout"],
             config=model_config,
+            reasoning_effort=cmd_reasoning_effort,
+            seed=cmd_seed,
         )
 
     # 检查环境变量
@@ -206,6 +213,8 @@ def api_client(
             model_name=model_name,
             timeout=config["global"]["timeout"],
             config=model_config,
+            reasoning_effort=cmd_reasoning_effort,
+            seed=cmd_seed,
         )
 
     # 回退到 config.yaml 配置
@@ -239,6 +248,8 @@ def api_client(
         model_name=model_config["name"],
         timeout=config["global"]["timeout"],
         config=model_config,
+        reasoning_effort=cmd_reasoning_effort,
+        seed=cmd_seed,
     )
 
 
@@ -282,12 +293,19 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
     if not model_config:
         pytest.skip(f"Model '{model_name}' not found in config")
 
+    cmd_reasoning_effort = request.config.getoption("--reasoning-effort", default=None)
+    cmd_reasoning_effort = cmd_reasoning_effort.strip() if cmd_reasoning_effort else None
+    cmd_seed = request.config.getoption("--seed", default=None)
+    cmd_seed = cmd_seed.strip() if cmd_seed else None
+
     return ModelAPIClient(
         api_key=model_config["api_key"],
         base_url=chip_config["base_url"],
         model_name=model_config["name"],
         timeout=config["global"]["timeout"],
         config=model_config,
+        reasoning_effort=cmd_reasoning_effort,
+        seed=cmd_seed,
     )
 
 
@@ -431,6 +449,18 @@ def pytest_addoption(parser):
         action="store_true",
         default=None,
         help="Disable thinking mode",
+    )
+    parser.addoption(
+        "--reasoning-effort",
+        action="store",
+        default=None,
+        help="Global reasoning_effort param (low/high/max); empty means not sent",
+    )
+    parser.addoption(
+        "--seed",
+        action="store",
+        default=None,
+        help="Global seed param (integer string); empty means not sent",
     )
     parser.addoption(
         "--engine",
