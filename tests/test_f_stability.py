@@ -507,6 +507,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
             model_name=api_client.model_name,
             timeout=3,
             config=config,
+            retry_times=0,
         )
 
         try:

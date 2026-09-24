@@ -3,6 +3,7 @@
 """
 
 import json
+import logging
 import time
 from typing import Dict, Any, List, Optional, Iterator, Union
 import requests
@@ -14,6 +15,17 @@ try:
     ALLURE_AVAILABLE = True
 except ImportError:
     ALLURE_AVAILABLE = False
+
+
+logger = logging.getLogger(__name__)
+
+# 需要重试的瞬时网络异常。
+# 仅含 ConnectionError：覆盖连接被对端重置 (ConnectionResetError) 以及
+# 连接建立超时 (ConnectTimeout，它是 ConnectionError 的子类)。
+# 不含 ReadTimeout —— 超长上下文 prefill 等场景的读取超时往往意味着模型
+# 无法在合理时间内处理该规模输入，重试只会白白浪费数倍 timeout 时间，
+# 应由调用方的 _is_over_limit_error / skip 逻辑处理。
+_RETRYABLE_EXCEPTIONS = (requests.exceptions.ConnectionError,)
 
 
 def _attach_api_error(status_code: int, response_text: str, payload: dict):
@@ -47,6 +59,7 @@ class ModelAPIClient:
         config: Dict[str, Any] = None,
         reasoning_effort: Optional[str] = None,
         seed: Optional[str] = None,
+        retry_times: int = 3,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -55,6 +68,7 @@ class ModelAPIClient:
         self.model_name = model_name
         self.timeout = timeout
         self.config = config or {}
+        self.retry_times = max(0, int(retry_times))
         # 全局 reasoning_effort / seed：非空时自动注入到每次 chat_completion 请求；
         # 调用方显式传入的同名参数优先级更高（不会被子覆盖）。
         self.reasoning_effort = reasoning_effort.strip() if reasoning_effort else None
@@ -106,6 +120,58 @@ class ModelAPIClient:
         else:
             return {thinking_key: enabled}
 
+    def _post_with_retry(
+        self, url: str, payload: dict, stream: bool = False
+    ) -> requests.Response:
+        """发送 POST 请求，遇到瞬时网络错误（如连接被对端重置）时自动重试。
+
+        Args:
+            url: 请求地址
+            payload: 请求体
+            stream: 是否流式
+
+        Returns:
+            requests.Response 对象
+        """
+        last_exc = None
+        attempts = self.retry_times + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.session.post(
+                    url,
+                    json=payload,
+                    timeout=self.timeout,
+                    stream=stream,
+                )
+            except _RETRYABLE_EXCEPTIONS as e:
+                last_exc = e
+                if attempt >= attempts:
+                    logger.error(
+                        "API request to %s failed after %d attempts: %s",
+                        url,
+                        attempts,
+                        e,
+                    )
+                    raise
+                # 丢弃可能已失效的连接，避免复用被对端关闭的 keep-alive 连接
+                try:
+                    self.session.close()
+                except Exception:
+                    pass
+                backoff = min(2 ** (attempt - 1), 8)
+                logger.warning(
+                    "API request to %s failed (attempt %d/%d): %s. "
+                    "Retrying in %ds...",
+                    url,
+                    attempt,
+                    attempts,
+                    e,
+                    backoff,
+                )
+                time.sleep(backoff)
+        # 逻辑上不可达，保险起见
+        raise last_exc  # type: ignore[misc]
+
     def chat_completion(
         self,
         messages: List[Dict[str, Any]],
@@ -150,7 +216,7 @@ class ModelAPIClient:
         if extra_body:
             payload.update(extra_body)
 
-        response = self.session.post(url, json=payload, timeout=self.timeout)
+        response = self._post_with_retry(url, payload, stream=False)
 
         # 检查响应状态
         if response.status_code != 200:
@@ -196,9 +262,7 @@ class ModelAPIClient:
         if extra_body:
             payload.update(extra_body)
 
-        response = self.session.post(
-            url, json=payload, timeout=self.timeout, stream=True
-        )
+        response = self._post_with_retry(url, payload, stream=True)
 
         # 检查响应状态
         if response.status_code != 200:

@@ -178,6 +178,7 @@ def api_client(
             config=model_config,
             reasoning_effort=cmd_reasoning_effort,
             seed=cmd_seed,
+            retry_times=config["global"].get("retry_times", 3),
         )
 
     # 检查环境变量
@@ -215,6 +216,7 @@ def api_client(
             config=model_config,
             reasoning_effort=cmd_reasoning_effort,
             seed=cmd_seed,
+            retry_times=config["global"].get("retry_times", 3),
         )
 
     # 回退到 config.yaml 配置
@@ -250,6 +252,7 @@ def api_client(
         config=model_config,
         reasoning_effort=cmd_reasoning_effort,
         seed=cmd_seed,
+        retry_times=config["global"].get("retry_times", 3),
     )
 
 
@@ -306,6 +309,7 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
         config=model_config,
         reasoning_effort=cmd_reasoning_effort,
         seed=cmd_seed,
+        retry_times=config["global"].get("retry_times", 3),
     )
 
 
