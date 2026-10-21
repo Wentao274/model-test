@@ -13,7 +13,7 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SEED', defaultValue: '', description: '全局 seed 参数（留空表示不传该参数；输入数字时所有对话请求均携带该参数）')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": 1.0, "top_p": 0.95, "seed": ""}', description: '全局采样参数(JSON)。字段默认: temperature=1.0, top_p=0.95, seed=空(不发送)；字段设为null表示不覆盖该参数；整体留空表示全部不覆盖(框架原有行为)。参数行为用例(A6/A7/A10/F3/H2)始终按自身参数执行')
         choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型（当SPECIFIC_TEST不为none时此项被忽略）')
         choice(name: 'SPECIFIC_TEST', choices: [
             'none',
@@ -125,7 +125,7 @@ pipeline {
                     println("BASE_URL:     ${params.BASE_URL}")
                     println("思考模式:     ${params.THINKING_MODE}")
                     println("ReasoningEffort: ${params.REASONING_EFFORT ?: '(空)'}")
-                    println("Seed:         ${params.SEED ?: '(空)'}")
+                    println("采样参数:     ${params.SAMPLING_PARAMS ?: '(空, 不覆盖)'}")
                     println("测试标记:     ${params.MARKER}")
                     println("指定用例:     ${params.SPECIFIC_TEST}")
                     println("模型描述:     ${params.DESCRIPTION}")
@@ -177,7 +177,8 @@ ENDSSH"""
                     def apiKey = params.API_KEY ? params.API_KEY.toString().trim() : ''
                     def thinkingFlag = params.THINKING_MODE ? '--thinking-mode' : '--no-thinking-mode'
                     def reasoningEffortFlag = params.REASONING_EFFORT ? "--reasoning-effort ${params.REASONING_EFFORT}" : ''
-                    def seedFlag = params.SEED ? "--seed ${params.SEED}" : ''
+                    def samplingParamsValue = params.SAMPLING_PARAMS ? params.SAMPLING_PARAMS.toString().trim() : ''
+                    def samplingParamsFlag = samplingParamsValue ? "--sampling-params '${samplingParamsValue}'" : ''
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """
@@ -203,7 +204,7 @@ if [ -n "${params.SPECIFIC_TEST}" ] && [ "${params.SPECIFIC_TEST}" != "none" ]; 
         --tester "${params.TESTER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag} ${reasoningEffortFlag} ${seedFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
 elif [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
     pytest -v \\
         --base-url "${params.BASE_URL}" \\
@@ -215,7 +216,7 @@ elif [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
         --tester "${params.TESTER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag} ${reasoningEffortFlag} ${seedFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
 else
     pytest -v -m "${params.MARKER}" \\
         --base-url "${params.BASE_URL}" \\
@@ -227,7 +228,7 @@ else
         --tester "${params.TESTER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag} ${reasoningEffortFlag} ${seedFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
 fi
 ENDSSH"""
                         }
@@ -460,7 +461,7 @@ fi
                 <tr><th>指定用例</th><td>${params.SPECIFIC_TEST}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>ReasoningEffort</th><td>${params.REASONING_EFFORT ?: '(空)'}</td></tr>
-                <tr><th>Seed</th><td>${params.SEED ?: '(空)'}</td></tr>
+                <tr><th>SamplingParams</th><td>${params.SAMPLING_PARAMS ?: '(空, 不覆盖)'}</td></tr>
                 <tr><th>执行时间</th><td>${currentBuild.durationString}</td></tr>
                 <tr><th>构建状态</th><td>${currentBuild.currentResult}</td></tr>
             </table>

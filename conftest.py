@@ -4,12 +4,13 @@ pytest全局配置和共享fixture
 
 import os
 import sys
+import json
 from datetime import datetime
 from pathlib import Path
 import pytest
 import requests
 import yaml
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 
 from base.api_client import ModelAPIClient
 from base.logger import TestLogger
@@ -56,6 +57,83 @@ def expand_env_vars(config: Any) -> Any:
         env_var = config[2:-1]
         return os.getenv(env_var, "")
     return config
+
+
+# 参数行为类测试用例豁免名单：
+# 这些用例显式指定 temperature/top_p/seed，且测试逻辑/断言与采样参数行为相关，
+# 全局采样参数覆盖对其不生效，始终按用例自身参数执行。
+RAW_SAMPLING_PARAM_TESTS = {
+    "test_temperature_control",      # A6: temperature 控制（temp=0/1.0 对比断言）
+    "test_top_p_top_k_sampling",     # A7: top_p/top_k 采样（参数化显式传参）
+    "test_seed_reproducibility",    # A10: seed 可复现性（seed=42 一致性断言）
+    "test_invalid_parameters",       # F3: 非法参数校验（temperature=-1/5.0）
+    "test_generation_consistency",  # H2/I2: temperature=0 生成一致性断言
+}
+
+
+def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
+    """解析 --sampling-params JSON 配置（全局采样参数覆盖）
+
+    三态语义（空值 = 不覆盖该参数，保持框架原有行为）：
+    - 整个参数留空 → 返回 None（不启用任何全局覆盖）
+    - 字段省略 → 使用默认值（temperature=1.0，top_p=0.95，seed 不发送）
+    - 字段为 null 或空串 → 该字段不覆盖
+
+    Returns:
+        {"temperature": Optional[float], "top_p": Optional[float],
+         "seed": Optional[str]}，None 表示未启用
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise pytest.UsageError(f"--sampling-params 不是合法 JSON: {e}")
+    if not isinstance(data, dict):
+        raise pytest.UsageError(
+            '--sampling-params 必须是 JSON 对象，'
+            '如 {"temperature": 1.0, "top_p": 0.95, "seed": ""}'
+        )
+
+    def _num(key: str, default: float) -> Optional[float]:
+        value = data.get(key, default)
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            raise pytest.UsageError(
+                f"--sampling-params 中 {key} 不是数值: {value!r}"
+            )
+
+    seed = data.get("seed")
+    if seed is not None:
+        seed = str(seed).strip() or None
+    return {
+        "temperature": _num("temperature", 1.0),
+        "top_p": _num("top_p", 0.95),
+        "seed": seed,
+    }
+
+
+def _resolve_global_sampling_params(request) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    """解析当前用例适用的全局采样参数 (temperature, top_p, seed)
+
+    豁免名单内的用例返回 (None, None, None)，按用例自身参数执行。
+    --sampling-params 与旧 --seed 同时给出时，--sampling-params 优先。
+    """
+    if request.node.name.split("[")[0] in RAW_SAMPLING_PARAM_TESTS:
+        return None, None, None
+    sampling = _parse_sampling_params(
+        request.config.getoption("--sampling-params", default=None)
+    )
+    if sampling is not None:
+        return sampling["temperature"], sampling["top_p"], sampling["seed"]
+    # 兼容旧 --seed 参数（仅在未提供 --sampling-params 时生效）
+    cmd_seed = request.config.getoption("--seed", default=None)
+    cmd_seed = cmd_seed.strip() if cmd_seed else None
+    return None, None, cmd_seed
 
 
 @pytest.fixture(scope="session")
@@ -126,6 +204,10 @@ def api_client(
     1. 命令行参数 (--chip, --base-url, --model-name, --api-key, --thinking-mode)
     2. 环境变量 (BASE_URL, API_KEY, MODEL_NAME, CHIP, THINKING_MODE)
     3. config.yaml 中的配置
+
+    全局采样参数覆盖 (--sampling-params)：非豁免用例注入全局
+    temperature/top_p/seed；豁免用例（见 RAW_SAMPLING_PARAM_TESTS）
+    不注入，按用例自身参数执行。
     """
     # 检查命令行参数
     cmd_chip = request.config.getoption("--chip", default=None)
@@ -134,11 +216,14 @@ def api_client(
     cmd_model_name = request.config.getoption("--model-name", default=None)
     cmd_thinking_mode = request.config.getoption("--thinking-mode", default=None)
     cmd_model_key = request.config.getoption("--model", default=None)
-    # 全局 reasoning_effort / seed（空字符串归一为 None，表示不传该参数）
+    # 全局 reasoning_effort（空字符串归一为 None，表示不传该参数）
     cmd_reasoning_effort = request.config.getoption("--reasoning-effort", default=None)
     cmd_reasoning_effort = cmd_reasoning_effort.strip() if cmd_reasoning_effort else None
-    cmd_seed = request.config.getoption("--seed", default=None)
-    cmd_seed = cmd_seed.strip() if cmd_seed else None
+    # 全局采样参数（temperature/top_p/seed，--sampling-params JSON 解析），
+    # 豁免名单内用例不注入
+    global_temperature, global_top_p, global_seed = (
+        _resolve_global_sampling_params(request)
+    )
 
     # 如果有命令行参数，使用命令行参数
     if cmd_base_url:
@@ -177,7 +262,9 @@ def api_client(
             timeout=config["global"]["timeout"],
             config=model_config,
             reasoning_effort=cmd_reasoning_effort,
-            seed=cmd_seed,
+            temperature=global_temperature,
+            top_p=global_top_p,
+            seed=global_seed,
             retry_times=config["global"].get("retry_times", 3),
         )
 
@@ -215,7 +302,9 @@ def api_client(
             timeout=config["global"]["timeout"],
             config=model_config,
             reasoning_effort=cmd_reasoning_effort,
-            seed=cmd_seed,
+            temperature=global_temperature,
+            top_p=global_top_p,
+            seed=global_seed,
             retry_times=config["global"].get("retry_times", 3),
         )
 
@@ -298,8 +387,10 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
 
     cmd_reasoning_effort = request.config.getoption("--reasoning-effort", default=None)
     cmd_reasoning_effort = cmd_reasoning_effort.strip() if cmd_reasoning_effort else None
-    cmd_seed = request.config.getoption("--seed", default=None)
-    cmd_seed = cmd_seed.strip() if cmd_seed else None
+    # 全局采样参数（temperature/top_p/seed），豁免名单内用例不注入
+    global_temperature, global_top_p, global_seed = (
+        _resolve_global_sampling_params(request)
+    )
 
     return ModelAPIClient(
         api_key=model_config["api_key"],
@@ -308,7 +399,9 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
         timeout=config["global"]["timeout"],
         config=model_config,
         reasoning_effort=cmd_reasoning_effort,
-        seed=cmd_seed,
+        temperature=global_temperature,
+        top_p=global_top_p,
+        seed=global_seed,
         retry_times=config["global"].get("retry_times", 3),
     )
 
@@ -464,7 +557,20 @@ def pytest_addoption(parser):
         "--seed",
         action="store",
         default=None,
-        help="Global seed param (integer string); empty means not sent",
+        help="Global seed param (integer string); deprecated, use --sampling-params instead; "
+        "only effective when --sampling-params is not provided",
+    )
+    parser.addoption(
+        "--sampling-params",
+        action="store",
+        default=None,
+        help=(
+            'Global sampling params as JSON, e.g. '
+            '{"temperature": 1.0, "top_p": 0.95, "seed": ""}. '
+            "Field defaults: temperature=1.0, top_p=0.95, seed not sent; "
+            "null/empty field means no override; "
+            "empty value disables all overrides"
+        ),
     )
     parser.addoption(
         "--engine",
@@ -519,6 +625,9 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_configure(config):
     """注册自定义marker"""
+    # 启动时校验 --sampling-params，非法配置 fail-fast，避免测试跑到一半才失败
+    _parse_sampling_params(config.getoption("--sampling-params", default=None))
+
     config.addinivalue_line("markers", "a_basic: A类测试 - 基础推理能力")
     config.addinivalue_line("markers", "b_advanced: B类测试 - 高级生成功能")
     config.addinivalue_line("markers", "c_multimodal: C类测试 - 多模态能力")

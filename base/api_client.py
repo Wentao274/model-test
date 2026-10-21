@@ -59,6 +59,8 @@ class ModelAPIClient:
         config: Dict[str, Any] = None,
         reasoning_effort: Optional[str] = None,
         seed: Optional[str] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
         retry_times: int = 3,
     ):
         self.api_key = api_key
@@ -73,6 +75,14 @@ class ModelAPIClient:
         # 调用方显式传入的同名参数优先级更高（不会被子覆盖）。
         self.reasoning_effort = reasoning_effort.strip() if reasoning_effort else None
         self.seed = seed.strip() if seed else None
+        # 全局采样参数覆盖（来自 --sampling-params，由 conftest 注入）：
+        # - temperature：非 None 时强制覆盖每次请求的 temperature（优先于调用方
+        #   显式传参）。受限模型仅允许特定采样参数取值，必须统一改写，否则请求
+        #   会被 400 拒绝；参数行为类用例（A6/A7/A10/F3/H2 等）的豁免在
+        #   conftest 层完成——不向 client 传入全局值，按用例自身参数执行。
+        # - top_p：非 None 时注入（仅当调用方未显式指定）。
+        self.temperature = float(temperature) if temperature is not None else None
+        self.top_p = float(top_p) if top_p is not None else None
         self.session = requests.Session()
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -80,10 +90,10 @@ class ModelAPIClient:
         self.session.headers.update(headers)
 
     def _inject_global_params(self, kwargs: Dict[str, Any]) -> None:
-        """将全局 reasoning_effort / seed 注入到请求 kwargs 中（原地修改）
+        """将全局 reasoning_effort / seed / top_p 注入到请求 kwargs 中（原地修改）
 
         仅当全局值非空、且调用方未显式指定该参数时注入。显式参数可能位于：
-        - kwargs 顶层（如 seed=42）
+        - kwargs 顶层（如 seed=42, top_p=0.9）
         - kwargs["extra_body"]（如 {"reasoning_effort": "low"}）
 
         因此同时检查两层，避免与调用方显式值冲突。
@@ -99,6 +109,14 @@ class ModelAPIClient:
                     kwargs["seed"] = int(self.seed)
                 except (ValueError, TypeError):
                     kwargs["seed"] = self.seed
+        if self.top_p is not None:
+            extra_body = kwargs.get("extra_body") or {}
+            if "top_p" not in kwargs and "top_p" not in extra_body:
+                kwargs["top_p"] = self.top_p
+
+    def _effective_temperature(self, temperature: float) -> float:
+        """返回请求实际使用的 temperature（全局覆盖值优先于调用方传参）"""
+        return self.temperature if self.temperature is not None else temperature
 
     def get_thinking_params(self, enabled: bool = None) -> Dict[str, Any]:
         """根据模型配置生成思考模式参数
@@ -187,7 +205,7 @@ class ModelAPIClient:
         Args:
             messages: 消息列表
             model: 模型名称（默认使用实例配置）
-            temperature: 温度参数
+            temperature: 温度参数（全局 temperature 覆盖非 None 时被强制覆盖）
             max_tokens: 最大生成token数
             stream: 是否流式输出
             **kwargs: 其他API参数
@@ -208,7 +226,7 @@ class ModelAPIClient:
         payload = {
             "model": model or self.model_name,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": self._effective_temperature(temperature),
             "max_tokens": max_tokens,
             "stream": False,
             **kwargs,
@@ -254,7 +272,7 @@ class ModelAPIClient:
         payload = {
             "model": model or self.model_name,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": self._effective_temperature(temperature),
             "max_tokens": max_tokens,
             "stream": True,
             **kwargs,

@@ -433,7 +433,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         """C5 [P2]: 视频理解 - 输入视频文件"""
         test_logger.info("=== 测试开始: 视频理解 ===")
 
-        video_url = "http://10.201.132.50:9999/videos/water.mp4"
+        video_url = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
 
         # 清除代理环境变量，避免影响视频访问
         _proxy_env_keys = [

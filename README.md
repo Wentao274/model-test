@@ -152,7 +152,7 @@ pytest -v \
   --tester yourname \
   --thinking-mode \
   --reasoning-effort high \
-  --seed 42
+  --sampling-params '{"temperature": 1.0, "top_p": 0.95, "seed": ""}'
 ```
 
 > **关于 `--base-url`**：无需带 `/v1` 后缀，框架会自动拼接 `/v1/chat/completions`；若误带 `/v1` 也会被自动去除。
@@ -253,13 +253,35 @@ pytest -m slow -v                           # 慢速测试
 | `--thinking-mode` | `THINKING_MODE=true` | 否 | 启用思考模式 |
 | `--no-thinking-mode` | — | 否 | 显式关闭思考模式 |
 | `--reasoning-effort` | — | 否 | 全局 `reasoning_effort` 参数（`low`/`high`/`max`）；留空则不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `--seed` | — | 否 | 全局 `seed` 参数（整数）；留空则不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
+| `--sampling-params` | — | 否 | 全局采样参数（JSON）：如 `{"temperature": 1.0, "top_p": 0.95, "seed": ""}`。字段默认 `temperature=1.0`、`top_p=0.95`、`seed` 不发送；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（详见[全局采样参数覆盖](#全局采样参数覆盖)） |
+| `--seed` | — | 否 | 已废弃，改用 `--sampling-params`；仅在未提供 `--sampling-params` 时生效 |
 | `--engine` | — | 否 | 推理框架（vllm / sglang，仅用于报告标识） |
 | `--pd-mode` | — | 否 | PD 分离模式（agg / disagg，仅用于报告标识） |
 | `--tester` | — | 否 | 测试人员名称（仅用于报告标识） |
 | `--alluredir` | — | 否 | Allure 结果输出目录（不指定则按芯片/模型/时间戳自动生成） |
 | `--summary-report-dir` | — | 否 | Markdown 汇总报告输出目录（默认 `allure-report`） |
 | `--model` | — | 否 | 指定 `config.yaml` 中的模型配置名（如 `qwen35`、`glm5`） |
+
+### 全局采样参数覆盖
+
+`--sampling-params` 用于全局覆盖所有 `chat_completion` 请求的采样参数，典型场景是**受限模型**（仅允许特定采样参数取值，如 `temperature=1`、`top_p=0.95`，其他取值会被 400 拒绝）：
+
+| 写法 | temperature | top_p | seed |
+|------|-------------|-------|------|
+| `""`（整体留空） | 不覆盖（框架默认 0.7 / 用例原值） | 不发送 | 不注入 |
+| `{"temperature": 1.0, "top_p": 0.95, "seed": ""}`（默认值） | 强制 1.0 | 注入 0.95 | 不发送 |
+| `{"top_p": 0.9}`（字段省略） | 省略 → 默认 1.0 | 注入 0.9 | 不发送 |
+| `{"temperature": null, "top_p": null}`（字段空值） | 不覆盖 | 不发送 | 不发送 |
+| `{"seed": 42}` | 强制 1.0 | 注入 0.95 | 注入 42 |
+
+覆盖语义：
+
+- **temperature：强制覆盖**——优先于用例显式传参，保证受限模型下所有请求统一携带允许值
+- **top_p / seed：注入式覆盖**——仅当请求未显式携带该参数时注入
+
+豁免机制：以下用例显式指定采样参数且断言逻辑与参数行为相关，全局覆盖对其**不生效**，始终按用例自身参数执行——A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、F3 `test_invalid_parameters`、H2/I2 `test_generation_consistency`（豁免名单见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
+
+> 注意：受限模型上豁免用例携带非允许值（如 `temperature=0`）的请求会 400 失败，反映的是模型真实能力限制，非误报。
 
 ### 连通性检查
 
@@ -345,7 +367,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `SEED` | string | 空 | 全局 `seed` 参数（整数）；留空表示不传该参数，输入数字时自动注入到所有 `chat_completion` 请求 |
+| `SAMPLING_PARAMS` | string | `{"temperature": 1.0, "top_p": 0.95, "seed": ""}` | 全局采样参数（JSON）。字段默认：`temperature=1.0`、`top_p=0.95`、`seed` 空（不发送）；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（框架原有行为）。参数行为用例（A6/A7/A10/F3/H2）始终按自身参数执行，详见[全局采样参数覆盖](#全局采样参数覆盖) |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
 | `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_j（跳过 test_e、test_i）下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |
@@ -403,7 +425,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 邮件正文包含：
 
-1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式/ReasoningEffort/Seed、执行时间、构建状态
+1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式/ReasoningEffort/SamplingParams、执行时间、构建状态
 2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
 3. **分类统计** — 按 10 大分类的通过率统计
 4. **跳过用例说明** — 列出所有跳过用例的原因。整类全部跳过时仅显示一行汇总（如"C 类多模态能力：全部 12 个用例跳过：Model does not support multimodal input"），部分跳过时逐条列出（如"B10 Prefix/Suffix约束：API不支持prefix参数"）
