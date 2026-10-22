@@ -125,7 +125,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
 
     @staticmethod
     def _is_unknown_param_error(e) -> bool:
-        """判断异常是否因请求参数不被服务端识别（如 thinking_budget 不支持）
+        """判断异常是否因请求参数不被服务端识别（如 thinking_token_budget 不支持）
 
         用于 thinking budget 降级重试：当服务端返回 unknown/unrecognized/
         unexpected 参数错误或 400/422 时，视为该参数不支持，可去掉重试。
@@ -346,12 +346,15 @@ class TestLongContext(BaseTest, StreamingTestMixin):
             prompt = needle_text + "\n\n请问文章中的特殊标记是什么？"
 
             messages = [{"role": "user", "content": prompt}]
-            thinking_budget = {"type": "enabled", "budget": 1000}
-            TestLogger.log_request(test_logger, messages, {"max_tokens": max_tokens, "thinking": thinking_budget})
+            TestLogger.log_request(
+                test_logger,
+                messages,
+                {"max_tokens": max_tokens, "thinking_token_budget": 1000},
+            )
 
             try:
                 response = api_client.chat_completion(
-                    messages, max_tokens=max_tokens, thinking=thinking_budget
+                    messages, max_tokens=max_tokens, thinking_token_budget=1000
                 )
             except Exception as e:
                 if self._is_unknown_param_error(e):
@@ -647,13 +650,14 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 ),
             }
         ]
-        thinking_budget = {"type": "enabled", "budget": 2000}
-        TestLogger.log_request(test_logger, messages, {"max_tokens": 16000, "thinking": thinking_budget})
+        TestLogger.log_request(
+            test_logger, messages, {"max_tokens": 16000, "thinking_token_budget": 2000}
+        )
 
         try:
             try:
                 response_iter = api_client.chat_completion_stream(
-                    messages, max_tokens=16000, thinking=thinking_budget
+                    messages, max_tokens=16000, thinking_token_budget=2000
                 )
                 result = self.collect_stream_chunks(response_iter)
             except Exception as e:
