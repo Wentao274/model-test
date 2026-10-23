@@ -217,3 +217,4 @@ builds/
 test_reports/
 logs/
 allure-report/
+allure-results/

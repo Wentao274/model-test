@@ -145,7 +145,7 @@ pipeline {
             steps {
                 sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                     sh """
-ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << ENDSSH
+ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << 'ENDSSH'
 set -e
 cd ${params.WORK_DIR}
 echo "工作目录: \$(pwd)"
@@ -186,7 +186,7 @@ ENDSSH"""
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """
-ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << ENDSSH
+ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << 'ENDSSH'
 set -e
 cd ${params.WORK_DIR}
 source .venv/bin/activate
@@ -245,14 +245,18 @@ ENDSSH"""
             steps {
                 sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                     sh """
-ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << ENDSSH
+ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << 'ENDSSH'
 set -e
 cd ${params.WORK_DIR}
 # 生成 Allure HTML 报告
-if [ -d "${BUILD_OUTPUT_DIR}/allure-results" ] && [ "\$(ls -A ${BUILD_OUTPUT_DIR}/allure-results 2>/dev/null)" ]; then
-    echo "生成 Allure HTML 报告..."
-    allure generate "${BUILD_OUTPUT_DIR}/allure-results" -o "${BUILD_OUTPUT_DIR}/allure-html" --clean
-    echo "Allure HTML 报告已生成: ${BUILD_OUTPUT_DIR}/allure-html"
+if [ -d "${BUILD_OUTPUT_DIR}/allure-results" ] && [ -n "\$(ls -A ${BUILD_OUTPUT_DIR}/allure-results 2>/dev/null)" ]; then
+    if command -v allure >/dev/null 2>&1; then
+        echo "生成 Allure HTML 报告..."
+        allure generate "${BUILD_OUTPUT_DIR}/allure-results" -o "${BUILD_OUTPUT_DIR}/allure-html" --clean || echo "警告: allure generate 执行失败, 跳过远端 HTML 报告"
+        echo "Allure HTML 报告已生成: ${BUILD_OUTPUT_DIR}/allure-html"
+    else
+        echo "远端未安装 allure CLI, 跳过 HTML 生成（Jenkins 侧 Allure 插件仍会生成报告）"
+    fi
 else
     echo "警告: allure-results 目录不存在或为空"
 fi
@@ -339,12 +343,14 @@ fi
                         try {
                             def flagFile = "${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/.connectivity_check_failed"
                             def flagContent = sh(
-                                script: "ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} \"cat ${flagFile} 2>/dev/null\"",
+                                script: "ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} \"cat ${flagFile} 2>/dev/null || true\"",
                                 returnStdout: true
                             ).trim()
                             if (flagContent) {
                                 connectivityCheckFailed = true
                                 connectivityFailureReason = flagContent
+                            } else {
+                                echo "API 连通性检查通过（无失败标记文件）"
                             }
                         } catch (Exception e) {
                             echo "检查连通性标记文件失败: ${e.message}"
@@ -502,7 +508,7 @@ fi
             steps {
                 sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                     sh """
-ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << ENDSSH
+ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} << 'ENDSSH'
 cd ${params.WORK_DIR}/builds/${params.TESTER} 2>/dev/null || exit 0
 ls -t | tail -n +21 | xargs -r rm -rf
 ENDSSH"""

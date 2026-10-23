@@ -701,7 +701,12 @@ def pytest_configure(config):
 
     # 设置 allure-results 目录
     # 优先级：命令行 --alluredir > 自动生成时间戳目录
-    alluredir = getattr(config.option, "alluredir", None)
+    # 注意：allure-pytest 2.14+ 将 --alluredir 存入 config.option.allure_report_dir，
+    # 旧版本为 config.option.alluredir，两者都检查以保持兼容
+    alluredir = (
+        getattr(config.option, "allure_report_dir", None)
+        or getattr(config.option, "alluredir", None)
+    )
     if alluredir:
         # 已通过 --alluredir 指定，直接使用
         allure_results_dir = alluredir
@@ -710,7 +715,9 @@ def pytest_configure(config):
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         allure_results_dir = f"allure-results/{chip_name}/{model_name}/{timestamp}"
 
-    # 更新 pytest 的 alluredir 选项
+    # 同时写回两个属性：allure_report_dir 是 allure-pytest 2.14+ 实际读取的
+    # 属性（决定结果文件写到哪里）；alluredir 供汇总提示逻辑使用
+    config.option.allure_report_dir = allure_results_dir
     config.option.alluredir = allure_results_dir
 
 
