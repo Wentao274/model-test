@@ -632,6 +632,46 @@ TEST_CATEGORIES = {
                 "negative_frequency_penalty_treated_as_zero",
                 "P0",
             ),
+            (
+                "K5",
+                "thinking.type=disabled 后思考未关闭",
+                "客户问题复现：disabled 后 reasoning_tokens 仍>0、reasoning_content"
+                "照常输出，关思考相关功能全部失效；官方端点实测 disabled 应完全"
+                "关闭思考（rt 为空、无思考内容、正文正常，FAQ 与实测不符以实测"
+                "为准）。输入保持 disabled、temperature=0.6（官方关思考档唯一"
+                "合法温度）连发 3 次（消息各异，间隔3s），断言每次均符合官方"
+                "实测预期（无思考内容+rt 为空+正文正常返回+自然结束）",
+                "thinking_disabled_suppresses_reasoning",
+                "P0",
+            ),
+            (
+                "K6",
+                "关思考温度档未联动校验",
+                "官方契约（kimi-k3）：thinking 与 temperature 档位联动——disabled"
+                " 仅允许 0.6（给 1 或 0 报 400 \"only 0.6 is allowed for this "
+                "model in non-thinking mode\"）、enabled 仅允许 1（给 0.6 或 0 "
+                "报 400 \"only 1 is allowed for this model in thinking mode\"），"
+                "客户影响为关思考温度档失效。本用例对 6 个组合各发一次请求，"
+                "断言合法组合 200+正文非空、非法组合 400+错误信息含官方文案"
+                "（忽略大小写子串）",
+                "thinking_temperature_tier",
+                "P0",
+            ),
+            (
+                "K7",
+                "思考强度档位思考长度倒挂（官方 reasoning_effort）",
+                "客户问题复现（kimi-k3）：官方思考强度为顶层 reasoning_effort"
+                "（K2.x thinking 配置已废弃），K3 恒开思考，思考长度"
+                "（reasoning_tokens）随档位递增。只按官方格式传参（无回退），"
+                "请求顺序（客户指定）：low→high→max 比对后 max→high→low 再"
+                "比对（正逆两轮排除顺序干扰，均按 low<high<max 软对比，"
+                "medium 不参与）；最后 medium 顶层 200 放行、medium 嵌套 400"
+                "（废弃配置下非法档位，客户指定契约）；间隔3s、内容与温度相同"
+                "（temperature=1）；硬断言每次 200+正文非空+自然结束；倒挂/"
+                "持平不判失败，仅告警记入报告",
+                "thinking_effort_reasoning_length",
+                "P0",
+            ),
         ],
     },
 }

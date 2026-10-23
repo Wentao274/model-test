@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（11 大类 × 114 个测试点）
+## 二、测试点总览（11 大类 × 117 个测试点）
 
 ### 分类概览
 
@@ -37,7 +37,7 @@
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 4    | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制），全部 P0，持续追加 |
+| K. 客户问题复现 | 6    | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档），全部 P0，持续追加 |
 
 ---
 
@@ -238,7 +238,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | J10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | J11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（J8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 客户问题复现（4 项）
+### K. 客户问题复现（7 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
@@ -250,6 +250,9 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K2  | 同一请求循环执行5次返回信息异常 | 客户问题：同一 curl（logprobs+top_logprobs+n+thinking+stream+X-Cache-Buster 防缓存头）循环执行 5 次左右出现返回信息异常 | 按客户原始 curl 原样复现并连续执行 5 次（相邻间隔 3s）：断言每次流式 chunks 非空、finish_reason 合法、内容非空；5 次全部正常才 PASS，失败时报告第几次 | P0  |
 | K3  | Anthropic 协议 prompt cache 未创建 | 客户问题：Anthropic 协议（/anthropic/v1/messages，stream=true）请求（prompt_tokens=111283）的服务端日志 cache_creation_tokens 一直为 0（未创建缓存） | 构造带 cache_control 断点的唯一长前缀（~11 万 tokens，对齐客户场景规模）连发两次：断言第 1 次 cache_creation_input_tokens>0（创建）、第 2 次 cache_read_input_tokens>0（命中）；兼容网关内部字段名拼写 | P0  |
 | K4  | frequency_penalty=-2 不传 max_tokens 无返回 | 客户问题：fp=-2（OpenAI 规范 [-2,2] 合法极值）且不传 max_tokens 时退化重复导致无界生成、请求一直无返回（fp<0 奖励已出现 token 压制 EOS，自然终止失效） | 修复契约 fp<0 按 0 处理：输入保持 -2、不传 max_tokens 连发 3 次（消息各异，相邻间隔 3s），断言每次均按 fp=0 预期——单次 120s 预算内返回、finish_reason 自然结束（非 length）、内容非空；任一次失败报告第几次；专用预算客户端（retry=0）检测挂起 | P0  |
+| K5  | thinking.type=disabled 后思考未关闭 | 客户问题：thinking.type=disabled 后 reasoning_tokens 仍=100/75、reasoning_content 照常输出，关思考相关功能（低延迟模式、关思考温度档）全部失效；官方端点实测 disabled 后思考完全关闭（官方 FAQ 与实测不符，以实测为准） | 输入保持客户原值 disabled、temperature=0.6（官方关思考档唯一合法温度）、不传 max_tokens 连发 3 次（消息各异，相邻间隔 3s），断言每次均按官方实测预期——无思考内容（reasoning_content/reasoning）、reasoning_tokens 为空（0/缺失，兼容两种字段拼写）、正文正常返回且 finish_reason 自然结束；任一次失败报告第几次 | P0  |
+| K6  | 关思考温度档未联动校验 | 客户影响：关思考相关功能（关思考温度档）失效；官方契约（kimi-k3）：thinking 与 temperature 档位联动——disabled 仅允许 0.6（给 1 或 0 报 400 "only 0.6 is allowed for this model in non-thinking mode"）、enabled 仅允许 1（给 0.6 或 0 报 400 "only 1 is allowed for this model in thinking mode"） | 对 6 个组合（disabled/enabled × 0.6/1/0）各发一次请求（同一 prompt，参数为唯一变量；参数校验为确定性行为无需多次连发），断言合法组合 200+正文非空、非法组合 400+错误信息含官方文案（忽略大小写子串匹配，对错误体 JSON 结构不敏感） | P0  |
+| K7  | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃），K3 恒开思考，思考长度（reasoning_tokens）应随档位递增 | 只按官方格式传参（无回退），请求顺序（客户指定）：low→high→max 比对思考长度，max→high→low 逆向重发再比对（正逆两轮排除顺序干扰，均按 low<high<max 软对比，medium 不参与）；最后 medium 顶层 200 放行、medium 嵌套 400（废弃配置下非法档位，客户指定契约）；间隔 3s、内容与 temperature=1 相同；硬断言每次 200+正文非空+自然结束；倒挂/持平不判失败，仅告警记入报告；reasoning_tokens 兼容两种字段拼写 | P0  |
 
 ---
 
@@ -311,10 +314,10 @@ G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
                      Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
                      clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
-K1-K4            客户问题复现 4 项（K 类全部 P0，客户报障必测）
+K1-K7            客户问题复现 7 项（K 类全部 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 4 = 40 项。
+总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 7 = 43 项。
 
 ### P1（选测，58 项）
 

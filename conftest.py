@@ -71,6 +71,9 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_pydantic_schema_tool_call_stream",  # K1: 客户问题复现（按客户原始 curl 参数执行）
     "test_repeated_request_stability",  # K2: 客户问题复现（按客户原始 curl 参数执行）
     "test_negative_frequency_penalty_treated_as_zero",  # K4: 客户问题复现（按客户原始 curl 参数执行）
+    "test_thinking_disabled_suppresses_reasoning",  # K5: 客户问题复现（按客户原始 curl 参数执行）
+    "test_thinking_temperature_tier",  # K6: 客户问题复现（temperature 与 thinking 档位联动契约，不可被全局覆盖）
+    "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约值，思考强度档位对比的前提，不可被全局覆盖）
 }
 
 

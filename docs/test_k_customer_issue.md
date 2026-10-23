@@ -19,8 +19,10 @@
   tools、采样参数、`user` 标识等）按原样保留在用例常量中。
 
 新增客户问题的流程：
-1. 在 `tests/test_k_customer_issue.py` 中以 `K{n}_` 前缀定义该问题的常量
-   （提示词、tools、tool_choice 等），内容与客户原始请求逐字段一致；
+1. 在 `tests/test_k_customer_issue.py` 对应测试方法**内部**以 `K{n}_` 前缀
+   定义该问题的常量（提示词、tools、tool_choice 等），内容与客户原始请求
+   逐字段一致——每个用例自包含，常量与内部辅助函数均定义在用例方法内，
+   不放模块顶部；
 2. 新增测试方法 `test_xxx`，按客户原始参数原样调用
    `api_client.chat_completion` / `chat_completion_stream`
    （特殊协议/参数形态按 K3/K4 先例手工构造 payload 直发）；
@@ -35,6 +37,9 @@
 | K2 | 同一请求循环执行5次返回信息异常 | 客户问题复现：同一 curl（logprobs+top_logprobs+n+thinking+stream+X-Cache-Buster）循环执行 5 次左右出现返回信息异常，原样复现并连续执行 5 次，验证每次响应与内容均正常 | P0 |
 | K3 | Anthropic 协议 prompt cache 未创建 | 客户问题复现：Anthropic 协议（/anthropic/v1/messages）请求的 cache_creation_tokens 一直为 0（未创建缓存），构造带 cache_control 断点的唯一长前缀连发两次，验证第 1 次创建、第 2 次命中 | P0 |
 | K4 | frequency_penalty=-2 不传 max_tokens 无返回 | 客户问题复现：fp=-2（合法极值）且不传 max_tokens 时退化重复导致无界生成、请求一直无返回；修复契约 fp<0 按 0 处理，输入保持 -2 连发 3 次（消息各异）、断言每次 fp=0 预期（预算内返回+自然结束+内容非空） | P0 |
+| K5 | thinking.type=disabled 后思考未关闭 | 客户问题复现：disabled 后 reasoning_tokens 仍>0、reasoning_content 照常输出，关思考相关功能全部失效；官方端点实测 disabled 应完全关闭思考（rt 为空、无思考内容、正文正常），输入保持 disabled+temperature=0.6 连发 3 次（消息各异），断言每次均符合官方实测预期 | P0 |
+| K6 | 关思考温度档未联动校验 | 官方契约（kimi-k3）：thinking 与 temperature 档位联动——disabled 仅允许 0.6（给 1 或 0 报 400 "only 0.6 is allowed for this model in non-thinking mode"）、enabled 仅允许 1（给 0.6 或 0 报 400 "only 1 is allowed for this model in thinking mode"）。对 6 个组合各发一次请求，断言合法组合 200+正文非空、非法组合 400+错误信息含官方文案 | P0 |
+| K7 | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃）。只按官方格式传参（无回退）：low→high→max 比对后 max→high→low 再比对（正逆两轮，medium 不参与对比）；最后 medium 顶层 200 放行、嵌套 thinking.effort=medium 预期 400；倒挂/持平不判失败，仅告警 | P0 |
 
 ## 运行方式
 
@@ -79,9 +84,9 @@ pytest tests/test_k_customer_issue.py -m p0 -v
    部分部署不实现该参数）
 
 **实现要点**：
-- `_collect_stream_tool_calls`：OpenAI 流式协议中 tool_calls 以增量片段下发
-  （按 index 分片，`function.arguments` 逐段追加），需按 index 聚合成完整调用
-  后才能做 JSON 合法性与必填项校验
+- `collect_stream_tool_calls`（用例内嵌套函数）：OpenAI 流式协议中
+  tool_calls 以增量片段下发（按 index 分片，`function.arguments` 逐段
+  追加），需按 index 聚合成完整调用后才能做 JSON 合法性与必填项校验
 - 客户原始 `temperature=0.1` 通过 `RAW_SAMPLING_PARAM_TESTS` 豁免保留，
   不被全局采样参数覆盖
 
@@ -218,7 +223,8 @@ fp<0 按出现次数**奖励**已出现 token，形成无饱和正反馈：循�
 3. 回答内容非空
 
 3 次全部正常结束才判定通过；任一次异常即失败，并报告**第几次**及该次
-消息（`_run_k4_request` 单次请求逻辑，失败归因到具体迭代）。相邻请求
+消息（用例内嵌套函数 `run_request` 承载单次请求逻辑，失败归因到具体
+迭代）。相邻请求
 间隔 3s（`K4_REQUEST_INTERVAL_SECONDS`，末次后不等待），总时长额外
 约 6s。
 
@@ -240,3 +246,180 @@ fp<0 按出现次数**奖励**已出现 token，形成无饱和正反馈：循�
   本用例编码的是平台契约；G 类 API 兼容性如需覆盖该语义差异另行评估
 - fp=-2 的退化重复具有模型依赖性（若 EOS 始终占优则不退化）——但 K 类
   对同一部署回归，客户已在其模型上复现，风险可接受
+
+### test_thinking_disabled_suppresses_reasoning (K5)
+
+**客户问题**：`thinking.type=disabled` 后 `reasoning_tokens` 仍=100/75、
+`reasoning_content` 照常输出——客户无法关闭思考，关思考相关功能（低延迟
+模式、关思考温度档）全部失效。
+
+**官方契约（以端点实测为准）**：官方 FAQ 与端点实际行为不符，以实测为准
+——`thinking.type=disabled` 后思考完全关闭：
+- `reasoning_tokens` 为空（0/缺失）
+- 无 `reasoning_content`（思考内容不输出）
+- 正文正常返回
+
+客户网关对 `disabled` 不响应（rt 仍>0），与官方实测不一致。用例即按
+官方实测预期断言。
+
+**请求构造**：
+- 仅 `model` / `messages` / `thinking={"type": "disabled"}` /
+  `temperature=0.6`（官方关思考档唯一合法温度，契约见 K6——disabled 下
+  给 1 或 0 会被 400 拒绝）/ `stream=false`，不传 `max_tokens`（手工构造
+  payload 直发，K3/K4 先例，保持客户原始参数面）
+- 连发 3 次（消息各异）+ 相邻间隔 3s（K4 模式，末次后不等待），
+  任一次不符合即失败并报告**第几次**及该次消息
+- 客户原始 prompt 未提供，选用常规开放问题
+
+**断言**（官方实测预期，每次请求独立断言）：
+1. 无思考内容——`reasoning_content` / `reasoning` 字段均为空
+2. `reasoning_tokens` 为空（0/缺失）——兼容 `usage.reasoning_tokens`
+   （Kimi/Zhipu 风格）与 `usage.completion_tokens_details.reasoning_tokens`
+   （OpenAI 风格）两种拼写
+3. 正文非空（官方实测正文正常返回）
+4. `finish_reason` 自然结束（`stop`/`eos`/`ended`，未传 max_tokens）
+
+**软观察**：响应未携带 usage 时告警（无法观测 reasoning_tokens，缺失视为
+"为空"——与官方实测"rt 为空"一致）。
+
+**实现要点**：
+- 与 K1 的 `thinking={"type": "enabled"}` 为同一参数面（客户网关的
+  thinking 对象）；与本框架 B2 类的 `enable_thinking` /
+  `chat_template_kwargs` 参数面不同——B2 在后端直连部署上通过不代表网关
+  此路径正确，故需独立复现
+- 进 smoke 集：单次数秒内返回（无 K4 的长预算风险），与 K1-K3 一致
+
+**注意事项**：
+- 修复方向应为网关将 `thinking.type=disabled` 落实到后端思考开关；
+  翻译层只实现 enabled 分支的不对称实现是常见根因（与 K1 的翻译层
+  遗漏可能同源）
+- 若后端仅支持其他关闭思考的参数面（如 `enable_thinking=false`），网关
+  应做翻译；客户按 thinking 对象关闭的用法不应失效
+
+### test_thinking_temperature_tier (K6)
+
+**背景**：客户问题中"关思考相关功能（低延迟模式、**关思考温度档**）全部
+失效"——K5 验证关思考本身，本用例验证温度档联动校验。
+
+**官方契约**（kimi-k3 官方说明，thinking 模式 × temperature 档位联动）：
+
+| thinking | temperature | 官方行为 |
+|---|---|---|
+| disabled | 0.6 | 合法：200 正常返回 |
+| disabled | 1 | 400 拒绝，报 `only 0.6 is allowed for this model in non-thinking mode` |
+| disabled | 0 | 400 拒绝，报 `only 0.6 is allowed for this model in non-thinking mode` |
+| enabled | 1 | 合法：200 正常返回 |
+| enabled | 0.6 | 400 拒绝，报 `only 1 is allowed for this model in thinking mode` |
+| enabled | 0 | 400 拒绝，报 `only 1 is allowed for this model in thinking mode` |
+
+**请求构造**：
+- 6 个场景复用同一提示词（`K6_USER_PROMPT`），仅 `thinking` 与
+  `temperature` 变化——被测参数是场景唯一变量
+- payload 仅 `model` / `messages` / `thinking` / `temperature` /
+  `stream=false`，不传 `max_tokens`（手工构造 payload 直发，K3-K5 先例）
+
+**断言**：
+1. 合法组合：HTTP 200 + `choices[0].message.content` 非空（enabled 场景
+   可能含 `reasoning_content`，属正常思考输出，**不在本用例断言范围**
+   ——关思考本身由 K5 验证，本用例专注温度档联动契约）
+2. 非法组合：HTTP 400 + 错误信息包含官方文案（**忽略大小写的子串匹配**，
+   对错误体 JSON 结构不敏感——官方文案可能嵌在 `error.message` 等不同
+   位置）
+
+**判定矩阵**：
+- 网关未实现联动校验（非法组合也 200）→ FAIL（客户症状：关思考温度档
+  失效）
+- 校验过严（合法组合也 400）→ FAIL（过度修复）
+- 400 但错误文案与官方不一致 → FAIL（对客户的错误提示偏离官方）
+- 六组合全部符合官方契约 → PASS
+
+**设计决策记录**：
+- **每场景单次请求**：与 K4/K5 的多次连发不同——参数合法性校验是
+  确定性行为（要么 400 要么不 400），不存在"时好时坏"的偶然性，无需
+  重复验证；K4/K5 的多次连发针对的是非确定性的生成行为
+- **错误文案采用子串匹配而非全等**：官方文案可能随版本微调前后缀，
+  核心语义（`only 0.6 is allowed` / `only 1 is allowed`）稳定；忽略
+  大小写避免大小写风格差异误报
+- **进 smoke 集**：4 次请求均为数秒级（2 次生成 + 2 次快速 400），无
+  K4 的长预算风险
+
+### test_thinking_effort_reasoning_length (K7)
+
+**背景**：kimi-k3 官方思考强度参数为顶层 `reasoning_effort`（官方文档
+use-reasoning-effort / kimi-k3-quickstart），K3 恒开思考；K2.x 的
+`thinking` 配置在 K3 已废弃（官方迁移指引：移除 thinking 改用
+reasoning_effort）。官方预期思考长度（reasoning_tokens）随档位递增。
+若档位倒挂，说明网关对思考强度的翻译/映射存在缺陷（如各档映射到
+同一后端参数）。
+
+**请求构造**：
+- **只按官方格式传参（无回退）**：顶层 `reasoning_effort`，不带
+  thinking 对象（官方迁移指引：K2.x thinking 配置在 K3 废弃）
+- **请求顺序（客户指定）**：升序轮 low → high → max 发送后比对
+  思考长度，降序轮 max → high → low 逆向重发后再比对——正逆两轮
+  排除请求顺序相关干扰（缓存/预热），两轮各自按 low < high < max
+  三档软对比（medium 不参与对比）
+- 最后依次验证：medium 顶层（合法档位，按官方预期 200 放行，
+  不参与对比）→ medium 嵌套 `thinking={"type": "enabled",
+  "effort": "medium"}` 预期 400——废弃的 K2.x thinking 配置下
+  medium 为非法档位（客户指定契约）
+- 各档请求内容与 `temperature=1` 完全相同（开思考档契约温度，
+  见 K6），相邻间隔 3s，不传 `max_tokens`（观察思考自然长度，
+  K4/K5 先例；手工构造 payload 直发）
+- 提示词选用需要逐步推理的问题（鸡兔同笼），使档位间思考长度差异
+  可观测
+
+**断言**（硬——请求基本健康，否则长度对比无意义）：
+1. 每次官方档请求（升序轮 3 + 降序轮 3 + medium 顶层 1）HTTP 200 +
+   正文非空 + `finish_reason` 自然结束（`stop`/`eos`/`ended`，
+   未传 max_tokens）
+2. 嵌套 thinking.effort=medium 预期 HTTP 400
+
+**对比**（软——**倒挂不判失败，仅告警**，按客户要求）：
+- 升序轮与降序轮各自独立比对 low < high < max（round 前缀区分
+  "升序轮/降序轮"）；low 与 high、high 与 max 的
+  `reasoning_tokens` 应严格递增；任一对倒挂/持平（低档 ≥ 高档）→
+  `test_logger` 警告 + `record_warning` 记入报告，用例**仍通过**
+- 任一轮对比三档均为 0 → 告警思考强度参数可能未生效或服务端未
+  上报思考 tokens，跳过该轮档位对比
+- `reasoning_tokens` 兼容 `usage.reasoning_tokens`（Kimi/Zhipu 风格）
+  与 `usage.completion_tokens_details.reasoning_tokens`（OpenAI 风格）
+  两种拼写（K5 先例）；单次响应缺 usage 时软告警（K5 先例）
+
+**判定矩阵**：
+- 任一官方档请求失败（非 200/空正文/非自然结束）→ FAIL（对比前提
+  被破坏）
+- 嵌套 thinking.effort=medium 未按预期 400 → FAIL（废弃配置下非法
+  档位校验缺失）
+- 两轮均递增（low < high < max）→ PASS（无警告）
+- 任一轮档位倒挂/持平 → **PASS + 警告**（行为质量偏离而非服务
+  故障，按约定不判失败，报告留痕供定位档位映射问题）
+
+**设计决策记录**：
+- **纯官方格式（无回退）**：按客户要求只按官方顶层 reasoning_effort
+  传参，不做 thinking.effort 回退——官方迁移指引明确"移除 K2.x
+  thinking 配置"，网关应支持官方参数面
+- **medium 档顶层 200 放行、嵌套 400**：按客户契约，顶层
+  reasoning_effort=medium 为合法档位（200 放行，但不参与思考长度
+  对比）；嵌套 thinking.effort=medium 在废弃的 K2.x 配置下为非法
+  档位，预期 400
+- **temperature=1 显式传递**：官方文档说明 K3 temperature 固定 1.0
+  （建议省略）；本网关按 K6 契约显式传 1（开思考档唯一合法温度），
+  且已加入采样豁免名单——若被 Jenkinsfile `--sampling-params` 全局
+  温度覆盖，各档请求会因非法温度被 400 拒绝，破坏档位对比前提
+- **正逆两轮请求顺序**：按客户指定顺序 low→high→max 比对后
+  max→high→low 再比对——逆向重发可排除请求顺序相关干扰（前缀
+  缓存命中/推理预热使后发请求思考变长等），两轮独立软对比，任一
+  轮倒挂均告警留痕
+- **倒挂为软判定**：档位倒挂属思考预算映射的行为质量偏离，服务
+   本身仍正常响应——按客户要求不判失败，`record_warning`（报告
+   可见）+ `test_logger` 警告（日志可见）双通道留痕
+- **不进 smoke 集**：max 档思考生成为长耗时请求（数十秒级），
+  避免拖慢冒烟套件（同 K4 理由）
+
+**注意事项**：
+- 修复方向应为网关完整支持官方顶层 `reasoning_effort` 参数
+  （含 medium 档放行）并对废弃 thinking 配置的非法档位做校验
+- 思考长度本身有随机性（temperature=1 采样），轻微倒挂可能偶发
+  ——警告定位用；若稳定倒挂则为档位映射缺陷（如各档映射到同一
+  后端思考预算参数）

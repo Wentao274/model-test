@@ -11,6 +11,10 @@ K. 客户问题复现测试
 --model-name，经 conftest 的 api_client fixture 注入；curl 中的其余请求字段
 （messages、tools、采样参数、user 等）按原样保留。
 
+用例自包含约定：每个用例的常量（提示词、tools、参数等）与内部辅助函数
+均定义在用例方法内部，不集中放在模块顶部——单个用例的全部信息可在
+一处读完，用例之间互不干扰。
+
 测试点：
 - K1: Pydantic $defs/$ref Schema 工具调用（流式+思考+强制tool_choice） [P0]
   客户问题：glm-5.3 通过 /v1/chat/completions 发起流式请求报错【$$不兼容】。
@@ -38,6 +42,42 @@ K. 客户问题复现测试
   相邻间隔 3s——仅一次调用可能无法严谨验证），断言每次都按 fp=0 预期：
   预算时间内返回 + finish_reason 自然结束 + 内容非空，任一次失败报告
   第几次（不进 smoke 集）。
+- K5: thinking.type=disabled 后思考未关闭 [P0]
+  客户问题：thinking.type=disabled 后 reasoning_tokens 仍=100/75、
+  reasoning_content 照常输出（官方端点实测应 rt 为空、无思考内容、正文
+  正常返回；官方 FAQ 与实测不符，以实测为准），关思考相关功能（低延迟
+  模式、关思考温度档）全部失效。本用例输入保持客户原值 disabled、显式
+  temperature=0.6（官方关思考档唯一合法温度，契约见 K6）、不传
+  max_tokens，连发 3 次（消息各异、相邻间隔 3s），断言每次均按官方实测
+  预期：无思考内容（reasoning_content/reasoning）+ reasoning_tokens
+  为空（0/缺失，兼容两种字段拼写）+ 正文正常返回且自然结束，任一次
+  失败报告第几次。
+- K6: 关思考温度档未联动校验 [P0]
+  官方契约（kimi-k3 官方说明）：thinking 模式与 temperature 档位联动
+  ——disabled 下仅允许 0.6（给 1 或 0 会 400 并报 "only 0.6 is allowed
+  for this model in non-thinking mode"）、enabled 下仅允许 1（给 0.6
+  或 0 会 400 并报 "only 1 is allowed for this model in thinking
+  mode"）。客户影响：关思考相关功能（关思考温度档）失效。本用例对
+  6 个组合各发一次请求（参数校验为确定性行为，无需多次连发），断言
+  合法组合 200+正文非空、非法组合 400+错误信息含官方文案（忽略大小写
+  子串匹配）。
+- K7: 思考强度档位思考长度倒挂（官方 reasoning_effort） [P0]
+  官方契约（kimi-k3 官方文档 use-reasoning-effort/kimi-k3-quickstart）：
+  思考强度为顶层 reasoning_effort 参数（K2.x 的 thinking 配置在 K3
+  已废弃，官方迁移指引为移除 thinking 改用 reasoning_effort），K3
+  恒开思考；官方预期思考长度（reasoning_tokens）随档位递增。本用例
+  只按官方格式传参（顶层 reasoning_effort，无回退），请求顺序（客户
+  指定）：low → high → max 后比对思考长度，再按 max → high → low
+  逆向重发并再次比对（正逆两轮排除请求顺序相关干扰，均按 low <
+  high < max 三档软对比，medium 不参与对比）；最后依次验证 medium
+  顶层（按官方 200 放行）与 medium 嵌套（thinking.effort=medium
+  预期 400——废弃的 K2.x thinking 配置下 medium 为非法档位，客户
+  指定契约）。请求内容与温度完全相同（temperature=1，开思考档契约
+  温度，见 K6），相邻间隔 3s。硬断言：每次官方档请求（升序轮+降序轮+
+  medium 顶层）200+正文非空+自然结束；嵌套 thinking.effort=medium
+  400。档位倒挂/持平不判失败，仅告警记入报告（行为质量偏离而非
+  服务故障）（不进 smoke 集：max 档思考生成为长耗时请求，同 K4
+  理由）。
 """
 
 import json
@@ -52,249 +92,15 @@ from base.api_client import ModelAPIClient
 from base.logger import TestLogger
 
 
-# K1: 客户原始请求的 system 提示词（与 curl 完全一致）
-K1_SYSTEM_PROMPT = (
-    "你是通话内容分析师。请根据通话内容完成指定维度的结构化提取。只提取客观事实。"
-)
-
-# K1: 客户原始请求的 user 消息（与 curl 完全一致）
-K1_USER_PROMPT = (
-    "请从以下通话中提取产品与工作分类信息。\n"
-    "核心工作类型：产品售卖|大搜解搁|充值续费|账户优化|流程处理|客情维护|"
-    "活动通知|操作指引\n"
-    "\n"
-    "## 通话内容\n"
-    "\n"
-    "坐席：'喂你好百度，'\n"
-    "客户：'您说，'\n"
-    "坐席：'嗯是这样的我们那个vip神经元这个账户的话是已经分到我这边了，"
-    "然后跟您说一下，后续的账户负责是通过我这边给您去做维护，'"
-    "'然后后续的话我让这个咱们的开户销售拉个群到时候我们有什么问题"
-    "直接在群里沟通好吧，'\n"
-    "客户：'嗯可以啊，''就是我没用过咱们这平台有培训吗？'\n"
-    "坐席：'培训的话我这边可以教您一些比较基础的，然后详细的话它百度这边"
-    "好像是没有可以外发的，到时候我看一下有什么渠道让您去学习一下看一下，'\n"
-    "客户：'嗯，'\n"
-    "坐席：'嗯好的好的，拜拜拜，'\n"
-    "客户：'四分，'"
-)
-
-# K1: 客户原始请求的 tools 定义 —— Pydantic v2 自动生成的 JSON Schema，
-# parameters 中含 $defs 定义与 $ref 引用（【$$不兼容】问题的核心对象）
-K1_TOOLS_SUBMIT_D2_PRODUCT = [
-    {
-        "type": "function",
-        "function": {
-            "name": "submit_d2_product",
-            "description": "提交产品与工作分类分析结果",
-            "parameters": {
-                "$defs": {
-                    "ProductDetail": {
-                        "additionalProperties": True,
-                        "properties": {
-                            "customer_response": {
-                                "default": "",
-                                "title": "Customer Response",
-                                "type": "string",
-                            },
-                            "depth": {
-                                "default": "",
-                                "title": "Depth",
-                                "type": "string",
-                            },
-                            "evidence": {
-                                "default": "",
-                                "title": "Evidence",
-                                "type": "string",
-                            },
-                            "mention_type": {
-                                "default": "",
-                                "title": "Mention Type",
-                                "type": "string",
-                            },
-                            "outcome": {
-                                "default": "",
-                                "title": "Outcome",
-                                "type": "string",
-                            },
-                            "product": {
-                                "default": "",
-                                "title": "Product",
-                                "type": "string",
-                            },
-                        },
-                        "title": "ProductDetail",
-                        "type": "object",
-                    },
-                    "SaleSignals": {
-                        "additionalProperties": True,
-                        "properties": {
-                            "has_signal": {
-                                "default": False,
-                                "title": "Has Signal",
-                                "type": "boolean",
-                            },
-                            "signal_strength": {
-                                "anyOf": [{"type": "string"}, {"type": "null"}],
-                                "default": None,
-                                "title": "Signal Strength",
-                            },
-                            "signal_type": {
-                                "anyOf": [{"type": "string"}, {"type": "null"}],
-                                "default": None,
-                                "title": "Signal Type",
-                            },
-                        },
-                        "title": "SaleSignals",
-                        "type": "object",
-                    },
-                },
-                "properties": {
-                    "biz_scenario": {
-                        "default": "",
-                        "title": "Biz Scenario",
-                        "type": "string",
-                    },
-                    "core_work_type": {
-                        "title": "Core Work Type",
-                        "type": "string",
-                    },
-                    "product_details": {
-                        "items": {"$ref": "#/$defs/ProductDetail"},
-                        "title": "Product Details",
-                        "type": "array",
-                    },
-                    "product_tags": {
-                        "items": {"type": "string"},
-                        "title": "Product Tags",
-                        "type": "array",
-                    },
-                    "sale_signals": {"$ref": "#/$defs/SaleSignals"},
-                },
-                "required": ["core_work_type"],
-                "title": "ProductSchema",
-                "type": "object",
-            },
-        },
-    }
-]
-
-# K1: 客户原始请求的 tool_choice —— 强制调用 submit_d2_product
-K1_TOOL_CHOICE = {"type": "function", "function": {"name": "submit_d2_product"}}
-
-# K2: 客户原始请求的 system 提示词（与 curl 完全一致）
-K2_SYSTEM_PROMPT = "无论什么问题，你每次回答都必须以“很高兴为您服务”开头"
-
-# K2: 客户原始请求的 user 消息（与 curl 完全一致）
-K2_USER_PROMPT = "介绍一下，RPG游戏，40字🤔"
-
-# K2: 客户原始请求的 user 字段——终端用户标识（与 curl 完全一致）
-K2_USER_ID = "a74685ef7268c396f0b842750bd7ab3252b37e7e3619ab33126946ee63d867e0"
-
-# K2: 循环执行次数（客户反馈"请求5次左右返回信息异常"）
-K2_REPEAT_TIMES = 5
-
-# K2: 相邻两次请求的间隔（秒）——第 1~4 次完成后间隔 3s 再发起下一次
-# （末次后不等待），模拟客户循环执行 curl 的节奏
-K2_REQUEST_INTERVAL_SECONDS = 3
-
-# K3: Anthropic 协议版本头。2023-06-01 为长期 GA 版本（2023.6 起两年多内
-# 唯一主流版本，第三方兼容网关的事实标准）；官方 SDK v2.1.0+ 已升到
-# 2026-10-21，但被测对象为客户的 Anthropic 兼容网关（非官方 API），新版本
-# 日期更可能被网关版本校验拒绝，故沿用兼容面最广的 2023-06-01。
-# Anthropic 版本头用于钉住协议行为，老版本不会过期失效；K3 依赖的
-# prompt caching（cache_control）在 2023-06-01 上即为 GA。
-# 若目标网关升级要求新版本，改此常量即可。
-K3_ANTHROPIC_VERSION = "2023-06-01"
-
-# K3: 输出 token 上限——缓存断言只关心 input 侧 usage，输出无需过长
-K3_MAX_TOKENS = 512
-
-# K3: 可缓存前缀的填充文本。客户问题的 prompt_tokens=111283（超长上下文
-# 触发 prompt cache），按中文 ~1.3-1.7 字符/token 保守折算，需约 19 万字符
-# 才能保证达到 11 万 tokens 量级（同时远超 Anthropic 协议最小可缓存长度
-# 1024 tokens）。规模对齐客户场景的原因：若缺陷为规模相关（仅超长前缀的
-# cache_control 不落实），过短的测试前缀将无法复现。
-K3_PREFIX_FILLER_UNIT = (
-    "本知识库涵盖产品规格、接口说明、计费策略、常见问题与处理流程，"
-    "供客服助手检索引用。"
-)
-K3_PREFIX_TARGET_CHARS = 190000
-K3_PREFIX_FILLER = K3_PREFIX_FILLER_UNIT * (
-    K3_PREFIX_TARGET_CHARS // len(K3_PREFIX_FILLER_UNIT) + 1
-)
-
-# K3: 超长前缀（~11 万 tokens）的 prefill 耗时显著，参考 D 类用例的
-# 超时保护模式，保证单次请求超时下限
-K3_MIN_REQUEST_TIMEOUT = 1200
-
-# K3: 用户消息（缓存断言不依赖回答内容）
-K3_USER_MESSAGE = "请回复：收到。"
-
-# K4: 客户原始请求的 frequency_penalty 取值——OpenAI 规范允许 [-2, 2]，
-# -2 为合法极值。fp<0 按出现次数奖励已出现 token（正反馈），是"放大重复"
-# 的文档化数学行为；客户问题出在不传 max_tokens 时无界生成无法终止。
-K4_FREQUENCY_PENALTY = -2
-
-# K4: 3 个不同的用户提示词（客户原始 prompt 未提供）。连发 3 次、消息
-# 各异：单次调用可能无法严谨验证——钳制若未生效，单次请求也可能侥幸
-# 自然结束；不同消息降低偶然性，未钳制的退化重复更难在不同 prompt 下
-# 全部侥幸通过
-K4_USER_PROMPTS = (
-    "请用一段话介绍大语言模型的工作原理。",
-    "请简要说明云计算能给企业带来的核心价值。",
-    "请列举两种常见的排序算法，并各用一句话说明其特点。",
-)
-
-# K4: 相邻两次请求的间隔（秒）——第 1、2 次完成后间隔 3s 再发起下一次
-# （末次后不等待），3 次总计额外约 6s
-K4_REQUEST_INTERVAL_SECONDS = 3
-
-# K4: 单次请求的响应时间预算（秒），按请求独立生效（3 次共享同一
-# 预算客户端，timeout 在每次请求上生效）。平台修复契约为 fp<0 按 0
-# 处理，修复后每次请求与普通请求无异、数秒内即应返回；未修复时退化
-# 重复会一直生成到上下文上限，远超任何网关/客户端超时。预算即挂起
-# 检测护栏：超预算无响应 = 客户问题复现。取 120s：远大于正常请求耗时，
-# 又控制在单用例可承受范围（3 次最坏 360s）。
-K4_RESPONSE_BUDGET_SECONDS = 120
-
-# K4: 修复契约下的自然结束原因——未传 max_tokens，正常生成应自然停止；
-# length 表示生成跑满输出上限（=剩余上下文），即退化重复未被钳制的特征
-K4_NATURAL_FINISH_REASONS = ("stop", "eos", "ended")
-
-
 class TestCustomerIssue(BaseTest, StreamingTestMixin):
-    """客户问题复现测试类"""
+    """客户问题复现测试类
+
+    每个用例自包含：该用例的常量与内部辅助函数均定义在用例方法内部
+    （见模块 docstring 的"用例自包含约定"）。
+    """
 
     def get_test_category(self) -> str:
         return "K. 客户问题复现"
-
-    @staticmethod
-    def _collect_stream_tool_calls(result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """从流式 chunks 中聚合 tool_calls 增量片段
-
-        OpenAI 流式协议中 tool_calls 以增量片段下发（按 index 分片，
-        function.arguments 逐段追加），需按 index 聚合才是完整调用。
-        """
-        aggregated: Dict[int, Dict[str, Any]] = {}
-        for chunk in result.get("chunks", []):
-            choices = chunk.get("choices", [])
-            if not choices:
-                continue
-            delta = choices[0].get("delta", {}) or {}
-            for tc in delta.get("tool_calls") or []:
-                idx = tc.get("index", 0)
-                entry = aggregated.setdefault(
-                    idx, {"id": None, "name": "", "arguments": ""}
-                )
-                if tc.get("id"):
-                    entry["id"] = tc["id"]
-                fn = tc.get("function") or {}
-                if fn.get("name"):
-                    entry["name"] += fn["name"]
-                if fn.get("arguments"):
-                    entry["arguments"] += fn["arguments"]
-        return [aggregated[k] for k in sorted(aggregated)]
 
     @pytest.mark.k_customer_issue
     @pytest.mark.p0
@@ -313,6 +119,165 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         - 工具参数为合法 JSON 且满足 schema 必填项（core_work_type）
         - stream_options.include_usage 的 usage 返回（缺失仅告警）
         """
+        # K1: 客户原始请求的 system 提示词（与 curl 完全一致）
+        K1_SYSTEM_PROMPT = (
+            "你是通话内容分析师。请根据通话内容完成指定维度的结构化提取。只提取客观事实。"
+        )
+
+        # K1: 客户原始请求的 user 消息（与 curl 完全一致）
+        K1_USER_PROMPT = (
+            "请从以下通话中提取产品与工作分类信息。\n"
+            "核心工作类型：产品售卖|大搜解搁|充值续费|账户优化|流程处理|客情维护|"
+            "活动通知|操作指引\n"
+            "\n"
+            "## 通话内容\n"
+            "\n"
+            "坐席：'喂你好百度，'\n"
+            "客户：'您说，'\n"
+            "坐席：'嗯是这样的我们那个vip神经元这个账户的话是已经分到我这边了，"
+            "然后跟您说一下，后续的账户负责是通过我这边给您去做维护，'"
+            "'然后后续的话我让这个咱们的开户销售拉个群到时候我们有什么问题"
+            "直接在群里沟通好吧，'\n"
+            "客户：'嗯可以啊，''就是我没用过咱们这平台有培训吗？'\n"
+            "坐席：'培训的话我这边可以教您一些比较基础的，然后详细的话它百度这边"
+            "好像是没有可以外发的，到时候我看一下有什么渠道让您去学习一下看一下，'\n"
+            "客户：'嗯，'\n"
+            "坐席：'嗯好的好的，拜拜拜，'\n"
+            "客户：'四分，'"
+        )
+
+        # K1: 客户原始请求的 tools 定义 —— Pydantic v2 自动生成的 JSON
+        # Schema，parameters 中含 $defs 定义与 $ref 引用（【$$不兼容】问题
+        # 的核心对象）
+        K1_TOOLS_SUBMIT_D2_PRODUCT = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "submit_d2_product",
+                    "description": "提交产品与工作分类分析结果",
+                    "parameters": {
+                        "$defs": {
+                            "ProductDetail": {
+                                "additionalProperties": True,
+                                "properties": {
+                                    "customer_response": {
+                                        "default": "",
+                                        "title": "Customer Response",
+                                        "type": "string",
+                                    },
+                                    "depth": {
+                                        "default": "",
+                                        "title": "Depth",
+                                        "type": "string",
+                                    },
+                                    "evidence": {
+                                        "default": "",
+                                        "title": "Evidence",
+                                        "type": "string",
+                                    },
+                                    "mention_type": {
+                                        "default": "",
+                                        "title": "Mention Type",
+                                        "type": "string",
+                                    },
+                                    "outcome": {
+                                        "default": "",
+                                        "title": "Outcome",
+                                        "type": "string",
+                                    },
+                                    "product": {
+                                        "default": "",
+                                        "title": "Product",
+                                        "type": "string",
+                                    },
+                                },
+                                "title": "ProductDetail",
+                                "type": "object",
+                            },
+                            "SaleSignals": {
+                                "additionalProperties": True,
+                                "properties": {
+                                    "has_signal": {
+                                        "default": False,
+                                        "title": "Has Signal",
+                                        "type": "boolean",
+                                    },
+                                    "signal_strength": {
+                                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                                        "default": None,
+                                        "title": "Signal Strength",
+                                    },
+                                    "signal_type": {
+                                        "anyOf": [{"type": "string"}, {"type": "null"}],
+                                        "default": None,
+                                        "title": "Signal Type",
+                                    },
+                                },
+                                "title": "SaleSignals",
+                                "type": "object",
+                            },
+                        },
+                        "properties": {
+                            "biz_scenario": {
+                                "default": "",
+                                "title": "Biz Scenario",
+                                "type": "string",
+                            },
+                            "core_work_type": {
+                                "title": "Core Work Type",
+                                "type": "string",
+                            },
+                            "product_details": {
+                                "items": {"$ref": "#/$defs/ProductDetail"},
+                                "title": "Product Details",
+                                "type": "array",
+                            },
+                            "product_tags": {
+                                "items": {"type": "string"},
+                                "title": "Product Tags",
+                                "type": "array",
+                            },
+                            "sale_signals": {"$ref": "#/$defs/SaleSignals"},
+                        },
+                        "required": ["core_work_type"],
+                        "title": "ProductSchema",
+                        "type": "object",
+                    },
+                },
+            }
+        ]
+
+        # K1: 客户原始请求的 tool_choice —— 强制调用 submit_d2_product
+        K1_TOOL_CHOICE = {"type": "function", "function": {"name": "submit_d2_product"}}
+
+        def collect_stream_tool_calls(
+            result: Dict[str, Any],
+        ) -> List[Dict[str, Any]]:
+            """从流式 chunks 中聚合 tool_calls 增量片段
+
+            OpenAI 流式协议中 tool_calls 以增量片段下发（按 index 分片，
+            function.arguments 逐段追加），需按 index 聚合才是完整调用。
+            """
+            aggregated: Dict[int, Dict[str, Any]] = {}
+            for chunk in result.get("chunks", []):
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {}) or {}
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    entry = aggregated.setdefault(
+                        idx, {"id": None, "name": "", "arguments": ""}
+                    )
+                    if tc.get("id"):
+                        entry["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        entry["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        entry["arguments"] += fn["arguments"]
+            return [aggregated[k] for k in sorted(aggregated)]
+
         test_logger.info(
             "=== 测试开始: 客户问题 - Pydantic $defs/$ref Schema 工具调用 ==="
         )
@@ -347,7 +312,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             stream_options={"include_usage": True},
         )
         result = self.collect_stream_chunks(response_iter)
-        tool_calls = self._collect_stream_tool_calls(result)
+        tool_calls = collect_stream_tool_calls(result)
 
         self.log_full_response(
             test_logger,
@@ -445,6 +410,22 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         - 每次正式回答内容非空
         5 次全部正常才判定通过；任一次异常即失败，并报告第几次及异常详情。
         """
+        # K2: 客户原始请求的 system 提示词（与 curl 完全一致）
+        K2_SYSTEM_PROMPT = "无论什么问题，你每次回答都必须以“很高兴为您服务”开头"
+
+        # K2: 客户原始请求的 user 消息（与 curl 完全一致）
+        K2_USER_PROMPT = "介绍一下，RPG游戏，40字🤔"
+
+        # K2: 客户原始请求的 user 字段——终端用户标识（与 curl 完全一致）
+        K2_USER_ID = "a74685ef7268c396f0b842750bd7ab3252b37e7e3619ab33126946ee63d867e0"
+
+        # K2: 循环执行次数（客户反馈"请求5次左右返回信息异常"）
+        K2_REPEAT_TIMES = 5
+
+        # K2: 相邻两次请求的间隔（秒）——第 1~4 次完成后间隔 3s 再发起下一次
+        # （末次后不等待），模拟客户循环执行 curl 的节奏
+        K2_REQUEST_INTERVAL_SECONDS = 3
+
         test_logger.info(
             "=== 测试开始: 客户问题 - 同一请求循环执行 %d 次返回信息异常 ==="
             % K2_REPEAT_TIMES
@@ -565,78 +546,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "响应与内容均正常"
         )
 
-    @staticmethod
-    def _anthropic_stream_request(
-        api_client: ModelAPIClient,
-        payload: Dict[str, Any],
-        test_logger,
-        label: str,
-    ) -> Dict[str, Any]:
-        """通过 Anthropic 协议发送流式请求并解析 SSE，返回合并后的 usage
-
-        端点为 {base_url}/anthropic/v1/messages（与客户网关布局一致），
-        鉴权使用 x-api-key 头 + anthropic-version 协议头。
-        usage 提取自 message_start（message.usage）与 message_delta（usage），
-        后者覆盖前者（累计值）。
-        """
-        url = f"{api_client.base_url}/anthropic/v1/messages"
-        headers = {"anthropic-version": K3_ANTHROPIC_VERSION}
-        if api_client.api_key:
-            headers["x-api-key"] = api_client.api_key
-        try:
-            response = api_client.session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=api_client.timeout,
-                stream=True,
-            )
-        except Exception as e:
-            pytest.fail(f"{label} 发送失败（{url}）: {e}")
-
-        if response.status_code != 200:
-            pytest.fail(
-                f"{label} 请求失败 HTTP {response.status_code}: "
-                f"{response.text[:500]}"
-            )
-
-        usage: Dict[str, Any] = {}
-        events = 0
-        for line in response.iter_lines():
-            if not line:
-                continue
-            line = line.decode("utf-8")
-            if not line.startswith("data: "):
-                continue
-            data = line[6:]
-            if data == "[DONE]":
-                break
-            try:
-                event = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            events += 1
-            evt_usage = None
-            if event.get("type") == "message_start":
-                evt_usage = (event.get("message") or {}).get("usage")
-            elif event.get("type") == "message_delta":
-                evt_usage = event.get("usage")
-            if evt_usage:
-                usage.update(evt_usage)
-        if events == 0:
-            pytest.fail(f"{label} 未返回任何 SSE 事件（{url}）")
-        test_logger.info(f"{label} usage: {usage}")
-        return usage
-
-    @staticmethod
-    def _cache_usage_field(usage: Dict[str, Any], *names: str) -> int:
-        """从 usage 中取缓存计数值，兼容协议字段名与网关内部字段名两种拼写"""
-        for name in names:
-            value = usage.get(name)
-            if isinstance(value, (int, float)) and value > 0:
-                return int(value)
-        return 0
-
     @pytest.mark.k_customer_issue
     @pytest.mark.p0
     @pytest.mark.smoke
@@ -656,6 +565,107 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         字段名兼容 Anthropic 协议（cache_creation_input_tokens）与客户日志
         网关内部名（cache_creation_tokens）两种拼写。
         """
+        # K3: Anthropic 协议版本头。2023-06-01 为长期 GA 版本（2023.6 起两年
+        # 多内唯一主流版本，第三方兼容网关的事实标准）；官方 SDK v2.1.0+ 已
+        # 升到 2026-10-21，但被测对象为客户的 Anthropic 兼容网关（非官方
+        # API），新版本日期更可能被网关版本校验拒绝，故沿用兼容面最广的
+        # 2023-06-01。Anthropic 版本头用于钉住协议行为，老版本不会过期失效；
+        # K3 依赖的 prompt caching（cache_control）在 2023-06-01 上即为 GA。
+        # 若目标网关升级要求新版本，改此常量即可。
+        K3_ANTHROPIC_VERSION = "2023-06-01"
+
+        # K3: 输出 token 上限——缓存断言只关心 input 侧 usage，输出无需过长
+        K3_MAX_TOKENS = 512
+
+        # K3: 可缓存前缀的填充文本。客户问题的 prompt_tokens=111283（超长
+        # 上下文触发 prompt cache），按中文 ~1.3-1.7 字符/token 保守折算，
+        # 需约 19 万字符才能保证达到 11 万 tokens 量级（同时远超 Anthropic
+        # 协议最小可缓存长度 1024 tokens）。规模对齐客户场景的原因：若缺陷
+        # 为规模相关（仅超长前缀的 cache_control 不落实），过短的测试前缀
+        # 将无法复现。
+        K3_PREFIX_FILLER_UNIT = (
+            "本知识库涵盖产品规格、接口说明、计费策略、常见问题与处理流程，"
+            "供客服助手检索引用。"
+        )
+        K3_PREFIX_TARGET_CHARS = 190000
+        K3_PREFIX_FILLER = K3_PREFIX_FILLER_UNIT * (
+            K3_PREFIX_TARGET_CHARS // len(K3_PREFIX_FILLER_UNIT) + 1
+        )
+
+        # K3: 超长前缀（~11 万 tokens）的 prefill 耗时显著，参考 D 类用例的
+        # 超时保护模式，保证单次请求超时下限
+        K3_MIN_REQUEST_TIMEOUT = 1200
+
+        # K3: 用户消息（缓存断言不依赖回答内容）
+        K3_USER_MESSAGE = "请回复：收到。"
+
+        def anthropic_stream_request(
+            payload: Dict[str, Any], label: str
+        ) -> Dict[str, Any]:
+            """通过 Anthropic 协议发送流式请求并解析 SSE，返回合并后的 usage
+
+            端点为 {base_url}/anthropic/v1/messages（与客户网关布局一致），
+            鉴权使用 x-api-key 头 + anthropic-version 协议头。
+            usage 提取自 message_start（message.usage）与 message_delta
+            （usage），后者覆盖前者（累计值）。
+            """
+            url = f"{api_client.base_url}/anthropic/v1/messages"
+            headers = {"anthropic-version": K3_ANTHROPIC_VERSION}
+            if api_client.api_key:
+                headers["x-api-key"] = api_client.api_key
+            try:
+                response = api_client.session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=api_client.timeout,
+                    stream=True,
+                )
+            except Exception as e:
+                pytest.fail(f"{label} 发送失败（{url}）: {e}")
+
+            if response.status_code != 200:
+                pytest.fail(
+                    f"{label} 请求失败 HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+
+            usage: Dict[str, Any] = {}
+            events = 0
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                events += 1
+                evt_usage = None
+                if event.get("type") == "message_start":
+                    evt_usage = (event.get("message") or {}).get("usage")
+                elif event.get("type") == "message_delta":
+                    evt_usage = event.get("usage")
+                if evt_usage:
+                    usage.update(evt_usage)
+            if events == 0:
+                pytest.fail(f"{label} 未返回任何 SSE 事件（{url}）")
+            test_logger.info(f"{label} usage: {usage}")
+            return usage
+
+        def cache_usage_field(usage: Dict[str, Any], *names: str) -> int:
+            """从 usage 中取缓存计数值，兼容协议字段名与网关内部字段名两种拼写"""
+            for name in names:
+                value = usage.get(name)
+                if isinstance(value, (int, float)) and value > 0:
+                    return int(value)
+            return 0
+
         test_logger.info(
             "=== 测试开始: 客户问题 - Anthropic 协议 prompt cache 未创建 ==="
         )
@@ -669,111 +679,98 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         original_timeout = api_client.timeout
         api_client.timeout = max(original_timeout, K3_MIN_REQUEST_TIMEOUT)
         try:
-            self._run_anthropic_cache_verification(
-                api_client, prefix_text, run_id, test_logger
+            payload = {
+                "model": api_client.model_name,
+                "max_tokens": K3_MAX_TOKENS,
+                "system": [
+                    {
+                        "type": "text",
+                        "text": prefix_text,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                "messages": [{"role": "user", "content": K3_USER_MESSAGE}],
+                "stream": True,
+            }
+
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"[可缓存长前缀 {len(prefix_text)} 字符，批次 {run_id}]"
+                        ),
+                    },
+                    {"role": "user", "content": K3_USER_MESSAGE},
+                ],
+                {
+                    "protocol": "anthropic (/anthropic/v1/messages)",
+                    "anthropic-version": K3_ANTHROPIC_VERSION,
+                    "max_tokens": K3_MAX_TOKENS,
+                    "stream": True,
+                    "cache_control": "ephemeral（system 前缀断点）",
+                },
+            )
+
+            # 第 1 次请求：唯一新前缀，期望触发缓存创建
+            usage1 = anthropic_stream_request(payload, "第 1 次请求（唯一前缀）")
+            creation1 = cache_usage_field(
+                usage1, "cache_creation_input_tokens", "cache_creation_tokens"
+            )
+            read1 = cache_usage_field(
+                usage1, "cache_read_input_tokens", "cache_read_tokens"
+            )
+            input1 = usage1.get("input_tokens", 0)
+            test_logger.info(
+                f"第 1 次请求（唯一前缀）: input_tokens={input1}, "
+                f"cache_creation={creation1}, cache_read={read1}"
+            )
+            if input1 and input1 < 1024:
+                test_logger.warning(
+                    f"input_tokens={input1} 低于 Anthropic 协议最小可缓存长度"
+                    "（1024 tokens），cache_creation 为 0 可能是前缀过短所致，"
+                    "请加大 K3_PREFIX_TARGET_CHARS"
+                )
+            elif input1 and input1 < 100000:
+                test_logger.info(
+                    f"input_tokens={input1} 低于客户场景规模（111283），"
+                    "如疑似规模相关问题请加大 K3_PREFIX_TARGET_CHARS"
+                )
+
+            # 第 2 次请求：相同前缀，期望命中缓存
+            usage2 = anthropic_stream_request(payload, "第 2 次请求（相同前缀）")
+            creation2 = cache_usage_field(
+                usage2, "cache_creation_input_tokens", "cache_creation_tokens"
+            )
+            read2 = cache_usage_field(
+                usage2, "cache_read_input_tokens", "cache_read_tokens"
+            )
+            test_logger.info(
+                f"第 2 次请求（相同前缀）: cache_creation={creation2}, "
+                f"cache_read={read2}"
+            )
+
+            # 核心断言 1：携带 cache_control 断点的新前缀必须创建缓存
+            # （客户问题：cache_creation_tokens 一直为 0，未创建缓存）
+            assert creation1 > 0, (
+                f"客户问题复现失败：携带 cache_control 断点的新前缀请求 "
+                f"cache_creation_tokens={creation1}（一直为 0，未创建缓存）。"
+                f"input_tokens={input1}, usage={usage1}"
+            )
+
+            # 核心断言 2：相同前缀的第 2 次请求必须命中缓存
+            assert read2 > 0, (
+                f"相同前缀第 2 次请求未命中缓存: cache_read_tokens={read2}"
+                f"（第 1 次已创建 {creation1}）, usage={usage2}"
+            )
+
+            test_logger.info(
+                f"客户问题复现通过: 第 1 次创建 {creation1} tokens, "
+                f"第 2 次命中 {read2} tokens"
             )
         finally:
             api_client.timeout = original_timeout
-
-    def _run_anthropic_cache_verification(
-        self, api_client: ModelAPIClient, prefix_text: str, run_id: str, test_logger
-    ):
-        """K3 核心逻辑：带 cache_control 断点的唯一长前缀连发两次验证缓存创建/命中"""
-
-        payload = {
-            "model": api_client.model_name,
-            "max_tokens": K3_MAX_TOKENS,
-            "system": [
-                {
-                    "type": "text",
-                    "text": prefix_text,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            "messages": [{"role": "user", "content": K3_USER_MESSAGE}],
-            "stream": True,
-        }
-
-        TestLogger.log_request(
-            test_logger,
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        f"[可缓存长前缀 {len(prefix_text)} 字符，批次 {run_id}]"
-                    ),
-                },
-                {"role": "user", "content": K3_USER_MESSAGE},
-            ],
-            {
-                "protocol": "anthropic (/anthropic/v1/messages)",
-                "anthropic-version": K3_ANTHROPIC_VERSION,
-                "max_tokens": K3_MAX_TOKENS,
-                "stream": True,
-                "cache_control": "ephemeral（system 前缀断点）",
-            },
-        )
-
-        # 第 1 次请求：唯一新前缀，期望触发缓存创建
-        usage1 = self._anthropic_stream_request(
-            api_client, payload, test_logger, "第 1 次请求（唯一前缀）"
-        )
-        creation1 = self._cache_usage_field(
-            usage1, "cache_creation_input_tokens", "cache_creation_tokens"
-        )
-        read1 = self._cache_usage_field(
-            usage1, "cache_read_input_tokens", "cache_read_tokens"
-        )
-        input1 = usage1.get("input_tokens", 0)
-        test_logger.info(
-            f"第 1 次请求（唯一前缀）: input_tokens={input1}, "
-            f"cache_creation={creation1}, cache_read={read1}"
-        )
-        if input1 and input1 < 1024:
-            test_logger.warning(
-                f"input_tokens={input1} 低于 Anthropic 协议最小可缓存长度"
-                "（1024 tokens），cache_creation 为 0 可能是前缀过短所致，"
-                "请加大 K3_PREFIX_TARGET_CHARS"
-            )
-        elif input1 and input1 < 100000:
-            test_logger.info(
-                f"input_tokens={input1} 低于客户场景规模（111283），"
-                "如疑似规模相关问题请加大 K3_PREFIX_TARGET_CHARS"
-            )
-
-        # 第 2 次请求：相同前缀，期望命中缓存
-        usage2 = self._anthropic_stream_request(
-            api_client, payload, test_logger, "第 2 次请求（相同前缀）"
-        )
-        creation2 = self._cache_usage_field(
-            usage2, "cache_creation_input_tokens", "cache_creation_tokens"
-        )
-        read2 = self._cache_usage_field(
-            usage2, "cache_read_input_tokens", "cache_read_tokens"
-        )
-        test_logger.info(
-            f"第 2 次请求（相同前缀）: cache_creation={creation2}, "
-            f"cache_read={read2}"
-        )
-
-        # 核心断言 1：携带 cache_control 断点的新前缀必须创建缓存
-        # （客户问题：cache_creation_tokens 一直为 0，未创建缓存）
-        assert creation1 > 0, (
-            f"客户问题复现失败：携带 cache_control 断点的新前缀请求 "
-            f"cache_creation_tokens={creation1}（一直为 0，未创建缓存）。"
-            f"input_tokens={input1}, usage={usage1}"
-        )
-
-        # 核心断言 2：相同前缀的第 2 次请求必须命中缓存
-        assert read2 > 0, (
-            f"相同前缀第 2 次请求未命中缓存: cache_read_tokens={read2}"
-            f"（第 1 次已创建 {creation1}）, usage={usage2}"
-        )
-
-        test_logger.info(
-            f"客户问题复现通过: 第 1 次创建 {creation1} tokens, "
-            f"第 2 次命中 {read2} tokens"
-        )
 
     @pytest.mark.k_customer_issue
     @pytest.mark.p0
@@ -799,6 +796,39 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         3×K4_RESPONSE_BUDGET_SECONDS，避免拖慢冒烟套件
         （决策记录见 docs/test_k_customer_issue.md）。
         """
+        # K4: 客户原始请求的 frequency_penalty 取值——OpenAI 规范允许
+        # [-2, 2]，-2 为合法极值。fp<0 按出现次数奖励已出现 token（正
+        # 反馈），是"放大重复"的文档化数学行为；客户问题出在不传
+        # max_tokens 时无界生成无法终止。
+        K4_FREQUENCY_PENALTY = -2
+
+        # K4: 3 个不同的用户提示词（客户原始 prompt 未提供）。连发 3 次、
+        # 消息各异：单次调用可能无法严谨验证——钳制若未生效，单次请求
+        # 也可能侥幸自然结束；不同消息降低偶然性，未钳制的退化重复更
+        # 难在不同 prompt 下全部侥幸通过
+        K4_USER_PROMPTS = (
+            "请用一段话介绍大语言模型的工作原理。",
+            "请简要说明云计算能给企业带来的核心价值。",
+            "请列举两种常见的排序算法，并各用一句话说明其特点。",
+        )
+
+        # K4: 相邻两次请求的间隔（秒）——第 1、2 次完成后间隔 3s 再发起
+        # 下一次（末次后不等待），3 次总计额外约 6s
+        K4_REQUEST_INTERVAL_SECONDS = 3
+
+        # K4: 单次请求的响应时间预算（秒），按请求独立生效（3 次共享同一
+        # 预算客户端，timeout 在每次请求上生效）。平台修复契约为 fp<0 按
+        # 0 处理，修复后每次请求与普通请求无异、数秒内即应返回；未修复
+        # 时退化重复会一直生成到上下文上限，远超任何网关/客户端超时。
+        # 预算即挂起检测护栏：超预算无响应 = 客户问题复现。取 120s：
+        # 远大于正常请求耗时，又控制在单用例可承受范围（3 次最坏 360s）。
+        K4_RESPONSE_BUDGET_SECONDS = 120
+
+        # K4: 修复契约下的自然结束原因——未传 max_tokens，正常生成应自然
+        # 停止；length 表示生成跑满输出上限（=剩余上下文），即退化重复
+        # 未被钳制的特征
+        K4_NATURAL_FINISH_REASONS = ("stop", "eos", "ended")
+
         test_logger.info(
             "=== 测试开始: 客户问题 - frequency_penalty=-2 不传 max_tokens 无返回"
             f"（连发 {len(K4_USER_PROMPTS)} 次，消息各异）==="
@@ -817,9 +847,114 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
         url = f"{budget_client.base_url}/v1/chat/completions"
 
+        def run_request(index: int, prompt: str) -> None:
+            """K4 单次请求核心逻辑：fp=-2、不传 max_tokens，按 fp=0 预期断言
+
+            任一步失败即判失败并报告第 {index}/{len(K4_USER_PROMPTS)} 次。
+            """
+            messages = [{"role": "user", "content": prompt}]
+            TestLogger.log_request(
+                test_logger,
+                messages,
+                {
+                    "frequency_penalty": K4_FREQUENCY_PENALTY,
+                    "max_tokens": "未传（客户原始请求）",
+                    "stream": False,
+                    "request": f"第 {index}/{len(K4_USER_PROMPTS)} 次（消息各异）",
+                },
+            )
+
+            # 客户请求形态：仅 model/messages/frequency_penalty，不带
+            # max_tokens。chat_completion 封装会强制注入默认 max_tokens=2048
+            # 与 temperature，破坏"不传 max_tokens"的前提，故按 K3 先例
+            # 手工构造 payload 直发
+            payload = {
+                "model": budget_client.model_name,
+                "messages": messages,
+                "frequency_penalty": K4_FREQUENCY_PENALTY,
+                "stream": False,
+            }
+
+            started = time.time()
+            try:
+                response = budget_client._post_with_retry(url, payload, stream=False)
+            except requests.exceptions.Timeout as e:
+                pytest.fail(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次请求客户问题复现失败："
+                    f"frequency_penalty={K4_FREQUENCY_PENALTY} 且未传 max_tokens，"
+                    f"{K4_RESPONSE_BUDGET_SECONDS}s 内无任何响应（fp<0 未按 0 处理，"
+                    f"退化重复导致无界生成），耗时 {time.time() - started:.1f}s: {e}"
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次请求发送异常（{url}）: {e}"
+                )
+            elapsed = time.time() - started
+
+            if response.status_code != 200:
+                pytest.fail(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次请求失败 "
+                    f"HTTP {response.status_code}: {response.text[:500]}"
+                )
+
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+
+            choices = result.get("choices") or []
+            assert choices, (
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            choice = choices[0]
+            message = choice.get("message") or {}
+            content = (message.get("content") or "").strip()
+            finish_reason = choice.get("finish_reason")
+
+            # 核心断言 1：修复契约（fp<0 按 0 处理）下应自然结束——未传
+            # max_tokens，正常生成自然停止；length 表示生成跑满输出上限
+            # （=剩余上下文），即退化重复未被钳制的特征
+            assert finish_reason in K4_NATURAL_FINISH_REASONS, (
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次客户问题复现失败："
+                f"frequency_penalty={K4_FREQUENCY_PENALTY} 应按 0 处理（防御性"
+                f"钳制），但 finish_reason='{finish_reason}'（期望自然结束 "
+                f"{K4_NATURAL_FINISH_REASONS}；length 表示生成跑满输出上限，"
+                f"即退化重复未被钳制），耗时 {elapsed:.1f}s，消息: {prompt[:30]}"
+            )
+
+            # 核心断言 2：回答内容非空
+            assert content, (
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次客户问题复现失败："
+                f"返回内容为空，finish_reason={finish_reason}，"
+                f"耗时 {elapsed:.1f}s，消息: {prompt[:30]}"
+            )
+
+            # 软观察：耗时超过单次预算一半时告警（修复后正常应数秒内返回）
+            if elapsed > K4_RESPONSE_BUDGET_SECONDS / 2:
+                test_logger.warning(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次请求耗时 {elapsed:.1f}s，"
+                    f"超过预算 {K4_RESPONSE_BUDGET_SECONDS}s 的一半（修复后正常应"
+                    f"数秒内返回），请关注服务负载"
+                )
+
+            TestLogger.log_response(
+                test_logger, result, f"K4-响应（第 {index} 次）"
+            )
+            test_logger.info(
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次正常（fp="
+                f"{K4_FREQUENCY_PENALTY} 按 0 处理）: finish_reason={finish_reason}, "
+                f"completion_tokens="
+                f"{(result.get('usage') or {}).get('completion_tokens')}, "
+                f"耗时 {elapsed:.1f}s, 消息: {prompt[:30]}"
+            )
+
         try:
             for i, prompt in enumerate(K4_USER_PROMPTS, start=1):
-                self._run_k4_request(budget_client, url, i, prompt, test_logger)
+                run_request(i, prompt)
                 # 相邻请求间隔（末次后不等待）
                 if i < len(K4_USER_PROMPTS):
                     time.sleep(K4_REQUEST_INTERVAL_SECONDS)
@@ -832,113 +967,744 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "均正常返回并自然结束"
         )
 
-    @staticmethod
-    def _run_k4_request(
-        budget_client: ModelAPIClient,
-        url: str,
-        index: int,
-        prompt: str,
-        test_logger,
-    ) -> None:
-        """K4 单次请求核心逻辑：fp=-2、不传 max_tokens，按 fp=0 预期断言
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    @pytest.mark.smoke
+    def test_thinking_disabled_suppresses_reasoning(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K5 [P0]: 客户问题 - thinking.type=disabled 后思考未关闭
 
-        任一步失败即判失败并报告第 {index}/{len(K4_USER_PROMPTS)} 次。
+        客户问题：thinking.type=disabled 后 reasoning_tokens 仍=100/75、
+        reasoning_content 照常输出，关思考相关功能（低延迟模式、关思考
+        温度档）全部失效。官方端点实测（官方 FAQ 与实测不符，以实测
+        为准）：disabled 后思考完全关闭——reasoning_tokens 为空、无
+        reasoning_content、正文正常返回；客户网关对 disabled 不响应
+        （rt 仍>0），与官方实测不一致。
+        本用例输入保持客户原值 thinking={"type": "disabled"}、显式
+        temperature=0.6（官方关思考档唯一合法温度，契约见 K6；不传
+        max_tokens），连发 3 次（消息各异、相邻间隔 3s），断言每次均
+        按官方实测预期：
+        - 无思考内容（reasoning_content/reasoning 均为空）
+        - reasoning_tokens 为空（0/缺失；兼容 usage.reasoning_tokens 与
+          completion_tokens_details.reasoning_tokens 两种拼写）
+        - 正文正常返回且 finish_reason 自然结束
+        任一次不符合即失败，并报告第几次。
         """
-        messages = [{"role": "user", "content": prompt}]
-        TestLogger.log_request(
-            test_logger,
-            messages,
-            {
-                "frequency_penalty": K4_FREQUENCY_PENALTY,
-                "max_tokens": "未传（客户原始请求）",
+        # K5: 客户原始请求的思考开关参数——thinking.type=disabled（与 K1
+        # 的 enabled 为同一参数面）。官方端点实测（官方 FAQ 与实测不符，
+        # 以实测为准）：disabled 后思考完全关闭——reasoning_tokens 为空
+        # （0/缺失）、无 reasoning_content、正文正常返回。客户网关对
+        # disabled 不响应（reasoning_tokens 仍 >0、reasoning_content 照常
+        # 输出）。
+        K5_THINKING_DISABLED = {"type": "disabled"}
+
+        # K5: 官方关思考档唯一合法温度——disabled 下给 1 或 0 会被 400
+        # 拒绝（"only 0.6 is allowed for this model in non-thinking mode"，
+        # 官方契约见 K6），显式指定 0.6 与官方关思考用法对齐
+        K5_TEMPERATURE = 0.6
+
+        # K5: 3 个不同的用户提示词（客户原始 prompt 未提供；消息各异 +
+        # 3s 间隔，沿用 K4 模式：3 次全部符合官方实测预期才通过，任一次
+        # 失败报告第几次）
+        K5_USER_PROMPTS = (
+            "请用一句话解释什么是通货膨胀。",
+            "请把'今天天气很好'翻译成英文。",
+            "请列出三种常见的颜色，用顿号分隔。",
+        )
+
+        # K5: 相邻两次请求的间隔（秒）——第 1、2 次完成后间隔 3s 再发起
+        # 下一次（末次后不等待）
+        K5_REQUEST_INTERVAL_SECONDS = 3
+
+        # K5: 官方实测预期下的自然结束原因（未传 max_tokens，正常生成
+        # 自然停止）
+        K5_NATURAL_FINISH_REASONS = ("stop", "eos", "ended")
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - thinking.type=disabled 后思考未关闭"
+            f"（连发 {len(K5_USER_PROMPTS)} 次，消息各异）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_request(index: int, prompt: str) -> None:
+            """K5 单次请求核心逻辑：thinking.type=disabled，按官方实测预期断言
+
+            任一步失败即判失败并报告第 {index}/{len(K5_USER_PROMPTS)} 次。
+            """
+            messages = [{"role": "user", "content": prompt}]
+            TestLogger.log_request(
+                test_logger,
+                messages,
+                {
+                    "thinking": "disabled（客户原始请求参数）",
+                    "temperature": "0.6（官方关思考档唯一合法温度）",
+                    "max_tokens": "未传（客户原始请求）",
+                    "stream": False,
+                    "request": f"第 {index}/{len(K5_USER_PROMPTS)} 次（消息各异）",
+                },
+            )
+
+            # 客户请求形态：model/messages/thinking(disabled)/temperature=0.6，
+            # 不带 max_tokens。手工构造 payload 直发（K3/K4 先例），保持客户
+            # 原始参数面
+            payload = {
+                "model": api_client.model_name,
+                "messages": messages,
+                "thinking": K5_THINKING_DISABLED,
+                "temperature": K5_TEMPERATURE,
                 "stream": False,
-                "request": f"第 {index}/{len(K4_USER_PROMPTS)} 次（消息各异）",
+            }
+
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(url, payload, stream=False)
+            except Exception as e:
+                pytest.fail(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次请求发送异常"
+                    f"（{url}）: {e}"
+                )
+            elapsed = time.time() - started
+
+            if response.status_code != 200:
+                pytest.fail(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次请求失败 "
+                    f"HTTP {response.status_code}: {response.text[:500]}"
+                )
+
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+
+            choices = result.get("choices") or []
+            assert choices, (
+                f"第 {index}/{len(K5_USER_PROMPTS)} 次响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            choice = choices[0]
+            message = choice.get("message") or {}
+            content = (message.get("content") or "").strip()
+            finish_reason = choice.get("finish_reason")
+            usage = result.get("usage") or {}
+
+            # 思考内容字段名兼容：reasoning_content（Kimi/Zhipu/DeepSeek
+            # 风格）与 reasoning（部分网关）
+            reasoning_text = ""
+            for field in ("reasoning_content", "reasoning"):
+                value = message.get(field)
+                if isinstance(value, str):
+                    reasoning_text += value
+
+            # reasoning_tokens 字段名兼容：usage.reasoning_tokens（Kimi/
+            # Zhipu 风格）与 usage.completion_tokens_details.reasoning_tokens
+            # （OpenAI 风格）
+            details = usage.get("completion_tokens_details") or {}
+            reasoning_tokens = 0
+            for value in (
+                usage.get("reasoning_tokens"),
+                details.get("reasoning_tokens"),
+            ):
+                if isinstance(value, (int, float)) and value > 0:
+                    reasoning_tokens = int(value)
+                    break
+
+            # 核心断言 1：官方实测——disabled 后无思考内容
+            assert not reasoning_text.strip(), (
+                f"第 {index}/{len(K5_USER_PROMPTS)} 次客户问题复现失败："
+                f"thinking.type=disabled 后仍返回思考内容（官方实测应无 "
+                f"reasoning_content），思考内容长度 {len(reasoning_text)}，"
+                f"预览: {reasoning_text[:60]}，消息: {prompt[:30]}"
+            )
+
+            # 核心断言 2：官方实测——reasoning_tokens 为空（0/缺失）
+            assert reasoning_tokens == 0, (
+                f"第 {index}/{len(K5_USER_PROMPTS)} 次客户问题复现失败："
+                f"thinking.type=disabled 后 reasoning_tokens={reasoning_tokens}"
+                f"（官方实测应为空/0），消息: {prompt[:30]}"
+            )
+
+            # 核心断言 3：官方实测——正文正常返回
+            assert content, (
+                f"第 {index}/{len(K5_USER_PROMPTS)} 次客户问题复现失败："
+                f"thinking.type=disabled 后返回正文为空（官方实测正文应正常"
+                f"返回），finish_reason={finish_reason}，消息: {prompt[:30]}"
+            )
+
+            # 核心断言 4：自然结束（未传 max_tokens）
+            assert finish_reason in K5_NATURAL_FINISH_REASONS, (
+                f"第 {index}/{len(K5_USER_PROMPTS)} 次客户问题复现失败："
+                f"finish_reason='{finish_reason}'（期望自然结束 "
+                f"{K5_NATURAL_FINISH_REASONS}），消息: {prompt[:30]}"
+            )
+
+            # 软观察：usage 缺失时告警（无法观测 reasoning_tokens）
+            if not usage:
+                test_logger.warning(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次响应未携带 usage，"
+                    "无法观测 reasoning_tokens（缺失视为'为空'）"
+                )
+
+            TestLogger.log_response(
+                test_logger, result, f"K5-响应（第 {index} 次）"
+            )
+            test_logger.info(
+                f"第 {index}/{len(K5_USER_PROMPTS)} 次正常（thinking 已关闭）: "
+                f"finish_reason={finish_reason}, reasoning_tokens="
+                f"{reasoning_tokens}, 思考内容长度={len(reasoning_text)}, "
+                f"completion_tokens={usage.get('completion_tokens')}, "
+                f"耗时 {elapsed:.1f}s, 消息: {prompt[:30]}"
+            )
+
+        for i, prompt in enumerate(K5_USER_PROMPTS, start=1):
+            run_request(i, prompt)
+            # 相邻请求间隔（末次后不等待）
+            if i < len(K5_USER_PROMPTS):
+                time.sleep(K5_REQUEST_INTERVAL_SECONDS)
+
+        test_logger.info(
+            "客户问题复现通过: thinking.type=disabled 已生效，连发 "
+            f"{len(K5_USER_PROMPTS)} 次（消息各异）均无思考内容、"
+            "reasoning_tokens 为空、正文正常返回"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    @pytest.mark.smoke
+    def test_thinking_temperature_tier(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K6 [P0]: 客户问题 - 关思考温度档未联动校验
+
+        官方契约（kimi-k3 官方说明）：thinking 模式与 temperature 档位
+        联动校验——
+        - disabled + temperature=0.6：合法，200 正常返回
+        - disabled + temperature=1 或 0：非法，400 拒绝并报
+          "only 0.6 is allowed for this model in non-thinking mode"
+        - enabled + temperature=1：合法，200 正常返回
+        - enabled + temperature=0.6 或 0：非法，400 拒绝并报
+          "only 1 is allowed for this model in thinking mode"
+        客户影响：关思考相关功能（低延迟模式、关思考温度档）全部失效
+        （K5 验证关思考本身，本用例验证温度档联动校验）。
+        本用例对 6 个组合各发一次请求（参数校验为确定性行为，无需
+        K4/K5 式多次连发），断言：
+        - 合法组合：HTTP 200 + 正文非空
+        - 非法组合：HTTP 400 + 错误信息包含官方文案（忽略大小写子串
+          匹配，对错误体的 JSON 结构不敏感）
+        任一组合不符合即失败，并报告具体场景。
+        """
+        # K6: 客户原始 user 提示词——6 个场景复用同一提示词，仅 thinking
+        # 与 temperature 参数变化（参数联动校验与 prompt 内容无关，同一
+        # prompt 使各场景唯一变量为被测参数）
+        K6_USER_PROMPT = "请用一句话介绍你自己。"
+
+        # K6: 关思考温度档——官方契约（kimi-k3 官方说明）：thinking 模式
+        # 与 temperature 档位联动校验，合法组合 200 正常返回，非法组合
+        # 400 拒绝并报对应错误信息：
+        # - disabled + temperature=0.6：合法（关思考档唯一合法温度）
+        # - disabled + temperature=1 或 0：400
+        #   "only 0.6 is allowed for this model in non-thinking mode"
+        # - enabled + temperature=1：合法（开思考档唯一合法温度）
+        # - enabled + temperature=0.6 或 0：400
+        #   "only 1 is allowed for this model in thinking mode"
+        K6_SCENARIOS = (
+            {
+                "label": "disabled+temp=0.6（合法）",
+                "thinking": {"type": "disabled"},
+                "temperature": 0.6,
+                "expect_ok": True,
+                "error_substring": None,
+            },
+            {
+                "label": "disabled+temp=1（非法）",
+                "thinking": {"type": "disabled"},
+                "temperature": 1,
+                "expect_ok": False,
+                "error_substring": (
+                    "only 0.6 is allowed for this model in non-thinking mode"
+                ),
+            },
+            {
+                "label": "disabled+temp=0（非法）",
+                "thinking": {"type": "disabled"},
+                "temperature": 0,
+                "expect_ok": False,
+                "error_substring": (
+                    "only 0.6 is allowed for this model in non-thinking mode"
+                ),
+            },
+            {
+                "label": "enabled+temp=1（合法）",
+                "thinking": {"type": "enabled"},
+                "temperature": 1,
+                "expect_ok": True,
+                "error_substring": None,
+            },
+            {
+                "label": "enabled+temp=0.6（非法）",
+                "thinking": {"type": "enabled"},
+                "temperature": 0.6,
+                "expect_ok": False,
+                "error_substring": (
+                    "only 1 is allowed for this model in thinking mode"
+                ),
+            },
+            {
+                "label": "enabled+temp=0（非法）",
+                "thinking": {"type": "enabled"},
+                "temperature": 0,
+                "expect_ok": False,
+                "error_substring": (
+                    "only 1 is allowed for this model in thinking mode"
+                ),
             },
         )
 
-        # 客户请求形态：仅 model/messages/frequency_penalty，不带 max_tokens。
-        # chat_completion 封装会强制注入默认 max_tokens=2048 与 temperature，
-        # 破坏"不传 max_tokens"的前提，故按 K3 先例手工构造 payload 直发
-        payload = {
-            "model": budget_client.model_name,
-            "messages": messages,
-            "frequency_penalty": K4_FREQUENCY_PENALTY,
-            "stream": False,
-        }
-
-        started = time.time()
-        try:
-            response = budget_client._post_with_retry(url, payload, stream=False)
-        except requests.exceptions.Timeout as e:
-            pytest.fail(
-                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求客户问题复现失败："
-                f"frequency_penalty={K4_FREQUENCY_PENALTY} 且未传 max_tokens，"
-                f"{K4_RESPONSE_BUDGET_SECONDS}s 内无任何响应（fp<0 未按 0 处理，"
-                f"退化重复导致无界生成），耗时 {time.time() - started:.1f}s: {e}"
-            )
-        except Exception as e:
-            pytest.fail(
-                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求发送异常（{url}）: {e}"
-            )
-        elapsed = time.time() - started
-
-        if response.status_code != 200:
-            pytest.fail(
-                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求失败 "
-                f"HTTP {response.status_code}: {response.text[:500]}"
-            )
-
-        try:
-            result = response.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            pytest.fail(
-                f"第 {index}/{len(K4_USER_PROMPTS)} 次响应不是合法 JSON: {e}. "
-                f"响应体: {response.text[:300]}"
-            )
-
-        choices = result.get("choices") or []
-        assert choices, (
-            f"第 {index}/{len(K4_USER_PROMPTS)} 次响应缺少 choices: "
-            f"{json.dumps(result, ensure_ascii=False)[:500]}"
-        )
-        choice = choices[0]
-        message = choice.get("message") or {}
-        content = (message.get("content") or "").strip()
-        finish_reason = choice.get("finish_reason")
-
-        # 核心断言 1：修复契约（fp<0 按 0 处理）下应自然结束——未传
-        # max_tokens，正常生成自然停止；length 表示生成跑满输出上限
-        # （=剩余上下文），即退化重复未被钳制的特征
-        assert finish_reason in K4_NATURAL_FINISH_REASONS, (
-            f"第 {index}/{len(K4_USER_PROMPTS)} 次客户问题复现失败："
-            f"frequency_penalty={K4_FREQUENCY_PENALTY} 应按 0 处理（防御性"
-            f"钳制），但 finish_reason='{finish_reason}'（期望自然结束 "
-            f"{K4_NATURAL_FINISH_REASONS}；length 表示生成跑满输出上限，"
-            f"即退化重复未被钳制），耗时 {elapsed:.1f}s，消息: {prompt[:30]}"
-        )
-
-        # 核心断言 2：回答内容非空
-        assert content, (
-            f"第 {index}/{len(K4_USER_PROMPTS)} 次客户问题复现失败："
-            f"返回内容为空，finish_reason={finish_reason}，"
-            f"耗时 {elapsed:.1f}s，消息: {prompt[:30]}"
-        )
-
-        # 软观察：耗时超过单次预算一半时告警（修复后正常应数秒内返回）
-        if elapsed > K4_RESPONSE_BUDGET_SECONDS / 2:
-            test_logger.warning(
-                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求耗时 {elapsed:.1f}s，"
-                f"超过预算 {K4_RESPONSE_BUDGET_SECONDS}s 的一半（修复后正常应"
-                f"数秒内返回），请关注服务负载"
-            )
-
-        TestLogger.log_response(
-            test_logger, result, f"K4-响应（第 {index} 次）"
-        )
         test_logger.info(
-            f"第 {index}/{len(K4_USER_PROMPTS)} 次正常（fp="
-            f"{K4_FREQUENCY_PENALTY} 按 0 处理）: finish_reason={finish_reason}, "
-            f"completion_tokens="
-            f"{(result.get('usage') or {}).get('completion_tokens')}, "
-            f"耗时 {elapsed:.1f}s, 消息: {prompt[:30]}"
+            "=== 测试开始: 客户问题 - 关思考温度档未联动校验"
+            f"（{len(K6_SCENARIOS)} 个组合）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_scenario(scenario: Dict[str, Any]) -> None:
+            """K6 单场景核心逻辑：thinking 模式 × temperature 档位联动校验
+
+            合法组合断言 200+正文非空；非法组合断言 400+官方错误文案。
+            """
+            label = scenario["label"]
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K6_USER_PROMPT}],
+                {
+                    "thinking": scenario["thinking"]["type"],
+                    "temperature": scenario["temperature"],
+                    "max_tokens": "未传（契约校验与生成长度无关）",
+                    "stream": False,
+                    "scenario": label,
+                },
+            )
+
+            # 官方契约校验场景：thinking 与 temperature 为被测参数，其余
+            # 保持最小参数面（手工构造 payload 直发，K3/K4/K5 先例）
+            payload = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K6_USER_PROMPT}],
+                "thinking": scenario["thinking"],
+                "temperature": scenario["temperature"],
+                "stream": False,
+            }
+
+            try:
+                response = api_client._post_with_retry(url, payload, stream=False)
+            except Exception as e:
+                pytest.fail(f"场景[{label}] 请求发送异常（{url}）: {e}")
+
+            if scenario["expect_ok"]:
+                # 合法组合：官方契约应 200 正常返回
+                assert response.status_code == 200, (
+                    f"场景[{label}] 客户问题复现失败：官方契约为合法组合，"
+                    f"应 200 正常返回，实际 HTTP {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+                try:
+                    result = response.json()
+                except (json.JSONDecodeError, ValueError) as e:
+                    pytest.fail(
+                        f"场景[{label}] 响应不是合法 JSON: {e}. "
+                        f"响应体: {response.text[:300]}"
+                    )
+                choices = result.get("choices") or []
+                assert choices, (
+                    f"场景[{label}] 响应缺少 choices: "
+                    f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                )
+                content = (
+                    (choices[0].get("message") or {}).get("content") or ""
+                ).strip()
+                # 合法组合应正常生成正文（enabled 场景可能含
+                # reasoning_content，属正常思考输出，不在本用例断言范围
+                # ——关思考本身由 K5 验证）
+                assert content, (
+                    f"场景[{label}] 客户问题复现失败：合法组合应正常返回正文，"
+                    f"实际正文为空: {json.dumps(result, ensure_ascii=False)[:300]}"
+                )
+                TestLogger.log_response(
+                    test_logger, result, f"K6-响应（{label}）"
+                )
+                test_logger.info(
+                    f"场景[{label}] 正常: HTTP 200, 正文长度 {len(content)}, "
+                    f"completion_tokens="
+                    f"{(result.get('usage') or {}).get('completion_tokens')}"
+                )
+            else:
+                # 非法组合：官方契约应 400 拒绝并报对应文案
+                expected_msg = scenario["error_substring"]
+                assert response.status_code == 400, (
+                    f"场景[{label}] 客户问题复现失败：官方契约应 400 拒绝"
+                    f"（错误信息含 '{expected_msg}'），实际 HTTP "
+                    f"{response.status_code}: {response.text[:300]}"
+                )
+                # 错误文案校验：忽略大小写的子串匹配（对错误体的 JSON 结构
+                # 不敏感——官方文案可能嵌在 error.message 等不同位置）
+                assert expected_msg.lower() in response.text.lower(), (
+                    f"场景[{label}] 客户问题复现失败：400 错误信息与官方不一致，"
+                    f"期望包含 '{expected_msg}'，实际: {response.text[:300]}"
+                )
+                test_logger.info(
+                    f"场景[{label}] 正常拒绝: HTTP 400, 错误信息含官方文案 "
+                    f"'{expected_msg}'"
+                )
+
+        for scenario in K6_SCENARIOS:
+            run_scenario(scenario)
+
+        test_logger.info(
+            "客户问题复现通过: thinking 模式与温度档联动校验与官方契约一致"
+            f"（{len(K6_SCENARIOS)} 个组合全部符合）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    def test_thinking_effort_reasoning_length(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
+        """K7 [P0]: 客户问题 - 思考强度档位思考长度倒挂（官方 reasoning_effort）
+
+        官方契约（kimi-k3 官方文档 use-reasoning-effort /
+        kimi-k3-quickstart）：思考强度为顶层 reasoning_effort 参数
+        （K2.x 的 thinking 配置在 K3 已废弃，官方迁移指引为移除
+        thinking 改用顶层 reasoning_effort），K3 恒开思考；官方预期
+        思考长度（reasoning_tokens）随档位递增。
+        本用例只按官方格式传参（顶层 reasoning_effort，无回退），
+        请求顺序（客户指定）：low → high → max 后比对思考长度，
+        再按 max → high → low 逆向重发并再次比对思考长度——正逆
+        两轮排除请求顺序相关干扰（缓存/预热），均按 low < high <
+        max 三档软对比（medium 不参与对比）；最后依次验证 medium
+        顶层（按官方预期 200 放行）与 medium 嵌套
+        （thinking.effort=medium 预期 400——废弃的 K2.x thinking
+        配置下 medium 为非法档位，客户指定契约）。
+        请求内容与 temperature 完全相同（temperature=1，开思考档
+        契约温度，见 K6），相邻间隔 3s。
+        断言（硬）——请求基本健康，否则长度对比无意义：
+        - 每次官方档请求（升序轮+降序轮+medium 顶层）HTTP 200 +
+          正文非空 + finish_reason 自然结束
+        - 嵌套 thinking.effort=medium 预期 HTTP 400
+        对比（软，按客户要求倒挂不判失败，仅告警）：
+        - low 与 high、high 与 max 的 reasoning_tokens 应严格递增；
+          任一对倒挂/持平 → 告警记入报告，用例仍通过（档位倒挂属
+          行为质量偏离而非服务故障）
+        - 三档均为 0 → 告警思考强度参数可能未生效
+        reasoning_tokens 兼容两种字段拼写（K5 先例）；usage 缺失时
+        逐次软告警（K5 先例）。
+        """
+        # K7: 升序轮发送顺序——low → high → max，发送后比对思考长度
+        K7_ASCENDING_LEVELS = ("low", "high", "max")
+
+        # K7: 降序轮发送顺序——max → high → low，逆向重发后再比对
+        # 思考长度（正逆两轮排除请求顺序相关干扰：缓存/预热）
+        K7_DESCENDING_LEVELS = ("max", "high", "low")
+
+        # K7: 参与思考长度对比的档位（两轮共用）——medium 为合法
+        # 档位但不参与对比（对比仍按 low < high < max 严格递增）
+        K7_COMPARISON_LEVELS = ("low", "high", "max")
+
+        # K7: 请求总数——升序轮 3 + 降序轮 3 + medium 顶层 1 +
+        # medium 嵌套 1
+        K7_TOTAL_REQUESTS = (
+            len(K7_ASCENDING_LEVELS) + len(K7_DESCENDING_LEVELS) + 2
+        )
+
+        # K7: 嵌套 thinking.effort=medium——废弃的 K2.x thinking 配置
+        # 下 medium 为非法档位，预期 400（客户指定契约）
+        K7_NESTED_MEDIUM = {"type": "enabled", "effort": "medium"}
+
+        # K7: 客户原始 user 提示词——需要逐步推理的问题，使各档思考
+        # 长度差异可观测；各档请求内容完全相同（仅思考强度不同）
+        K7_USER_PROMPT = (
+            "一个笼子里有鸡和兔共 35 个头、94 只脚，请问鸡和兔各有多少只？"
+            "请逐步推理后给出答案。"
+        )
+
+        # K7: 开思考档契约温度（K6；官方文档 K3 temperature 固定
+        # 1.0），各档相同
+        K7_TEMPERATURE = 1
+
+        # K7: 相邻两次请求的间隔（秒）——K2/K4/K5 先例（末次后
+        # 不等待）
+        K7_REQUEST_INTERVAL_SECONDS = 3
+
+        # K7: 自然结束原因（不传 max_tokens，观察思考自然长度，
+        # K4/K5 先例）
+        K7_NATURAL_FINISH_REASONS = ("stop", "eos", "ended")
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 思考强度档位思考长度对比"
+            "（官方顶层 reasoning_effort；low→high→max 比对后 "
+            "max→high→low 再比对；最后 medium 顶层 200 放行、"
+            "medium 嵌套 400；倒挂仅告警不判失败）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+        messages = [{"role": "user", "content": K7_USER_PROMPT}]
+
+        def run_official_request(index: int, effort: str) -> Dict[str, Any]:
+            """K7 官方格式单次请求：顶层 reasoning_effort={effort}
+
+            硬断言响应基本健康（200+正文非空+自然结束），返回观测到的
+            reasoning_tokens（双拼写兼容，缺失按 0）与思考文本长度。
+            """
+            TestLogger.log_request(
+                test_logger,
+                messages,
+                {
+                    "reasoning_effort": effort,
+                    "temperature": K7_TEMPERATURE,
+                    "max_tokens": "未传（观察思考自然长度）",
+                    "stream": False,
+                    "round": f"第{index}次/{K7_TOTAL_REQUESTS}",
+                },
+            )
+
+            # 思考强度为唯一被测参数，其余保持最小参数面（手工构造
+            # payload 直发，K3-K6 先例）
+            payload = {
+                "model": api_client.model_name,
+                "messages": messages,
+                "reasoning_effort": effort,
+                "temperature": K7_TEMPERATURE,
+                "stream": False,
+            }
+
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"第[{index}]次（reasoning_effort={effort}）请求发送"
+                    f"异常（{url}）: {e}"
+                )
+
+            assert response.status_code == 200, (
+                f"第[{index}]次（reasoning_effort={effort}）请求失败："
+                f"应 200 正常返回，实际 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"第[{index}]次（reasoning_effort={effort}）响应不是"
+                    f"合法 JSON: {e}. 响应体: {response.text[:300]}"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"第[{index}]次（reasoning_effort={effort}）响应缺少 "
+                f"choices: {json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message") or {}
+            content = (message.get("content") or "").strip()
+            assert content, (
+                f"第[{index}]次（reasoning_effort={effort}）正文为空: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+            finish_reason = (choices[0].get("finish_reason") or "").lower()
+            assert finish_reason in K7_NATURAL_FINISH_REASONS, (
+                f"第[{index}]次（reasoning_effort={effort}）finish_reason "
+                f"异常: '{finish_reason}'（预期自然结束，未传 "
+                f"max_tokens）"
+            )
+
+            # 思考长度观测（软指标，不参与硬断言）：reasoning_tokens
+            # 双拼写兼容（K5 先例）
+            usage = result.get("usage") or {}
+            if not usage:
+                # usage 缺失不影响请求健康判定，仅软告警（K5 先例）
+                warn_msg = (
+                    f"第[{index}]次（reasoning_effort={effort}）响应缺少 "
+                    "usage，无法观测思考长度"
+                )
+                test_logger.warning(f"[K7-警告] {warn_msg}")
+                record_warning(warn_msg)
+            reasoning_tokens = usage.get("reasoning_tokens")
+            if reasoning_tokens is None:
+                details = usage.get("completion_tokens_details") or {}
+                reasoning_tokens = details.get("reasoning_tokens")
+            reasoning_tokens = reasoning_tokens or 0
+            reasoning_text = (
+                message.get("reasoning_content")
+                or message.get("reasoning")
+                or ""
+            )
+
+            TestLogger.log_response(
+                test_logger,
+                result,
+                f"K7-响应（reasoning_effort={effort}）",
+            )
+            test_logger.info(
+                f"第[{index}]次（reasoning_effort={effort}）正常: "
+                f"HTTP 200, reasoning_tokens={reasoning_tokens}, "
+                f"思考文本长度={len(reasoning_text)}, "
+                f"completion_tokens={usage.get('completion_tokens')}, "
+                f"正文长度={len(content)}, finish_reason={finish_reason}"
+            )
+            return {
+                "effort": effort,
+                "reasoning_tokens": reasoning_tokens,
+                "reasoning_len": len(reasoning_text),
+            }
+
+        def run_nested_medium_reject(index: int) -> None:
+            """K7 嵌套 thinking.effort=medium：预期 400
+
+            废弃的 K2.x thinking 配置下 medium 为非法档位，按客户
+            指定契约预期 400 拒绝。
+            """
+            TestLogger.log_request(
+                test_logger,
+                messages,
+                {
+                    "thinking": K7_NESTED_MEDIUM,
+                    "temperature": K7_TEMPERATURE,
+                    "max_tokens": "未传（契约校验与生成长度无关）",
+                    "stream": False,
+                    "round": f"第{index}次",
+                    "expect": "reject",
+                },
+            )
+
+            payload = {
+                "model": api_client.model_name,
+                "messages": messages,
+                "thinking": K7_NESTED_MEDIUM,
+                "temperature": K7_TEMPERATURE,
+                "stream": False,
+            }
+
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"第[{index}]次（嵌套 thinking.effort=medium）请求"
+                    f"发送异常（{url}）: {e}"
+                )
+
+            assert response.status_code == 400, (
+                f"第[{index}]次（嵌套 thinking.effort=medium）预期 400 "
+                f"拒绝（废弃的 K2.x thinking 配置下 medium 为非法"
+                f"档位），实际 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            test_logger.info(
+                f"第[{index}]次（嵌套 thinking.effort=medium）按预期"
+                f"拒绝: HTTP 400: {response.text[:200]}"
+            )
+
+        def compare_pass(
+            pass_label: str, observations: Dict[str, Dict[str, Any]]
+        ) -> str:
+            """K7 单轮思考长度软对比（low < high < max）
+
+            倒挂/持平仅告警不判失败（客户要求：行为质量偏离而非
+            服务故障），返回本轮观测摘要。
+            """
+            rt = {
+                level: observations[level]["reasoning_tokens"]
+                for level in K7_COMPARISON_LEVELS
+            }
+            rt_low, rt_high, rt_max = rt["low"], rt["high"], rt["max"]
+            summary = (
+                f"{pass_label}思考长度观测: low={rt_low}, "
+                f"high={rt_high}, max={rt_max}"
+            )
+            if rt_low == 0 and rt_high == 0 and rt_max == 0:
+                # 全 0：无法区分"思考强度未生效/思考未开启"与"未上报
+                # 思考 tokens"
+                warn_msg = (
+                    f"{summary}——对比三档均为 0，思考强度参数可能"
+                    "未生效或服务端未上报思考 tokens，无法进行档位对比"
+                )
+                test_logger.warning(f"[K7-警告] {warn_msg}")
+                record_warning(warn_msg)
+            else:
+                inversion_found = False
+                if rt_low >= rt_high:
+                    warn_msg = (
+                        f"{summary}——档位倒挂/持平: low({rt_low}) 未小于 "
+                        f"high({rt_high})，官方预期 low < high < max"
+                    )
+                    test_logger.warning(f"[K7-警告] {warn_msg}")
+                    record_warning(warn_msg)
+                    inversion_found = True
+                if rt_high >= rt_max:
+                    warn_msg = (
+                        f"{summary}——档位倒挂/持平: high({rt_high}) 未小于 "
+                        f"max({rt_max})，官方预期 low < high < max"
+                    )
+                    test_logger.warning(f"[K7-警告] {warn_msg}")
+                    record_warning(warn_msg)
+                    inversion_found = True
+                if inversion_found:
+                    test_logger.warning(
+                        "[K7-警告] 检测到思考强度档位思考长度未严格递增"
+                        "（按约定不判失败，请检查思考强度档位到后端思考"
+                        "预算的映射）"
+                    )
+                else:
+                    test_logger.info(
+                        f"{summary}，档位严格递增，符合官方预期"
+                    )
+            return summary
+
+        # === 升序轮：low → high → max，发送后比对思考长度 ===
+        observations: Dict[str, Dict[str, Any]] = {}
+        for index, effort in enumerate(K7_ASCENDING_LEVELS, start=1):
+            observations[effort] = run_official_request(index, effort)
+            if index < len(K7_ASCENDING_LEVELS):
+                time.sleep(K7_REQUEST_INTERVAL_SECONDS)
+        summary_asc = compare_pass("升序轮（low→high→max）", observations)
+
+        time.sleep(K7_REQUEST_INTERVAL_SECONDS)
+
+        # === 降序轮：max → high → low，逆向重发后再比对思考长度 ===
+        observations_desc: Dict[str, Dict[str, Any]] = {}
+        for index, effort in enumerate(
+            K7_DESCENDING_LEVELS, start=len(K7_ASCENDING_LEVELS) + 1
+        ):
+            observations_desc[effort] = run_official_request(index, effort)
+            if index < len(K7_ASCENDING_LEVELS) + len(K7_DESCENDING_LEVELS):
+                time.sleep(K7_REQUEST_INTERVAL_SECONDS)
+        summary_desc = compare_pass(
+            "降序轮（max→high→low）", observations_desc
+        )
+
+        time.sleep(K7_REQUEST_INTERVAL_SECONDS)
+
+        # === medium 顶层：合法档位，按官方预期 200 放行（不参与对比） ===
+        medium_index = (
+            len(K7_ASCENDING_LEVELS) + len(K7_DESCENDING_LEVELS) + 1
+        )
+        medium_observation = run_official_request(medium_index, "medium")
+
+        time.sleep(K7_REQUEST_INTERVAL_SECONDS)
+
+        # === 最后：medium 嵌套 thinking.effort=medium 预期 400
+        # （客户指定契约） ===
+        run_nested_medium_reject(medium_index + 1)
+
+        test_logger.info(
+            "客户问题复现通过: 升序/降序两轮思考强度请求均正常返回，"
+            "medium 顶层按官方放行、medium 嵌套按预期拒绝"
+            f"（思考长度对比仅告警不判失败；{summary_asc}；"
+            f"{summary_desc}；medium 顶层 reasoning_tokens="
+            f"{medium_observation['reasoning_tokens']}，"
+            "合法档位不参与对比）"
         )
