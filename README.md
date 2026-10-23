@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 10 大类共 110 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 11 大类共 114 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -35,8 +35,9 @@
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测（**已默认禁用**） |
 | J. clear_thinking 参数行为 | `j_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
+| K. 客户问题复现 | `k_customer_issue` | 4 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制），全部 P0 |
 
-> 总计：110 个测试点（P0: 36 / P1: 58 / P2: 16）
+> 总计：114 个测试点（P0: 40 / P1: 58 / P2: 16）
 
 ---
 
@@ -233,6 +234,7 @@ pytest -m g_api -v                          # API 兼容性
 pytest -m h_quality_chat_completions -v     # Chat Completions API 质量评估
 pytest -m i_quality_completions -v          # Completions API 质量评估（已禁用）
 pytest -m j_clear_thinking -v               # clear_thinking 参数行为
+pytest -m k_customer_issue -v              # 客户问题复现（全部 P0）
 pytest -m p0 -v                             # P0 优先级测试
 pytest -m p1 -v                             # P1 优先级测试
 pytest -m p2 -v                             # P2 优先级测试
@@ -279,7 +281,7 @@ pytest -m slow -v                           # 慢速测试
 - **temperature：强制覆盖**——优先于用例显式传参，保证受限模型下所有请求统一携带允许值
 - **top_p / seed：注入式覆盖**——仅当请求未显式携带该参数时注入
 
-豁免机制：以下用例显式指定采样参数且断言逻辑与参数行为相关，全局覆盖对其**不生效**，始终按用例自身参数执行——A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、F3 `test_invalid_parameters`、H2/I2 `test_generation_consistency`（豁免名单见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
+豁免机制：以下用例显式指定采样参数且断言逻辑与参数行为相关，全局覆盖对其**不生效**，始终按用例自身参数执行——A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、F3 `test_invalid_parameters`、H2/I2 `test_generation_consistency`、K1 `test_pydantic_schema_tool_call_stream`（豁免名单见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
 > 注意：受限模型上豁免用例携带非允许值（如 `temperature=0`）的请求会 400 失败，反映的是模型真实能力限制，非误报。
 
@@ -369,7 +371,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
 | `SAMPLING_PARAMS` | string | `{"temperature": 1.0, "top_p": 0.95, "seed": ""}` | 全局采样参数（JSON）。字段默认：`temperature=1.0`、`top_p=0.95`、`seed` 空（不发送）；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（框架原有行为）。参数行为用例（A6/A7/A10/F3/H2）始终按自身参数执行，详见[全局采样参数覆盖](#全局采样参数覆盖) |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
-| `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_j（跳过 test_e、test_i）下的所有具体测试函数 |
+| `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_k（跳过 test_e、test_i）下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |
 | `RECIPIENTS` | text | `liwt@zetyun.com` | 测试报告邮件接收者（逗号分隔） |
 | `WORK_DIR` | string | `/dingofs/data2/.../model-test` | 远程测试仓库目录（请勿改动） |
@@ -379,7 +381,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | 值 | 含义 |
 |----|------|
 | `all` | 全部测试（不传 `-m`） |
-| `a_basic` ~ `j_clear_thinking` | 按 A~J 分类运行 |
+| `a_basic` ~ `k_customer_issue` | 按 A~K 分类运行 |
 | `p0` / `p1` / `p2` | 按优先级运行 |
 | `smoke` | 冒烟测试 |
 | `slow` | 慢速测试 |
@@ -427,7 +429,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式/ReasoningEffort/SamplingParams、执行时间、构建状态
 2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
-3. **分类统计** — 按 10 大分类的通过率统计
+3. **分类统计** — 按 11 大分类的通过率统计
 4. **跳过用例说明** — 列出所有跳过用例的原因。整类全部跳过时仅显示一行汇总（如"C 类多模态能力：全部 12 个用例跳过：Model does not support multimodal input"），部分跳过时逐条列出（如"B10 Prefix/Suffix约束：API不支持prefix参数"）
 5. **测试结论** — 按用例优先级（P0/P1/P2）自动判定（详见[测试结论判定](#测试结论判定)）
 
@@ -455,7 +457,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | P1 | 重要 | 推荐指标，失败建议修复 |
 | P2 | 一般 | 增强指标，失败可酌情接受 |
 
-每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 110 项）：P0 = 36，P1 = 58，P2 = 16。
+每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 114 项）：P0 = 40，P1 = 58，P2 = 16。
 
 ### 判定规则
 
@@ -514,7 +516,7 @@ model-test/
 ├── Jenkinsfile           # Jenkins 流水线定义
 ├── checkpoints.md        # 测试点设计文档
 ├── base/                 # 基础模块（API 客户端、日志、报告生成、测试定义）
-├── tests/                # 测试用例（test_a_ ~ test_j_）
+├── tests/                # 测试用例（test_a_ ~ test_k_）
 ├── fixtures/             # 测试 fixtures（图片/视频/代码/工具）
 ├── scripts/              # 工具脚本（install_allure.sh、quick_report.py、generate_report.py）
 ├── docs/                 # 详细文档
@@ -541,6 +543,7 @@ model-test/
 - [H 类测试说明](docs/test_h_quality_chat_completions.md)
 - [I 类测试说明](docs/test_i_quality_completions.md)
 - [J 类测试说明](docs/test_j_clear_thinking.md)
+- [K 类测试说明](docs/test_k_customer_issue.md)
 
 ---
 

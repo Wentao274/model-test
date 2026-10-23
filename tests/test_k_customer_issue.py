@@ -1,0 +1,944 @@
+"""
+K. 客户问题复现测试
+
+本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
+标准模型请求进行复现与回归验证。所有用例优先级均为 P0，确保客户报障
+场景纳入每次回归的必验范围。
+
+环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
+不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
+参数（BASE_URL / API_KEY / MODEL）透传至 pytest 的 --base-url / --api-key /
+--model-name，经 conftest 的 api_client fixture 注入；curl 中的其余请求字段
+（messages、tools、采样参数、user 等）按原样保留。
+
+测试点：
+- K1: Pydantic $defs/$ref Schema 工具调用（流式+思考+强制tool_choice） [P0]
+  客户问题：glm-5.3 通过 /v1/chat/completions 发起流式请求报错【$$不兼容】。
+  请求特征：thinking.type=enabled + stream + stream_options.include_usage +
+  tool_choice 强制指定 function + tools 使用 Pydantic v2 生成的 JSON Schema
+  （含 $defs/$ref 引用）。本用例按客户原始 curl 原样复现请求，验证服务端
+  可正常接受该 Schema 并返回合法的强制工具调用结果。
+- K2: 同一请求循环执行5次返回信息异常 [P0]
+  客户问题：同一 curl 命令循环执行 5 次左右出现返回信息异常。
+  请求特征：logprobs+top_logprobs+n+thinking+stream+stream_options+
+  frequency_penalty/presence_penalty+user 字段 + X-Cache-Buster 防缓存请求头。
+  本用例按客户原始 curl 原样复现并连续执行 5 次（相邻间隔 3s），断言每次的响应与内容均正常。
+- K3: Anthropic 协议 prompt cache 未创建 [P0]
+  客户问题：通过 Anthropic 协议（/anthropic/v1/messages，stream=true）发送带
+  prompt cache 的请求，服务端日志 anthropic cache stats 中 cache_creation_tokens
+  一直为 0（同时 cache_read_tokens 有值），说明 cache_control 断点未被落实、
+  未创建缓存。本用例构造带 cache_control 断点的唯一长前缀，连续发送两次
+  请求，断言第 1 次创建缓存（creation > 0）、第 2 次命中缓存（read > 0）。
+- K4: frequency_penalty=-2 且不传 max_tokens 请求一直无返回 [P0]
+  客户问题：fp=-2（OpenAI 规范 [-2,2] 的合法极值）且不传 max_tokens 时
+  请求一直没有返回——fp<0 按出现次数奖励已出现 token，形成无饱和正反馈，
+  循环 token 的 logit 压制 EOS 导致自然终止失效，输出只能跑到上下文
+  上限，远超网关/客户端超时。平台修复契约：fp<0 按 0 处理（防御性
+  钳制）。本用例输入保持 -2、不传 max_tokens，连发 3 次（消息各异、
+  相邻间隔 3s——仅一次调用可能无法严谨验证），断言每次都按 fp=0 预期：
+  预算时间内返回 + finish_reason 自然结束 + 内容非空，任一次失败报告
+  第几次（不进 smoke 集）。
+"""
+
+import json
+import time
+import uuid
+import pytest
+import requests
+from typing import Any, Dict, List
+
+from base.base_test import BaseTest, StreamingTestMixin
+from base.api_client import ModelAPIClient
+from base.logger import TestLogger
+
+
+# K1: 客户原始请求的 system 提示词（与 curl 完全一致）
+K1_SYSTEM_PROMPT = (
+    "你是通话内容分析师。请根据通话内容完成指定维度的结构化提取。只提取客观事实。"
+)
+
+# K1: 客户原始请求的 user 消息（与 curl 完全一致）
+K1_USER_PROMPT = (
+    "请从以下通话中提取产品与工作分类信息。\n"
+    "核心工作类型：产品售卖|大搜解搁|充值续费|账户优化|流程处理|客情维护|"
+    "活动通知|操作指引\n"
+    "\n"
+    "## 通话内容\n"
+    "\n"
+    "坐席：'喂你好百度，'\n"
+    "客户：'您说，'\n"
+    "坐席：'嗯是这样的我们那个vip神经元这个账户的话是已经分到我这边了，"
+    "然后跟您说一下，后续的账户负责是通过我这边给您去做维护，'"
+    "'然后后续的话我让这个咱们的开户销售拉个群到时候我们有什么问题"
+    "直接在群里沟通好吧，'\n"
+    "客户：'嗯可以啊，''就是我没用过咱们这平台有培训吗？'\n"
+    "坐席：'培训的话我这边可以教您一些比较基础的，然后详细的话它百度这边"
+    "好像是没有可以外发的，到时候我看一下有什么渠道让您去学习一下看一下，'\n"
+    "客户：'嗯，'\n"
+    "坐席：'嗯好的好的，拜拜拜，'\n"
+    "客户：'四分，'"
+)
+
+# K1: 客户原始请求的 tools 定义 —— Pydantic v2 自动生成的 JSON Schema，
+# parameters 中含 $defs 定义与 $ref 引用（【$$不兼容】问题的核心对象）
+K1_TOOLS_SUBMIT_D2_PRODUCT = [
+    {
+        "type": "function",
+        "function": {
+            "name": "submit_d2_product",
+            "description": "提交产品与工作分类分析结果",
+            "parameters": {
+                "$defs": {
+                    "ProductDetail": {
+                        "additionalProperties": True,
+                        "properties": {
+                            "customer_response": {
+                                "default": "",
+                                "title": "Customer Response",
+                                "type": "string",
+                            },
+                            "depth": {
+                                "default": "",
+                                "title": "Depth",
+                                "type": "string",
+                            },
+                            "evidence": {
+                                "default": "",
+                                "title": "Evidence",
+                                "type": "string",
+                            },
+                            "mention_type": {
+                                "default": "",
+                                "title": "Mention Type",
+                                "type": "string",
+                            },
+                            "outcome": {
+                                "default": "",
+                                "title": "Outcome",
+                                "type": "string",
+                            },
+                            "product": {
+                                "default": "",
+                                "title": "Product",
+                                "type": "string",
+                            },
+                        },
+                        "title": "ProductDetail",
+                        "type": "object",
+                    },
+                    "SaleSignals": {
+                        "additionalProperties": True,
+                        "properties": {
+                            "has_signal": {
+                                "default": False,
+                                "title": "Has Signal",
+                                "type": "boolean",
+                            },
+                            "signal_strength": {
+                                "anyOf": [{"type": "string"}, {"type": "null"}],
+                                "default": None,
+                                "title": "Signal Strength",
+                            },
+                            "signal_type": {
+                                "anyOf": [{"type": "string"}, {"type": "null"}],
+                                "default": None,
+                                "title": "Signal Type",
+                            },
+                        },
+                        "title": "SaleSignals",
+                        "type": "object",
+                    },
+                },
+                "properties": {
+                    "biz_scenario": {
+                        "default": "",
+                        "title": "Biz Scenario",
+                        "type": "string",
+                    },
+                    "core_work_type": {
+                        "title": "Core Work Type",
+                        "type": "string",
+                    },
+                    "product_details": {
+                        "items": {"$ref": "#/$defs/ProductDetail"},
+                        "title": "Product Details",
+                        "type": "array",
+                    },
+                    "product_tags": {
+                        "items": {"type": "string"},
+                        "title": "Product Tags",
+                        "type": "array",
+                    },
+                    "sale_signals": {"$ref": "#/$defs/SaleSignals"},
+                },
+                "required": ["core_work_type"],
+                "title": "ProductSchema",
+                "type": "object",
+            },
+        },
+    }
+]
+
+# K1: 客户原始请求的 tool_choice —— 强制调用 submit_d2_product
+K1_TOOL_CHOICE = {"type": "function", "function": {"name": "submit_d2_product"}}
+
+# K2: 客户原始请求的 system 提示词（与 curl 完全一致）
+K2_SYSTEM_PROMPT = "无论什么问题，你每次回答都必须以“很高兴为您服务”开头"
+
+# K2: 客户原始请求的 user 消息（与 curl 完全一致）
+K2_USER_PROMPT = "介绍一下，RPG游戏，40字🤔"
+
+# K2: 客户原始请求的 user 字段——终端用户标识（与 curl 完全一致）
+K2_USER_ID = "a74685ef7268c396f0b842750bd7ab3252b37e7e3619ab33126946ee63d867e0"
+
+# K2: 循环执行次数（客户反馈"请求5次左右返回信息异常"）
+K2_REPEAT_TIMES = 5
+
+# K2: 相邻两次请求的间隔（秒）——第 1~4 次完成后间隔 3s 再发起下一次
+# （末次后不等待），模拟客户循环执行 curl 的节奏
+K2_REQUEST_INTERVAL_SECONDS = 3
+
+# K3: Anthropic 协议版本头。2023-06-01 为长期 GA 版本（2023.6 起两年多内
+# 唯一主流版本，第三方兼容网关的事实标准）；官方 SDK v2.1.0+ 已升到
+# 2026-10-21，但被测对象为客户的 Anthropic 兼容网关（非官方 API），新版本
+# 日期更可能被网关版本校验拒绝，故沿用兼容面最广的 2023-06-01。
+# Anthropic 版本头用于钉住协议行为，老版本不会过期失效；K3 依赖的
+# prompt caching（cache_control）在 2023-06-01 上即为 GA。
+# 若目标网关升级要求新版本，改此常量即可。
+K3_ANTHROPIC_VERSION = "2023-06-01"
+
+# K3: 输出 token 上限——缓存断言只关心 input 侧 usage，输出无需过长
+K3_MAX_TOKENS = 512
+
+# K3: 可缓存前缀的填充文本。客户问题的 prompt_tokens=111283（超长上下文
+# 触发 prompt cache），按中文 ~1.3-1.7 字符/token 保守折算，需约 19 万字符
+# 才能保证达到 11 万 tokens 量级（同时远超 Anthropic 协议最小可缓存长度
+# 1024 tokens）。规模对齐客户场景的原因：若缺陷为规模相关（仅超长前缀的
+# cache_control 不落实），过短的测试前缀将无法复现。
+K3_PREFIX_FILLER_UNIT = (
+    "本知识库涵盖产品规格、接口说明、计费策略、常见问题与处理流程，"
+    "供客服助手检索引用。"
+)
+K3_PREFIX_TARGET_CHARS = 190000
+K3_PREFIX_FILLER = K3_PREFIX_FILLER_UNIT * (
+    K3_PREFIX_TARGET_CHARS // len(K3_PREFIX_FILLER_UNIT) + 1
+)
+
+# K3: 超长前缀（~11 万 tokens）的 prefill 耗时显著，参考 D 类用例的
+# 超时保护模式，保证单次请求超时下限
+K3_MIN_REQUEST_TIMEOUT = 1200
+
+# K3: 用户消息（缓存断言不依赖回答内容）
+K3_USER_MESSAGE = "请回复：收到。"
+
+# K4: 客户原始请求的 frequency_penalty 取值——OpenAI 规范允许 [-2, 2]，
+# -2 为合法极值。fp<0 按出现次数奖励已出现 token（正反馈），是"放大重复"
+# 的文档化数学行为；客户问题出在不传 max_tokens 时无界生成无法终止。
+K4_FREQUENCY_PENALTY = -2
+
+# K4: 3 个不同的用户提示词（客户原始 prompt 未提供）。连发 3 次、消息
+# 各异：单次调用可能无法严谨验证——钳制若未生效，单次请求也可能侥幸
+# 自然结束；不同消息降低偶然性，未钳制的退化重复更难在不同 prompt 下
+# 全部侥幸通过
+K4_USER_PROMPTS = (
+    "请用一段话介绍大语言模型的工作原理。",
+    "请简要说明云计算能给企业带来的核心价值。",
+    "请列举两种常见的排序算法，并各用一句话说明其特点。",
+)
+
+# K4: 相邻两次请求的间隔（秒）——第 1、2 次完成后间隔 3s 再发起下一次
+# （末次后不等待），3 次总计额外约 6s
+K4_REQUEST_INTERVAL_SECONDS = 3
+
+# K4: 单次请求的响应时间预算（秒），按请求独立生效（3 次共享同一
+# 预算客户端，timeout 在每次请求上生效）。平台修复契约为 fp<0 按 0
+# 处理，修复后每次请求与普通请求无异、数秒内即应返回；未修复时退化
+# 重复会一直生成到上下文上限，远超任何网关/客户端超时。预算即挂起
+# 检测护栏：超预算无响应 = 客户问题复现。取 120s：远大于正常请求耗时，
+# 又控制在单用例可承受范围（3 次最坏 360s）。
+K4_RESPONSE_BUDGET_SECONDS = 120
+
+# K4: 修复契约下的自然结束原因——未传 max_tokens，正常生成应自然停止；
+# length 表示生成跑满输出上限（=剩余上下文），即退化重复未被钳制的特征
+K4_NATURAL_FINISH_REASONS = ("stop", "eos", "ended")
+
+
+class TestCustomerIssue(BaseTest, StreamingTestMixin):
+    """客户问题复现测试类"""
+
+    def get_test_category(self) -> str:
+        return "K. 客户问题复现"
+
+    @staticmethod
+    def _collect_stream_tool_calls(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """从流式 chunks 中聚合 tool_calls 增量片段
+
+        OpenAI 流式协议中 tool_calls 以增量片段下发（按 index 分片，
+        function.arguments 逐段追加），需按 index 聚合才是完整调用。
+        """
+        aggregated: Dict[int, Dict[str, Any]] = {}
+        for chunk in result.get("chunks", []):
+            choices = chunk.get("choices", [])
+            if not choices:
+                continue
+            delta = choices[0].get("delta", {}) or {}
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                entry = aggregated.setdefault(
+                    idx, {"id": None, "name": "", "arguments": ""}
+                )
+                if tc.get("id"):
+                    entry["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    entry["name"] += fn["name"]
+                if fn.get("arguments"):
+                    entry["arguments"] += fn["arguments"]
+        return [aggregated[k] for k in sorted(aggregated)]
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    @pytest.mark.smoke
+    def test_pydantic_schema_tool_call_stream(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K1 [P0]: 客户问题 - Pydantic $defs/$ref Schema 工具调用报【$$不兼容】
+
+        客户使用 glm-5.3 发起 thinking+stream+强制 tool_choice 的通话分析请求，
+        tools 的 parameters 为 Pydantic v2 自动生成的 JSON Schema（含
+        $defs/$ref 引用），服务端报错【$$不兼容】。本用例按客户原始 curl
+        原样复现请求，验证：
+        - 服务端正常处理该请求并返回流式 chunks（不报 $$ 相关错误）
+        - 返回强制指定的 submit_d2_product 工具调用（含 id）
+        - 工具参数为合法 JSON 且满足 schema 必填项（core_work_type）
+        - stream_options.include_usage 的 usage 返回（缺失仅告警）
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - Pydantic $defs/$ref Schema 工具调用 ==="
+        )
+
+        messages = [
+            {"role": "system", "content": K1_SYSTEM_PROMPT},
+            {"role": "user", "content": K1_USER_PROMPT},
+        ]
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "max_tokens": 4096,
+                "temperature": 0.1,
+                "thinking": {"type": "enabled"},
+                "tools": "submit_d2_product ($defs/$ref schema)",
+                "tool_choice": "forced submit_d2_product",
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+        )
+
+        # 按客户原始 curl 原样下发：thinking + stream + 强制 tool_choice +
+        # Pydantic $defs/$ref Schema + stream_options.include_usage
+        response_iter = api_client.chat_completion_stream(
+            messages,
+            temperature=0.1,
+            max_tokens=4096,
+            thinking={"type": "enabled"},
+            tools=K1_TOOLS_SUBMIT_D2_PRODUCT,
+            tool_choice=K1_TOOL_CHOICE,
+            stream_options={"include_usage": True},
+        )
+        result = self.collect_stream_chunks(response_iter)
+        tool_calls = self._collect_stream_tool_calls(result)
+
+        self.log_full_response(
+            test_logger,
+            {
+                "chunks_count": len(result["chunks"]),
+                "content": result["content"][:2000],
+                "reasoning": (
+                    result["reasoning"][:2000] if result["reasoning"] else ""
+                ),
+                "tool_calls": tool_calls,
+            },
+            "K1-客户问题复现($defs/$ref Schema)",
+        )
+
+        # 核心验证：含 $defs/$ref Schema 的请求可被正常处理
+        assert len(result["chunks"]) > 0, (
+            "No streaming chunks received — 客户问题复现失败：服务端未能处理"
+            "含 $defs/$ref Schema 的工具调用请求（原始报错【$$不兼容】）"
+        )
+
+        # 工具调用场景 finish_reason 应为 tool_calls；
+        # 思考模型在 reasoning 耗尽 max_tokens 时可能为 length
+        finish_reason = None
+        for chunk in reversed(result["chunks"]):
+            if chunk.get("choices"):
+                finish_reason = chunk["choices"][0].get("finish_reason")
+                break
+        assert finish_reason in ("tool_calls", "stop", "eos", "ended", "length"), (
+            f"finish_reason should be 'tool_calls' (or stop/eos/ended/length), "
+            f"got '{finish_reason}'"
+        )
+        test_logger.info(f"finish_reason: {finish_reason}")
+
+        # 强制 tool_choice 下必须返回指定的工具调用
+        assert len(tool_calls) > 0, (
+            "tool_choice 强制指定 submit_d2_product，"
+            "但流式响应中未聚合到任何 tool_calls"
+        )
+        first_call = tool_calls[0]
+        assert first_call["name"] == "submit_d2_product", (
+            f"Expected forced tool 'submit_d2_product', got '{first_call['name']}'"
+        )
+        assert first_call.get("id"), "Tool call should have non-empty 'id'"
+
+        # 工具参数必须是合法 JSON（流式增量聚合后）
+        args_raw = first_call["arguments"]
+        try:
+            args = json.loads(args_raw) if args_raw.strip() else {}
+        except json.JSONDecodeError as e:
+            pytest.fail(
+                f"Tool call arguments is not valid JSON: {args_raw[:500]}, error: {e}"
+            )
+
+        # schema 必填项校验：required = ["core_work_type"]
+        assert "core_work_type" in args, (
+            f"Tool arguments missing required field 'core_work_type': {args}"
+        )
+        core_work_type = args["core_work_type"]
+        assert (
+            isinstance(core_work_type, str) and core_work_type.strip()
+        ), f"'core_work_type' should be a non-empty string, got: {core_work_type!r}"
+
+        # stream_options.include_usage 软校验：usage 缺失仅告警（部分部署不实现）
+        usage = next(
+            (c.get("usage") for c in reversed(result["chunks"]) if c.get("usage")),
+            None,
+        )
+        if not usage:
+            test_logger.warning(
+                "stream_options.include_usage=true 但流式响应中未携带 usage，"
+                "当前部署可能未实现该参数"
+            )
+
+        test_logger.info(
+            f"客户问题复现通过: tool={first_call['name']}, "
+            f"core_work_type={core_work_type}, "
+            f"reasoning_len={len(result['reasoning'])}, "
+            f"chunks={len(result['chunks'])}"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    @pytest.mark.smoke
+    def test_repeated_request_stability(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K2 [P0]: 客户问题 - 同一请求循环执行5次返回信息异常
+
+        客户循环执行同一 curl 命令（thinking+stream+logprobs+top_logprobs+n+
+        frequency_penalty/presence_penalty+user 字段+X-Cache-Buster 防缓存头）
+        5 次左右出现返回信息异常。本用例按客户原始 curl 原样复现并连续执行
+        5 次（相邻请求间隔 3s），验证：
+        - 每次请求均被服务端正常处理并返回流式 chunks
+        - 每次 finish_reason 合法
+        - 每次正式回答内容非空
+        5 次全部正常才判定通过；任一次异常即失败，并报告第几次及异常详情。
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 同一请求循环执行 %d 次返回信息异常 ==="
+            % K2_REPEAT_TIMES
+        )
+
+        messages = [
+            {"role": "system", "content": K2_SYSTEM_PROMPT},
+            {"role": "user", "content": K2_USER_PROMPT},
+        ]
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "max_tokens": 2048,
+                "temperature": 1,
+                "thinking": {"type": "enabled"},
+                "logprobs": True,
+                "top_logprobs": 4,
+                "n": 1,
+                "frequency_penalty": 0,
+                "presence_penalty": 0,
+                "top_p": 0.95,
+                "user": K2_USER_ID,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                "X-Cache-Buster": "每次迭代更新（$(date +%s)）",
+            },
+        )
+
+        for i in range(1, K2_REPEAT_TIMES + 1):
+            # 客户 curl 通过 -H "X-Cache-Buster: $(date +%s)" 防缓存，
+            # 每次执行生成新值；此处同样在每次迭代前更新该请求头
+            # （追加迭代序号保证 5 次快速执行间取值也唯一）
+            api_client.session.headers["X-Cache-Buster"] = (
+                f"{int(time.time())}_{i}"
+            )
+
+            # 按客户原始 curl 原样下发全部参数
+            try:
+                response_iter = api_client.chat_completion_stream(
+                    messages,
+                    temperature=1,
+                    max_tokens=2048,
+                    logprobs=True,
+                    n=1,
+                    thinking={"type": "enabled"},
+                    user=K2_USER_ID,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    stream_options={"include_usage": True},
+                    top_logprobs=4,
+                    top_p=0.95,
+                )
+                result = self.collect_stream_chunks(response_iter)
+            except Exception as e:
+                pytest.fail(
+                    f"第 {i}/{K2_REPEAT_TIMES} 次请求异常"
+                    f"——客户问题复现失败：{e}"
+                )
+
+            # 响应正常：流式 chunks 非空（HTTP 非 200 时 chat_completion_stream
+            # 已直接抛异常，走到这里说明请求本身成功）
+            assert len(result["chunks"]) > 0, (
+                f"第 {i}/{K2_REPEAT_TIMES} 次请求未返回任何 SSE chunk"
+                "——客户问题复现失败：循环执行出现返回信息异常"
+            )
+
+            # 响应正常：finish_reason 合法
+            finish_reason = None
+            for chunk in reversed(result["chunks"]):
+                if chunk.get("choices"):
+                    finish_reason = chunk["choices"][0].get("finish_reason")
+                    break
+            assert finish_reason in ("tool_calls", "stop", "eos", "ended", "length"), (
+                f"第 {i}/{K2_REPEAT_TIMES} 次请求 finish_reason 异常: "
+                f"'{finish_reason}'"
+            )
+
+            # 内容正常：正式回答非空
+            content = result["content"].strip()
+            assert content, (
+                f"第 {i}/{K2_REPEAT_TIMES} 次请求返回内容为空"
+                "——客户问题复现失败：循环执行出现返回信息异常"
+            )
+
+            # 软观察（不判失败）：system prompt 要求每次回答以
+            # "很高兴为您服务"开头，偏离时记录告警供问题定位
+            if not content.startswith("很高兴为您服务"):
+                test_logger.warning(
+                    f"第 {i}/{K2_REPEAT_TIMES} 次回答未以'很高兴为您服务'开头"
+                    f"（system prompt 要求）: {content[:80]}"
+                )
+
+            # 软观察：stream_options.include_usage 的 usage 返回
+            usage = next(
+                (c.get("usage") for c in reversed(result["chunks"]) if c.get("usage")),
+                None,
+            )
+            if not usage:
+                test_logger.warning(
+                    f"第 {i}/{K2_REPEAT_TIMES} 次请求 stream_options.include_usage=true "
+                    "但流式响应中未携带 usage"
+                )
+
+            test_logger.info(
+                f"第 {i}/{K2_REPEAT_TIMES} 次正常: finish_reason={finish_reason}, "
+                f"content={content[:60]}, "
+                f"reasoning_len={len(result['reasoning'])}, "
+                f"chunks={len(result['chunks'])}, usage={'有' if usage else '无'}"
+            )
+
+            # 相邻请求间隔（末次后不等待）
+            if i < K2_REPEAT_TIMES:
+                time.sleep(K2_REQUEST_INTERVAL_SECONDS)
+
+        test_logger.info(
+            f"客户问题复现通过: 同一请求连续执行 {K2_REPEAT_TIMES} 次，"
+            "响应与内容均正常"
+        )
+
+    @staticmethod
+    def _anthropic_stream_request(
+        api_client: ModelAPIClient,
+        payload: Dict[str, Any],
+        test_logger,
+        label: str,
+    ) -> Dict[str, Any]:
+        """通过 Anthropic 协议发送流式请求并解析 SSE，返回合并后的 usage
+
+        端点为 {base_url}/anthropic/v1/messages（与客户网关布局一致），
+        鉴权使用 x-api-key 头 + anthropic-version 协议头。
+        usage 提取自 message_start（message.usage）与 message_delta（usage），
+        后者覆盖前者（累计值）。
+        """
+        url = f"{api_client.base_url}/anthropic/v1/messages"
+        headers = {"anthropic-version": K3_ANTHROPIC_VERSION}
+        if api_client.api_key:
+            headers["x-api-key"] = api_client.api_key
+        try:
+            response = api_client.session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=api_client.timeout,
+                stream=True,
+            )
+        except Exception as e:
+            pytest.fail(f"{label} 发送失败（{url}）: {e}")
+
+        if response.status_code != 200:
+            pytest.fail(
+                f"{label} 请求失败 HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
+        usage: Dict[str, Any] = {}
+        events = 0
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8")
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            events += 1
+            evt_usage = None
+            if event.get("type") == "message_start":
+                evt_usage = (event.get("message") or {}).get("usage")
+            elif event.get("type") == "message_delta":
+                evt_usage = event.get("usage")
+            if evt_usage:
+                usage.update(evt_usage)
+        if events == 0:
+            pytest.fail(f"{label} 未返回任何 SSE 事件（{url}）")
+        test_logger.info(f"{label} usage: {usage}")
+        return usage
+
+    @staticmethod
+    def _cache_usage_field(usage: Dict[str, Any], *names: str) -> int:
+        """从 usage 中取缓存计数值，兼容协议字段名与网关内部字段名两种拼写"""
+        for name in names:
+            value = usage.get(name)
+            if isinstance(value, (int, float)) and value > 0:
+                return int(value)
+        return 0
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    @pytest.mark.smoke
+    def test_anthropic_prompt_cache_creation(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K3 [P0]: 客户问题 - Anthropic 协议请求 cache_creation_tokens 一直为 0
+
+        客户通过 Anthropic 协议（/anthropic/v1/messages，stream=true）发送带
+        prompt cache 的请求，服务端日志 anthropic cache stats 中
+        cache_creation_tokens 一直为 0（同时 cache_read_tokens 有值），
+        说明 cache_control 断点未被落实。本用例构造带 cache_control 断点的
+        唯一长前缀（约 11 万 tokens，对齐客户 prompt_tokens=111283 的场景
+        规模，同时远超 Anthropic 协议最小可缓存长度），连续发送两次请求：
+        - 第 1 次（唯一新前缀）：cache_creation_input_tokens > 0（创建缓存）
+        - 第 2 次（相同前缀）：cache_read_input_tokens > 0（命中缓存）
+        字段名兼容 Anthropic 协议（cache_creation_input_tokens）与客户日志
+        网关内部名（cache_creation_tokens）两种拼写。
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - Anthropic 协议 prompt cache 未创建 ==="
+        )
+
+        # 唯一批次号置于前缀最前：保证本次运行不会命中历史运行遗留的缓存
+        run_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        prefix_text = f"文档批次编号：{run_id}\n" + K3_PREFIX_FILLER
+
+        # 超长前缀（~11 万 tokens）prefill 耗时显著，参考 D 类用例的
+        # 超时保护模式：保证单次请求超时下限（配置已 >= 该值时为 no-op）
+        original_timeout = api_client.timeout
+        api_client.timeout = max(original_timeout, K3_MIN_REQUEST_TIMEOUT)
+        try:
+            self._run_anthropic_cache_verification(
+                api_client, prefix_text, run_id, test_logger
+            )
+        finally:
+            api_client.timeout = original_timeout
+
+    def _run_anthropic_cache_verification(
+        self, api_client: ModelAPIClient, prefix_text: str, run_id: str, test_logger
+    ):
+        """K3 核心逻辑：带 cache_control 断点的唯一长前缀连发两次验证缓存创建/命中"""
+
+        payload = {
+            "model": api_client.model_name,
+            "max_tokens": K3_MAX_TOKENS,
+            "system": [
+                {
+                    "type": "text",
+                    "text": prefix_text,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [{"role": "user", "content": K3_USER_MESSAGE}],
+            "stream": True,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        f"[可缓存长前缀 {len(prefix_text)} 字符，批次 {run_id}]"
+                    ),
+                },
+                {"role": "user", "content": K3_USER_MESSAGE},
+            ],
+            {
+                "protocol": "anthropic (/anthropic/v1/messages)",
+                "anthropic-version": K3_ANTHROPIC_VERSION,
+                "max_tokens": K3_MAX_TOKENS,
+                "stream": True,
+                "cache_control": "ephemeral（system 前缀断点）",
+            },
+        )
+
+        # 第 1 次请求：唯一新前缀，期望触发缓存创建
+        usage1 = self._anthropic_stream_request(
+            api_client, payload, test_logger, "第 1 次请求（唯一前缀）"
+        )
+        creation1 = self._cache_usage_field(
+            usage1, "cache_creation_input_tokens", "cache_creation_tokens"
+        )
+        read1 = self._cache_usage_field(
+            usage1, "cache_read_input_tokens", "cache_read_tokens"
+        )
+        input1 = usage1.get("input_tokens", 0)
+        test_logger.info(
+            f"第 1 次请求（唯一前缀）: input_tokens={input1}, "
+            f"cache_creation={creation1}, cache_read={read1}"
+        )
+        if input1 and input1 < 1024:
+            test_logger.warning(
+                f"input_tokens={input1} 低于 Anthropic 协议最小可缓存长度"
+                "（1024 tokens），cache_creation 为 0 可能是前缀过短所致，"
+                "请加大 K3_PREFIX_TARGET_CHARS"
+            )
+        elif input1 and input1 < 100000:
+            test_logger.info(
+                f"input_tokens={input1} 低于客户场景规模（111283），"
+                "如疑似规模相关问题请加大 K3_PREFIX_TARGET_CHARS"
+            )
+
+        # 第 2 次请求：相同前缀，期望命中缓存
+        usage2 = self._anthropic_stream_request(
+            api_client, payload, test_logger, "第 2 次请求（相同前缀）"
+        )
+        creation2 = self._cache_usage_field(
+            usage2, "cache_creation_input_tokens", "cache_creation_tokens"
+        )
+        read2 = self._cache_usage_field(
+            usage2, "cache_read_input_tokens", "cache_read_tokens"
+        )
+        test_logger.info(
+            f"第 2 次请求（相同前缀）: cache_creation={creation2}, "
+            f"cache_read={read2}"
+        )
+
+        # 核心断言 1：携带 cache_control 断点的新前缀必须创建缓存
+        # （客户问题：cache_creation_tokens 一直为 0，未创建缓存）
+        assert creation1 > 0, (
+            f"客户问题复现失败：携带 cache_control 断点的新前缀请求 "
+            f"cache_creation_tokens={creation1}（一直为 0，未创建缓存）。"
+            f"input_tokens={input1}, usage={usage1}"
+        )
+
+        # 核心断言 2：相同前缀的第 2 次请求必须命中缓存
+        assert read2 > 0, (
+            f"相同前缀第 2 次请求未命中缓存: cache_read_tokens={read2}"
+            f"（第 1 次已创建 {creation1}）, usage={usage2}"
+        )
+
+        test_logger.info(
+            f"客户问题复现通过: 第 1 次创建 {creation1} tokens, "
+            f"第 2 次命中 {read2} tokens"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    def test_negative_frequency_penalty_treated_as_zero(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K4 [P0]: 客户问题 - frequency_penalty=-2 且不传 max_tokens 请求一直无返回
+
+        客户问题：frequency_penalty=-2（OpenAI 规范 [-2,2] 的合法极值）且
+        不传 max_tokens 时请求一直没有返回。机理：fp<0 按出现次数奖励已
+        出现 token，形成无饱和正反馈，循环 token 的 logit 持续增长压制
+        EOS，自然终止失效；输出上限=剩余上下文（可能十余万 tokens），
+        生成耗时远超网关/客户端超时，观感即"一直没有返回"。
+        平台修复契约：frequency_penalty<0 时按 0 处理（防御性钳制）。
+        因此本用例输入保持客户原值 -2、不传 max_tokens，连发 3 次
+        （消息各异、相邻间隔 3s——仅一次调用可能无法严谨验证问题），
+        断言每次都按 fp=0 的预期结果：
+        - 单次响应时间预算内返回（超预算无响应 = 客户问题复现）
+        - finish_reason 为自然结束（stop/eos/ended，而非跑满上限的 length）
+        - 回答内容非空
+        3 次全部正常结束才判定通过；任一次异常即失败，并报告第几次。
+        本用例不进 smoke 集：未修复时最坏耗时约
+        3×K4_RESPONSE_BUDGET_SECONDS，避免拖慢冒烟套件
+        （决策记录见 docs/test_k_customer_issue.md）。
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - frequency_penalty=-2 不传 max_tokens 无返回"
+            f"（连发 {len(K4_USER_PROMPTS)} 次，消息各异）==="
+        )
+
+        # 专用预算客户端（F8 先例）：短超时 + retry_times=0，保证未修复时
+        # 单次最坏耗时 = 单次预算而非预算×(重试+1)；构造时只透传鉴权与
+        # 模型，不携带全局采样参数，保持客户原始参数面
+        budget_client = ModelAPIClient(
+            api_key=api_client.api_key,
+            base_url=api_client.base_url,
+            model_name=api_client.model_name,
+            timeout=K4_RESPONSE_BUDGET_SECONDS,
+            config=api_client.config,
+            retry_times=0,
+        )
+        url = f"{budget_client.base_url}/v1/chat/completions"
+
+        try:
+            for i, prompt in enumerate(K4_USER_PROMPTS, start=1):
+                self._run_k4_request(budget_client, url, i, prompt, test_logger)
+                # 相邻请求间隔（末次后不等待）
+                if i < len(K4_USER_PROMPTS):
+                    time.sleep(K4_REQUEST_INTERVAL_SECONDS)
+        finally:
+            budget_client.close()
+
+        test_logger.info(
+            "客户问题复现通过: frequency_penalty=-2 已按 0 处理，未传 "
+            f"max_tokens 连发 {len(K4_USER_PROMPTS)} 次（消息各异）"
+            "均正常返回并自然结束"
+        )
+
+    @staticmethod
+    def _run_k4_request(
+        budget_client: ModelAPIClient,
+        url: str,
+        index: int,
+        prompt: str,
+        test_logger,
+    ) -> None:
+        """K4 单次请求核心逻辑：fp=-2、不传 max_tokens，按 fp=0 预期断言
+
+        任一步失败即判失败并报告第 {index}/{len(K4_USER_PROMPTS)} 次。
+        """
+        messages = [{"role": "user", "content": prompt}]
+        TestLogger.log_request(
+            test_logger,
+            messages,
+            {
+                "frequency_penalty": K4_FREQUENCY_PENALTY,
+                "max_tokens": "未传（客户原始请求）",
+                "stream": False,
+                "request": f"第 {index}/{len(K4_USER_PROMPTS)} 次（消息各异）",
+            },
+        )
+
+        # 客户请求形态：仅 model/messages/frequency_penalty，不带 max_tokens。
+        # chat_completion 封装会强制注入默认 max_tokens=2048 与 temperature，
+        # 破坏"不传 max_tokens"的前提，故按 K3 先例手工构造 payload 直发
+        payload = {
+            "model": budget_client.model_name,
+            "messages": messages,
+            "frequency_penalty": K4_FREQUENCY_PENALTY,
+            "stream": False,
+        }
+
+        started = time.time()
+        try:
+            response = budget_client._post_with_retry(url, payload, stream=False)
+        except requests.exceptions.Timeout as e:
+            pytest.fail(
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求客户问题复现失败："
+                f"frequency_penalty={K4_FREQUENCY_PENALTY} 且未传 max_tokens，"
+                f"{K4_RESPONSE_BUDGET_SECONDS}s 内无任何响应（fp<0 未按 0 处理，"
+                f"退化重复导致无界生成），耗时 {time.time() - started:.1f}s: {e}"
+            )
+        except Exception as e:
+            pytest.fail(
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求发送异常（{url}）: {e}"
+            )
+        elapsed = time.time() - started
+
+        if response.status_code != 200:
+            pytest.fail(
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求失败 "
+                f"HTTP {response.status_code}: {response.text[:500]}"
+            )
+
+        try:
+            result = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            pytest.fail(
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次响应不是合法 JSON: {e}. "
+                f"响应体: {response.text[:300]}"
+            )
+
+        choices = result.get("choices") or []
+        assert choices, (
+            f"第 {index}/{len(K4_USER_PROMPTS)} 次响应缺少 choices: "
+            f"{json.dumps(result, ensure_ascii=False)[:500]}"
+        )
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = (message.get("content") or "").strip()
+        finish_reason = choice.get("finish_reason")
+
+        # 核心断言 1：修复契约（fp<0 按 0 处理）下应自然结束——未传
+        # max_tokens，正常生成自然停止；length 表示生成跑满输出上限
+        # （=剩余上下文），即退化重复未被钳制的特征
+        assert finish_reason in K4_NATURAL_FINISH_REASONS, (
+            f"第 {index}/{len(K4_USER_PROMPTS)} 次客户问题复现失败："
+            f"frequency_penalty={K4_FREQUENCY_PENALTY} 应按 0 处理（防御性"
+            f"钳制），但 finish_reason='{finish_reason}'（期望自然结束 "
+            f"{K4_NATURAL_FINISH_REASONS}；length 表示生成跑满输出上限，"
+            f"即退化重复未被钳制），耗时 {elapsed:.1f}s，消息: {prompt[:30]}"
+        )
+
+        # 核心断言 2：回答内容非空
+        assert content, (
+            f"第 {index}/{len(K4_USER_PROMPTS)} 次客户问题复现失败："
+            f"返回内容为空，finish_reason={finish_reason}，"
+            f"耗时 {elapsed:.1f}s，消息: {prompt[:30]}"
+        )
+
+        # 软观察：耗时超过单次预算一半时告警（修复后正常应数秒内返回）
+        if elapsed > K4_RESPONSE_BUDGET_SECONDS / 2:
+            test_logger.warning(
+                f"第 {index}/{len(K4_USER_PROMPTS)} 次请求耗时 {elapsed:.1f}s，"
+                f"超过预算 {K4_RESPONSE_BUDGET_SECONDS}s 的一半（修复后正常应"
+                f"数秒内返回），请关注服务负载"
+            )
+
+        TestLogger.log_response(
+            test_logger, result, f"K4-响应（第 {index} 次）"
+        )
+        test_logger.info(
+            f"第 {index}/{len(K4_USER_PROMPTS)} 次正常（fp="
+            f"{K4_FREQUENCY_PENALTY} 按 0 处理）: finish_reason={finish_reason}, "
+            f"completion_tokens="
+            f"{(result.get('usage') or {}).get('completion_tokens')}, "
+            f"耗时 {elapsed:.1f}s, 消息: {prompt[:30]}"
+        )

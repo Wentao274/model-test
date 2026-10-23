@@ -82,6 +82,8 @@ def main():
                         marker = "i_quality_completions"
                     elif test_id.startswith("J"):
                         marker = "j_clear_thinking"
+                    elif test_id.startswith("K"):
+                        marker = "k_customer_issue"
                     else:
                         marker = "unknown"
 

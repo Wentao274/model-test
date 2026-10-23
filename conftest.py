@@ -68,6 +68,9 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_seed_reproducibility",    # A10: seed 可复现性（seed=42 一致性断言）
     "test_invalid_parameters",       # F3: 非法参数校验（temperature=-1/5.0）
     "test_generation_consistency",  # H2/I2: temperature=0 生成一致性断言
+    "test_pydantic_schema_tool_call_stream",  # K1: 客户问题复现（按客户原始 curl 参数执行）
+    "test_repeated_request_stability",  # K2: 客户问题复现（按客户原始 curl 参数执行）
+    "test_negative_frequency_penalty_treated_as_zero",  # K4: 客户问题复现（按客户原始 curl 参数执行）
 }
 
 
@@ -621,6 +624,8 @@ def pytest_collection_modifyitems(config, items):
         elif "test_i_" in item.nodeid:
             item.add_marker(pytest.mark.i_quality_completions)
             item.add_marker(pytest.mark.skip(reason="I类Completions质量测试已禁用"))
+        elif "test_k_customer_" in item.nodeid:
+            item.add_marker(pytest.mark.k_customer_issue)
 
 
 def pytest_configure(config):
@@ -646,6 +651,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "j_clear_thinking: J类测试 - clear_thinking 参数行为",
+    )
+    config.addinivalue_line(
+        "markers",
+        "k_customer_issue: K类测试 - 客户问题复现（全部P0）",
     )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
@@ -806,6 +815,8 @@ def _match_test_category(report):
         marker_from_file = "i_quality_completions"
     elif test_file_basename.startswith("test_j_"):
         marker_from_file = "j_clear_thinking"
+    elif test_file_basename.startswith("test_k_customer_"):
+        marker_from_file = "k_customer_issue"
 
     test_func_base = (
         test_func.replace("test_", "")

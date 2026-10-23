@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（10 大类 × 110 个测试点）
+## 二、测试点总览（11 大类 × 114 个测试点）
 
 ### 分类概览
 
@@ -37,6 +37,7 @@
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
+| K. 客户问题复现 | 4    | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制），全部 P0，持续追加 |
 
 ---
 
@@ -237,6 +238,19 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | J10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | J11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（J8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
+### K. 客户问题复现（4 项）
+
+收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
+场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
+测试点"中的 Kimi 专项 K1-K4 编号相互独立（本类为测试分类编号）。
+
+| #   | 测试点                            | 测试内容                                                                                     | 验证方法                                                                 | 优先级 |
+|-----|--------------------------------|--------------------------------------------------------------------------------------------|--------------------------------------------------------------------|-----|
+| K1  | Pydantic $defs/$ref Schema 工具调用 | 客户问题：glm-5.3 流式请求（thinking+stream+stream_options+强制 tool_choice+Pydantic v2 生成的 $defs/$ref Schema）报【$$不兼容】 | 按客户原始 curl 原样复现：断言流式 chunks 非空、finish_reason 合法、强制工具 submit_d2_product 返回（含 id）、参数为合法 JSON 且必填 core_work_type 非空、usage 软校验 | P0  |
+| K2  | 同一请求循环执行5次返回信息异常 | 客户问题：同一 curl（logprobs+top_logprobs+n+thinking+stream+X-Cache-Buster 防缓存头）循环执行 5 次左右出现返回信息异常 | 按客户原始 curl 原样复现并连续执行 5 次（相邻间隔 3s）：断言每次流式 chunks 非空、finish_reason 合法、内容非空；5 次全部正常才 PASS，失败时报告第几次 | P0  |
+| K3  | Anthropic 协议 prompt cache 未创建 | 客户问题：Anthropic 协议（/anthropic/v1/messages，stream=true）请求（prompt_tokens=111283）的服务端日志 cache_creation_tokens 一直为 0（未创建缓存） | 构造带 cache_control 断点的唯一长前缀（~11 万 tokens，对齐客户场景规模）连发两次：断言第 1 次 cache_creation_input_tokens>0（创建）、第 2 次 cache_read_input_tokens>0（命中）；兼容网关内部字段名拼写 | P0  |
+| K4  | frequency_penalty=-2 不传 max_tokens 无返回 | 客户问题：fp=-2（OpenAI 规范 [-2,2] 合法极值）且不传 max_tokens 时退化重复导致无界生成、请求一直无返回（fp<0 奖励已出现 token 压制 EOS，自然终止失效） | 修复契约 fp<0 按 0 处理：输入保持 -2、不传 max_tokens 连发 3 次（消息各异，相邻间隔 3s），断言每次均按 fp=0 预期——单次 120s 预算内返回、finish_reason 自然结束（非 length）、内容非空；任一次失败报告第几次；专用预算客户端（retry=0）检测挂起 | P0  |
+
 ---
 
 ## 四、按模型特性的差异化测试点
@@ -283,23 +297,24 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 
 ## 五、测试执行优先级建议
 
-### P0（上线必测，36 项）
+### P0（上线必测，39 项）
 
 ```
 A1-A5, A8        基础推理 6 项
 B1, B4           高级功能 2 项（B1 思考模式、B4 单工具调用）
 B8, B9           结构化输出 2 项
-                    多模态 0 项（C 类已降为 P1/P2，仅视觉模型按需评估）
+                     多模态 0 项（C 类已降为 P1/P2，仅视觉模型按需评估）
 D1, D4, D5, D12  上下文处理 4 项（D4 超长上下文升至 P0，D2/D3/D11 降为 P1）
 E1-E8            性能指标 8 项
 F1, F4           稳定性 2 项（F1 空输入、F4 特殊字符注入；F2/F3/F5 降为 P1/P2）
 G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
-                    Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
-                    clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
+                     Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
+                     clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
+K1-K4            客户问题复现 4 项（K 类全部 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 = 36 项。
+总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 4 = 40 项。
 
 ### P1（选测，58 项）
 

@@ -592,6 +592,48 @@ TEST_CATEGORIES = {
             ),
         ],
     },
+    "k_customer_issue": {
+        "name": "K. 客户问题复现",
+        "criticality": "关键",
+        "tests": [
+            (
+                "K1",
+                "Pydantic $defs/$ref Schema 工具调用",
+                "客户问题复现：thinking+stream+强制tool_choice+Pydantic v2生成的"
+                "$defs/$ref JSON Schema 报【$$不兼容】，原样复现请求验证服务端兼容",
+                "pydantic_schema_tool_call_stream",
+                "P0",
+            ),
+            (
+                "K2",
+                "同一请求循环执行5次返回信息异常",
+                "客户问题复现：同一 curl（logprobs+top_logprobs+n+thinking+stream+"
+                "X-Cache-Buster）循环执行5次左右出现返回信息异常，原样复现并连续"
+                "执行5次（间隔3s），验证每次响应与内容均正常",
+                "repeated_request_stability",
+                "P0",
+            ),
+            (
+                "K3",
+                "Anthropic 协议 prompt cache 未创建",
+                "客户问题复现：Anthropic 协议（/anthropic/v1/messages）请求的"
+                "cache_creation_tokens 一直为0（未创建缓存），构造带 cache_control "
+                "断点的唯一长前缀连发两次，验证第1次创建、第2次命中",
+                "anthropic_prompt_cache_creation",
+                "P0",
+            ),
+            (
+                "K4",
+                "frequency_penalty=-2 不传 max_tokens 无返回",
+                "客户问题复现：fp=-2（合法极值）且不传 max_tokens 时退化重复导致"
+                "无界生成、请求一直无返回；修复契约为 fp<0 按 0 处理，输入保持 "
+                "-2、不传 max_tokens 连发 3 次（消息各异，间隔3s），断言每次均按"
+                "fp=0 预期（预算内返回+自然结束+内容非空）",
+                "negative_frequency_penalty_treated_as_zero",
+                "P0",
+            ),
+        ],
+    },
 }
 
 
