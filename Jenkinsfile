@@ -103,7 +103,9 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_frequency_penalty_treated_as_zero',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_disabled_suppresses_reasoning',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_temperature_tier',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_effort_reasoning_length'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_effort_reasoning_length',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_calls_tool',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_official_behavior'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

@@ -8,7 +8,8 @@
 - **原样复现**：system/user 提示词、tools 定义、tool_choice、thinking、stream、
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
-- **全部 P0**：客户报障场景纳入每次回归的必验范围，任何失败都应阻断发布。
+- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7 为
+  P0 必测（任何失败应阻断发布），K8/K9 按客户工单优先级为 P1。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免**：K 类用例加入 `RAW_SAMPLING_PARAM_TESTS` 豁免名单，全局
   `--sampling-params` 覆盖对其不生效，始终按客户原始采样参数执行。
@@ -27,7 +28,7 @@
    `api_client.chat_completion` / `chat_completion_stream`
    （特殊协议/参数形态按 K3/K4 先例手工构造 payload 直发）；
 3. 在文件头 docstring 与 `base/test_definitions.py` 的 `k_customer_issue` 类别中
-   登记测试点（编号 K{n}，优先级 P0，func_name 与测试方法名一致）。
+   登记测试点（编号 K{n}，优先级按客户工单 P0/P1，func_name 与测试方法名一致）。
 
 ## 测试点列表
 
@@ -40,6 +41,8 @@
 | K5 | thinking.type=disabled 后思考未关闭 | 客户问题复现：disabled 后 reasoning_tokens 仍>0、reasoning_content 照常输出，关思考相关功能全部失效；官方端点实测 disabled 应完全关闭思考（rt 为空、无思考内容、正文正常），输入保持 disabled+temperature=0.6 连发 3 次（消息各异），断言每次均符合官方实测预期 | P0 |
 | K6 | 关思考温度档未联动校验 | 官方契约（kimi-k3）：thinking 与 temperature 档位联动——disabled 仅允许 0.6（给 1 或 0 报 400 "only 0.6 is allowed for this model in non-thinking mode"）、enabled 仅允许 1（给 0.6 或 0 报 400 "only 1 is allowed for this model in thinking mode"）。对 6 个组合各发一次请求，断言合法组合 200+正文非空、非法组合 400+错误信息含官方文案 | P0 |
 | K7 | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃）。只按官方格式传参（无回退）：low→high→max 比对后 max→high→low 再比对（正逆两轮，medium 不参与对比）；最后 medium 顶层 200 放行、嵌套 thinking.effort=medium 预期 400；倒挂/持平不判失败，仅告警 | P0 |
+| K8 | required+闲聊必须调用工具（客户工单级别） | 客户工单原始问题：required+闲聊（"Reply with exactly: OK"）不发起工具调用——tool_calls 缺失、finish=length、ct 恒吃满 max_tokens、正文仅 OK；预期 finish=tool_calls、关思考 ct 较小、开思考 rt<max_tokens | 关思考 mt=1000/3000、开思考 mt=3000（get_weather 工具），断言 tool_calls+get_weather+arguments 合法 JSON、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
+| K9 | required+闲聊必须强制调用工具（按官方行为） | 官方实测：闲聊+required → finish=tool_calls、强制返回 get_weather（city 瞎猜不限定）、reasoning 仅 38；Alaya 同场景 finish=length、reasoning 吃满 256/2000 预算、tool_calls=None；有意图时两站一致正常 | 关/开思考 × mt=256/2000（与 K8 同场景不同级别），按官方行为断言 tool_calls 强制返回（get_weather、arguments 合法 JSON）、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
 
 ## 运行方式
 
@@ -423,3 +426,97 @@ reasoning_effort）。官方预期思考长度（reasoning_tokens）随档位递
 - 思考长度本身有随机性（temperature=1 采样），轻微倒挂可能偶发
   ——警告定位用；若稳定倒挂则为档位映射缺陷（如各档映射到同一
   后端思考预算参数）
+
+### test_required_chitchat_calls_tool (K8)
+
+**背景**：客户工单原始问题：`tool_choice=required` + 闲聊
+"Reply with exactly: OK"（无工具意图）下不发起工具调用——
+tool_calls 键缺失、finish=length、completion_tokens 恒被吃满
+max_tokens（关思考 1000/3000 级别均如此）、正文仅 "OK"、耗时
+~15.6s（正常 ~1.5s，双峰）；开思考下 reasoning 消耗远小于预算
+但整体仍被吃满（mt=3000 仍不调）。预期（工单）：finish 应为
+tool_calls 而非 length、关思考 ct 应较小、开思考 rt 应 <
+max_tokens、正文应正常收到调用工具的响应信息。
+
+**请求构造**：
+- tools=[get_weather(city)]（获取北京天气的工具）+
+  `tool_choice="required"`，user 提示词 "Reply with exactly: OK"
+  （客户原始口径，无工具意图——缺陷触发条件）
+- 轮次（客户实测级别）：关思考 mt=1000、关思考 mt=3000、开思
+  考 mt=3000
+- temperature 按网关档位联动约束：disabled→0.6、enabled→1（非
+  该值被 400 拒绝，无法构建场景）
+- 非流式手工 payload 直发（需 tools/tool_choice/max_tokens/档位
+  温度，chat_completion 封装会强制覆盖 max_tokens/temperature）
+
+**断言**（硬）：
+1. 每轮 HTTP 200 + choices + usage 存在（ct 判定数据源）
+2. tool_calls 存在且为 get_weather 函数调用（type=function、
+   name=get_weather）、arguments 为合法 JSON（city 值不限定）
+3. `finish_reason == "tool_calls"`（而非 length——length 即 token
+   预算被消耗殆尽的缺陷形态，关/开思考均不允许）
+4. `ct < max_tokens`（关思考下应较小；缺陷形态为 ct 恒吃满预算）
+5. 开思考：`rt < max_tokens`（思考不吃完预算；rt 双拼写兼容）
+
+**判定矩阵**：
+- 任一轮非 200 / 缺 choices / 缺 usage / 缺 completion_tokens →
+  FAIL（判定数据源被破坏）
+- 任一轮 tool_calls 缺失 / finish≠tool_calls / ct≥max_tokens /
+  （开思考）rt≥max_tokens 或 rt 未上报 → FAIL（缺陷形态）
+- 全部轮满足 → PASS
+
+**设计决策记录**：
+- **P1（按客户工单）**
+- **mt 级别**：关思考 1000/3000、开思考 3000——客户工单实测
+  级别（官方行为对照级别 256/2000 由 K9 验证，两用例同场景不
+  同级别）
+- **耗时不断言**：缺陷轮 15.6s 级 vs 正常 1.5s 级双峰仅日志留
+  痕——finish 断言已覆盖其缺陷形态，绝对耗时受网络抖动影响易
+  误报
+- **不进 smoke 集**：缺陷轮 15.6s 级长耗时 + 缺陷概率性
+
+**注意事项**：
+- 修复方向为上游 required 强制调用；K8/K9 同场景不同级别互补，
+  上游只修部分级别时另一用例仍可拦截
+
+### test_required_chitchat_official_behavior (K9)
+
+**背景**：官方 api.moonshot.cn/kimi-k3 实测：闲聊 "Reply with
+exactly: OK" + required → finish=tool_calls、强制返回 get_weather
+调用（city 瞎猜 London/UNKNOWN——值不限定）、reasoning 仅 38
+token——符合 [OI] required「必须发起至少一次工具调用」规范。
+Alaya 同场景缺陷：finish=length、reasoning 吃满 256/2000 预算、
+tool_calls=None；有工具意图时（北京天气）两站一致正常。
+
+**请求构造**：
+- tools=[get_weather(city)]、`tool_choice="required"`、user 提示
+  词 "Reply with exactly: OK"（客户原始口径，无工具意图）
+- 轮次（镜像 Alaya 缺陷实测级别）：关思考 mt=256、关思考
+  mt=2000、开思考 mt=256、开思考 mt=2000
+- temperature 按网关档位联动约束：disabled→0.6、enabled→1
+- 非流式手工 payload 直发（同 K8）
+
+**断言**（硬）：
+1. 每轮 HTTP 200 + choices + usage 存在
+2. tool_calls 强制返回且为 get_weather 函数调用、arguments 为合
+   法 JSON（city 值不限定——官方亦瞎猜）
+3. `finish_reason == "tool_calls"`（官方行为；而非 length）
+4. `ct < max_tokens`（预算不被吃满）
+5. 开思考：`rt < max_tokens`（官方同场景 reasoning 仅 38；缺陷
+   形态为吃满预算；rt 双拼写兼容）
+
+**判定矩阵**：
+- 任一轮 tool_calls 缺失 / finish≠tool_calls / ct≥max_tokens /
+  （开思考）rt≥max_tokens 或 rt 未上报 → FAIL（Alaya 缺陷形态：
+  finish=length、reasoning 吃满预算、tool_calls=None）
+- 全部轮满足 → PASS（对齐官方行为）
+
+**设计决策记录**：
+- **P1（按客户工单）**
+- **以官方行为为预期**：required「必须发起至少一次工具调用」，
+  官方闲聊场景亦强制返回 get_weather（city 瞎猜不限定）
+- **mt 级别 256/2000**：镜像 Alaya 缺陷实测级别（与 K8 客户工单
+  级别 1000/3000 同场景互补——上游只修部分级别时另一用例仍可
+  拦截）
+- **耗时不断言**：同 K8 理由（finish 断言已覆盖缺陷形态）
+- **不进 smoke 集**：缺陷轮 15.6s 级长耗时 + 缺陷概率性

@@ -74,6 +74,8 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_thinking_disabled_suppresses_reasoning",  # K5: 客户问题复现（按客户原始 curl 参数执行）
     "test_thinking_temperature_tier",  # K6: 客户问题复现（temperature 与 thinking 档位联动契约，不可被全局覆盖）
     "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约值，思考强度档位对比的前提，不可被全局覆盖）
+    "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊工具调用判定的前提，不可被全局覆盖）
+    "test_required_chitchat_official_behavior",  # K9: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊强制工具调用判定的前提，不可被全局覆盖）
 }
 
 

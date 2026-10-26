@@ -2,8 +2,8 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。所有用例优先级均为 P0，确保客户报障
-场景纳入每次回归的必验范围。
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7 为 P0
+（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -78,6 +78,38 @@ K. 客户问题复现测试
   400。档位倒挂/持平不判失败，仅告警记入报告（行为质量偏离而非
   服务故障）（不进 smoke 集：max 档思考生成为长耗时请求，同 K4
   理由）。
+- K8: required+闲聊必须调用工具（客户工单级别） [P1]
+  客户工单原始问题：tool_choice=required + 闲聊 "Reply with
+  exactly: OK"（无工具意图）下不发起工具调用——tool_calls 键缺
+  失、finish=length、completion_tokens 恒被吃满 max_tokens（关
+  思考 1000/3000 级别均如此）、正文仅 "OK"、耗时 ~15.6s（正常
+  ~1.5s，双峰）；开思考下 reasoning 消耗远小于预算但整体仍被
+  吃满（mt=3000 仍不调）。预期（工单）：required 必须发起工具
+  调用——finish 应为 tool_calls 而非 length、关思考 ct 应较
+  小、开思考 rt 应 < max_tokens、正文应正常收到调用工具的响应
+  信息。轮次（客户实测级别）：关思考 mt=1000、关思考 mt=3000、
+  开思考 mt=3000（get_weather 工具）。硬断言：每轮 200+choices+
+  usage 存在；tool_calls 存在且为 get_weather 调用（arguments
+  合法 JSON，city 值不限定）；finish_reason=="tool_calls"（而非
+  length，关/开思考均不允许）；ct < max_tokens（关思考下应较
+  小）；开思考 rt < max_tokens（rt 双拼写兼容）。temperature 按
+  网关档位联动取 0.6/1（非该值被 400 拒绝）。耗时双峰仅日志留
+  痕。（不进 smoke 集：缺陷轮 15.6s 级长耗时+缺陷概率性）
+- K9: required+闲聊必须强制调用工具（按官方行为） [P1]
+  官方 api.moonshot.cn/kimi-k3 实测：闲聊 "Reply with exactly:
+  OK" + required → finish=tool_calls、强制返回 get_weather 调用
+  （city 瞎猜 London/UNKNOWN，值不限定）、reasoning 仅 38 token
+  ——符合 [OI] required「必须发起至少一次工具调用」规范；Alaya
+  同场景缺陷：finish=length、reasoning 吃满 256/2000 预算、
+  tool_calls=None；有工具意图时（北京天气）两站一致正常。
+  本用例按官方行为为预期（与 K8 同场景不同级别：K8 为客户工单
+  级别，本用例镜像 Alaya 缺陷实测级别）：关/开思考 × mt=256/
+  2000。硬断言：每轮 200+choices+usage 存在；tool_calls 强制
+  返回（get_weather、arguments 合法 JSON，city 值不限定）；
+  finish_reason=="tool_calls"；ct < max_tokens；开思考 rt <
+  max_tokens（rt 双拼写兼容）。temperature 按网关档位联动取
+  0.6/1。耗时双峰仅日志留痕。（不进 smoke 集：缺陷轮 15.6s
+  级长耗时+缺陷概率性）
 """
 
 import json
@@ -1707,4 +1739,464 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"{summary_desc}；medium 顶层 reasoning_tokens="
             f"{medium_observation['reasoning_tokens']}，"
             "合法档位不参与对比）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p1
+    def test_required_chitchat_calls_tool(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K8 [P1]: 客户问题 - required+闲聊必须调用工具（客户工单级别，finish=tool_calls、预算不被吃满）
+
+        客户工单原始问题：tool_choice=required + 闲聊
+        "Reply with exactly: OK"（无工具意图）下不发起工具调用：
+        tool_calls 键缺失、finish=length、completion_tokens 恒被
+        吃满 max_tokens（关思考 1000/3000 级别均如此）、正文仅
+        "OK"、耗时 ~15.6s（正常 ~1.5s，双峰）；开思考下
+        reasoning 消耗远小于预算但整体仍被吃满（mt=3000 仍不调）。
+        预期（工单）：required 必须发起工具调用——finish 应为
+        tool_calls 而非 length；关思考 ct 应较小、耗时应较少；
+        开思考 rt 应 < max_tokens；正文应正常收到调用工具的响应
+        信息。
+        轮次（客户实测级别）：关思考 mt=1000、关思考 mt=3000、
+        开思考 mt=3000；工具定义 get_weather(city)（获取北京天气
+        的工具，city 值不限定）。temperature 按网关档位联动约束
+        取 disabled→0.6 / enabled→1（非该值被 400 拒绝，无法构
+        建场景）。每轮硬断言：
+        - HTTP 200 + choices + usage 存在（ct 判定数据源）
+        - tool_calls 存在且为 get_weather 函数调用，arguments 为
+          合法 JSON
+        - finish_reason == "tool_calls"（而非 length——length 即
+          token 预算被消耗殆尽的缺陷形态，关/开思考均不允许）
+        - ct < max_tokens（关思考下应较小；缺陷形态为恒吃满）
+        - 开思考：rt（reasoning tokens）< max_tokens（思考不吃完
+          预算）；rt 双拼写兼容
+        耗时双峰（缺陷 15.6s 级 vs 正常 1.5s 级）仅日志留痕——
+        finish 断言已覆盖其缺陷形态，不对绝对耗时硬断言（网络抖
+        动易误报）。官方行为对照级别（mt=256/2000）由 K9 验证。
+        （不进 smoke 集：缺陷轮 15.6s 级长耗时+缺陷概率性）
+        """
+        # K8: 工具定义——获取北京天气（get_weather(city)，客户工单
+        # 原始工具）
+        K8_TOOLS = [{
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        }]
+
+        # K8: 闲聊提示词（客户原始口径）——无工具意图 + required 即
+        # 缺陷触发条件
+        K8_USER_PROMPT = "Reply with exactly: OK"
+
+        # K8: 轮次（标签, thinking, temperature, max_tokens）——按客户
+        # 实测级别：关思考 mt=1000/3000、开思考 mt=3000；temperature
+        # 按网关档位联动约束（disabled→0.6、enabled→1，非该值被
+        # 400 拒绝、无法构建场景）
+        K8_ROUNDS = (
+            ("关思考 mt=1000", "disabled", 0.6, 1000),
+            ("关思考 mt=3000", "disabled", 0.6, 3000),
+            ("开思考 mt=3000", "enabled", 1, 3000),
+        )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - required+闲聊必须调用工具"
+            f"（{K8_USER_PROMPT}；关思考 mt=1000/3000、开思考 "
+            "mt=3000；断言 tool_calls+finish=tool_calls+ct/rt 不被"
+            "吃满；官方行为对照级别 256/2000 由 K9 验证）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_round(
+            label: str, thinking_type: str, temperature: float,
+            max_tokens: int,
+        ) -> None:
+            """K8 单轮：required+有工具意图，断言必须调用工具且预算不被吃满"""
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K8_USER_PROMPT}],
+                {
+                    "tools": [t["function"]["name"] for t in K8_TOOLS],
+                    "tool_choice": "required",
+                    "thinking": thinking_type,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                    "round": label,
+                },
+            )
+
+            # 手工构造 payload 直发（需 tools/tool_choice/max_tokens/
+            # 档位温度，chat_completion 封装会强制覆盖 max_tokens/
+            # temperature）
+            payload = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K8_USER_PROMPT}],
+                "tools": K8_TOOLS,
+                "tool_choice": "required",
+                "thinking": {"type": thinking_type},
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+
+            assert response.status_code == 200, (
+                f"[{label}] 客户问题复现失败：应 200 正常返回，实际 "
+                f"HTTP {response.status_code}: {response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"[{label}] 响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"[{label}] 响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls")
+            finish = choices[0].get("finish_reason")
+            usage = result.get("usage") or {}
+
+            # usage 为预算断言数据源，缺失即失败
+            assert usage, (
+                f"[{label}] 客户问题复现失败：响应缺少 usage——预算"
+                f"断言无从进行: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            ct = usage.get("completion_tokens")
+            assert isinstance(ct, int), (
+                f"[{label}] 客户问题复现失败：usage 缺少有效 "
+                f"completion_tokens: "
+                f"{json.dumps(usage, ensure_ascii=False)[:300]}"
+            )
+            # rt 双拼写兼容；缺失按 None（关思考不强制上报）
+            rt = usage.get("reasoning_tokens")
+            if rt is None:
+                details = usage.get("completion_tokens_details") or {}
+                rt = details.get("reasoning_tokens")
+
+            TestLogger.log_response(test_logger, result, f"K8-响应（{label}）")
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed={elapsed:.1f}s, ct={ct}, "
+                f"rt={rt}, finish={finish}, "
+                f"tool_calls={'有' if tool_calls else '无'}, "
+                f"content_len={len(content)}"
+            )
+
+            # 断言1：required 必须发起工具调用（缺陷形态：tool_calls
+            # 键缺失、正文仅 "OK"、ct 恒吃满预算、finish=length）
+            assert tool_calls, (
+                f"[{label}] 客户问题复现失败：required 下未发起工具"
+                f"调用——tool_calls 键缺失（finish={finish}、ct={ct}/"
+                f"{max_tokens}；缺陷形态：finish=length、completion_"
+                f"tokens 恒吃满 max_tokens、正文仅 OK）: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+            first = tool_calls[0] or {}
+            fn = first.get("function") or {}
+            assert (
+                first.get("type") == "function"
+                and fn.get("name") == "get_weather"
+            ), (
+                f"[{label}] 客户问题复现失败：工具调用形状异常（应 "
+                f"function/get_weather，实际 "
+                f"{json.dumps(first, ensure_ascii=False)[:200]}）"
+            )
+            try:
+                fn_args = json.loads(fn.get("arguments") or "")
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                pytest.fail(
+                    f"[{label}] 客户问题复现失败：工具调用 arguments "
+                    f"不是合法 JSON: {e}（{fn.get('arguments')!r}）"
+                )
+            assert isinstance(fn_args, dict), (
+                f"[{label}] 客户问题复现失败：工具调用 arguments 应为"
+                f" JSON 对象: {fn.get('arguments')!r}"
+            )
+
+            # 断言2：finish 必须为 tool_calls（length 即 token 预算
+            # 被消耗殆尽的缺陷形态——关/开思考均不允许，断言不分模式）
+            assert finish == "tool_calls", (
+                f"[{label}] 客户问题复现失败：finish_reason 应为 "
+                f"tool_calls（required 必须调用工具），实际 {finish}"
+                f"（ct={ct}/{max_tokens}、rt={rt}——token 被消耗殆尽"
+                f"的缺陷形态）: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+
+            # 断言3：预算不被吃满（缺陷形态：ct 恒==max_tokens）
+            assert ct < max_tokens, (
+                f"[{label}] 客户问题复现失败：completion_tokens={ct} "
+                f"吃满 max_tokens={max_tokens}——关思考下 ct 应较"
+                f"小、不被吃满"
+            )
+
+            # 断言4（开思考）：思考消耗应小于 max_tokens
+            if thinking_type == "enabled":
+                assert isinstance(rt, int) and rt >= 0, (
+                    f"[{label}] 客户问题复现失败：开思考下 usage 未上"
+                    f"报有效 reasoning_tokens（rt={rt}），无法验证"
+                    f"思考消耗 < max_tokens"
+                )
+                assert rt < max_tokens, (
+                    f"[{label}] 客户问题复现失败：reasoning tokens="
+                    f"{rt} 吃满/超出 max_tokens={max_tokens}——思考"
+                    f"不应吃完预算"
+                )
+
+        for label, thinking_type, temperature, max_tokens in K8_ROUNDS:
+            run_round(label, thinking_type, temperature, max_tokens)
+
+        test_logger.info(
+            "客户问题复现通过: required+闲聊 关思考 mt=1000/3000、"
+            "开思考 mt=3000 全部正常发起 get_weather 调用"
+            "（finish=tool_calls、ct/rt 均未吃满预算；官方行为对照"
+            "级别由 K9 验证）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p1
+    def test_required_chitchat_official_behavior(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K9 [P1]: 客户问题 - required+闲聊必须强制调用工具（按官方行为为预期）
+
+        官方 api.moonshot.cn/kimi-k3 实测：闲聊 "Reply with exactly:
+        OK" + required → finish=tool_calls、强制返回 get_weather 调用
+        （city 瞎猜 London/UNKNOWN——值不限定）、reasoning 仅 38
+        token——符合 [OI] required「必须发起至少一次工具调用」规范。
+        Alaya 同场景缺陷：finish=length、reasoning 吃满 256/2000
+        预算、tool_calls=None；有工具意图时（北京天气）两站一致
+        正常。
+        本用例按官方行为为预期（与 K8 同场景不同级别：K8 为客户
+        工单级别 mt=1000/3000/3000 复现，本用例镜像 Alaya 缺陷实
+        测级别）。轮次：关思考 mt=256、关思考 mt=2000、开思考
+        mt=256、开思考 mt=2000。temperature 按网关档位联动约束取
+        disabled→0.6 / enabled→1（非该值被 400 拒绝，无法构建场
+        景）。每轮硬断言：
+        - HTTP 200 + choices + usage 存在
+        - tool_calls 强制返回且为 get_weather 函数调用、arguments
+          为合法 JSON（city 值不限定——官方亦瞎猜）
+        - finish_reason == "tool_calls"（而非 length）
+        - ct < max_tokens（预算不被吃满）
+        - 开思考：rt < max_tokens（官方 reasoning 仅 38；缺陷形态
+          为吃满预算）；rt 双拼写兼容
+        耗时双峰仅日志留痕（finish 断言已覆盖缺陷形态，同 K8 理
+        由）。（不进 smoke 集：缺陷轮 15.6s 级长耗时 + 缺陷概率性）
+        """
+        # K9: 工具定义（get_weather(city)）——与 K8 相同的客户原始工
+        # 具（各用例独立自包含，不共享常量）
+        K9_TOOLS = [{
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        }]
+
+        # K9: 闲聊提示词（客户原始口径，官方对照同款）——无工具意图
+        # + required 即缺陷触发条件
+        K9_USER_PROMPT = "Reply with exactly: OK"
+
+        # K9: 轮次（标签, thinking, temperature, max_tokens）——镜像
+        # Alaya 缺陷实测级别 256/2000 × 关/开思考；temperature 按网
+        # 关档位联动约束
+        K9_ROUNDS = (
+            ("关思考 mt=256", "disabled", 0.6, 256),
+            ("关思考 mt=2000", "disabled", 0.6, 2000),
+            ("开思考 mt=256", "enabled", 1, 256),
+            ("开思考 mt=2000", "enabled", 1, 2000),
+        )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - required+闲聊必须强制调用"
+            "工具（'Reply with exactly: OK'；关/开思考 × mt=256/"
+            "2000；按官方行为为预期：finish=tool_calls+强制 "
+            "get_weather+预算不被吃满；客户工单级别 mt=1000/3000 "
+            "由 K8 验证）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_round(
+            label: str, thinking_type: str, temperature: float,
+            max_tokens: int,
+        ) -> None:
+            """K9 单轮：required+闲聊，断言必须强制调用工具且预算不被吃满"""
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K9_USER_PROMPT}],
+                {
+                    "tools": [t["function"]["name"] for t in K9_TOOLS],
+                    "tool_choice": "required",
+                    "thinking": thinking_type,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                    "round": label,
+                },
+            )
+
+            # 手工构造 payload 直发（需 tools/tool_choice/max_tokens/
+            # 档位温度，chat_completion 封装会强制覆盖 max_tokens/
+            # temperature）
+            payload = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K9_USER_PROMPT}],
+                "tools": K9_TOOLS,
+                "tool_choice": "required",
+                "thinking": {"type": thinking_type},
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+
+            assert response.status_code == 200, (
+                f"[{label}] 客户问题复现失败：应 200 正常返回，实际 "
+                f"HTTP {response.status_code}: {response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"[{label}] 响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"[{label}] 响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls")
+            finish = choices[0].get("finish_reason")
+            usage = result.get("usage") or {}
+
+            # usage 为预算断言数据源，缺失即失败
+            assert usage, (
+                f"[{label}] 客户问题复现失败：响应缺少 usage——预算"
+                f"断言无从进行: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            ct = usage.get("completion_tokens")
+            assert isinstance(ct, int), (
+                f"[{label}] 客户问题复现失败：usage 缺少有效 "
+                f"completion_tokens: "
+                f"{json.dumps(usage, ensure_ascii=False)[:300]}"
+            )
+            # rt 双拼写兼容；缺失按 None（关思考不强制上报）
+            rt = usage.get("reasoning_tokens")
+            if rt is None:
+                details = usage.get("completion_tokens_details") or {}
+                rt = details.get("reasoning_tokens")
+
+            TestLogger.log_response(test_logger, result, f"K9-响应（{label}）")
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed={elapsed:.1f}s, ct={ct}, "
+                f"rt={rt}, finish={finish}, "
+                f"tool_calls={'有' if tool_calls else '无'}, "
+                f"content_len={len(content)}"
+            )
+
+            # 断言1：required 必须强制发起工具调用（官方行为：闲聊也
+            # 强制返回 get_weather，city 瞎猜不限定；Alaya 缺陷形态：
+            # tool_calls=None、finish=length、reasoning 吃满预算）
+            assert tool_calls, (
+                f"[{label}] 客户问题复现失败：required 下闲聊未强制"
+                f"发起工具调用——tool_calls 键缺失（finish={finish}、"
+                f"ct={ct}/{max_tokens}；官方行为为 finish=tool_calls"
+                f" 强制返回 get_weather，Alaya 缺陷形态为 finish="
+                f"length、reasoning 吃满预算、tool_calls=None）: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+            first = tool_calls[0] or {}
+            fn = first.get("function") or {}
+            assert (
+                first.get("type") == "function"
+                and fn.get("name") == "get_weather"
+            ), (
+                f"[{label}] 客户问题复现失败：工具调用形状异常（应 "
+                f"function/get_weather，实际 "
+                f"{json.dumps(first, ensure_ascii=False)[:200]}）"
+            )
+            try:
+                fn_args = json.loads(fn.get("arguments") or "")
+            except (json.JSONDecodeError, ValueError, TypeError) as e:
+                pytest.fail(
+                    f"[{label}] 客户问题复现失败：工具调用 arguments "
+                    f"不是合法 JSON: {e}（{fn.get('arguments')!r}）"
+                )
+            assert isinstance(fn_args, dict), (
+                f"[{label}] 客户问题复现失败：工具调用 arguments 应为"
+                f" JSON 对象: {fn.get('arguments')!r}"
+            )
+
+            # 断言2：finish 必须为 tool_calls（官方行为；而非 length）
+            assert finish == "tool_calls", (
+                f"[{label}] 客户问题复现失败：finish_reason 应为 "
+                f"tool_calls（required 必须调用工具），实际 {finish}"
+                f"（ct={ct}/{max_tokens}、rt={rt}）: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+
+            # 断言3：预算不被吃满（Alaya 缺陷形态：ct 恒吃满预算）
+            assert ct < max_tokens, (
+                f"[{label}] 客户问题复现失败：completion_tokens={ct} "
+                f"吃满 max_tokens={max_tokens}——预算不应被吃满"
+            )
+
+            # 断言4（开思考）：思考消耗应小于 max_tokens
+            if thinking_type == "enabled":
+                assert isinstance(rt, int) and rt >= 0, (
+                    f"[{label}] 客户问题复现失败：开思考下 usage 未上"
+                    f"报有效 reasoning_tokens（rt={rt}），无法验证"
+                    f"思考消耗 < max_tokens"
+                )
+                assert rt < max_tokens, (
+                    f"[{label}] 客户问题复现失败：reasoning tokens="
+                    f"{rt} 吃满/超出 max_tokens={max_tokens}——思考"
+                    f"不应吃完预算（官方同场景 reasoning 仅 38）"
+                )
+
+        for label, thinking_type, temperature, max_tokens in K9_ROUNDS:
+            run_round(label, thinking_type, temperature, max_tokens)
+
+        test_logger.info(
+            "客户问题复现通过: required+闲聊 关/开思考 × mt=256/2000 "
+            "全部按官方行为强制返回 get_weather 调用（finish="
+            "tool_calls、ct/rt 均未吃满预算；客户工单级别由 K8 验证）"
         )

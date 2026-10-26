@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（11 大类 × 117 个测试点）
+## 二、测试点总览（11 大类 × 119 个测试点）
 
 ### 分类概览
 
@@ -253,6 +253,8 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K5  | thinking.type=disabled 后思考未关闭 | 客户问题：thinking.type=disabled 后 reasoning_tokens 仍=100/75、reasoning_content 照常输出，关思考相关功能（低延迟模式、关思考温度档）全部失效；官方端点实测 disabled 后思考完全关闭（官方 FAQ 与实测不符，以实测为准） | 输入保持客户原值 disabled、temperature=0.6（官方关思考档唯一合法温度）、不传 max_tokens 连发 3 次（消息各异，相邻间隔 3s），断言每次均按官方实测预期——无思考内容（reasoning_content/reasoning）、reasoning_tokens 为空（0/缺失，兼容两种字段拼写）、正文正常返回且 finish_reason 自然结束；任一次失败报告第几次 | P0  |
 | K6  | 关思考温度档未联动校验 | 客户影响：关思考相关功能（关思考温度档）失效；官方契约（kimi-k3）：thinking 与 temperature 档位联动——disabled 仅允许 0.6（给 1 或 0 报 400 "only 0.6 is allowed for this model in non-thinking mode"）、enabled 仅允许 1（给 0.6 或 0 报 400 "only 1 is allowed for this model in thinking mode"） | 对 6 个组合（disabled/enabled × 0.6/1/0）各发一次请求（同一 prompt，参数为唯一变量；参数校验为确定性行为无需多次连发），断言合法组合 200+正文非空、非法组合 400+错误信息含官方文案（忽略大小写子串匹配，对错误体 JSON 结构不敏感） | P0  |
 | K7  | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃），K3 恒开思考，思考长度（reasoning_tokens）应随档位递增 | 只按官方格式传参（无回退），请求顺序（客户指定）：low→high→max 比对思考长度，max→high→low 逆向重发再比对（正逆两轮排除顺序干扰，均按 low<high<max 软对比，medium 不参与）；最后 medium 顶层 200 放行、medium 嵌套 400（废弃配置下非法档位，客户指定契约）；间隔 3s、内容与 temperature=1 相同；硬断言每次 200+正文非空+自然结束；倒挂/持平不判失败，仅告警记入报告；reasoning_tokens 兼容两种字段拼写 | P0  |
+| K8  | required+闲聊必须调用工具（客户工单级别） | 客户工单原始问题：required+闲聊（"Reply with exactly: OK"，无工具意图）下不发起工具调用——tool_calls 键缺失、finish=length、ct 恒吃满 max_tokens（关思考 1000/3000 均如此）、正文仅 OK、耗时 15.6s 双峰；开思考 reasoning 消耗远小于预算但整体仍被吃满；预期 finish=tool_calls、关思考 ct 较小、开思考 rt<max_tokens、正文收到工具调用响应信息 | 关思考 mt=1000/3000、开思考 mt=3000（get_weather 工具，温度按档位联动 0.6/1），断言每轮 tool_calls 存在（get_weather、arguments 合法 JSON）、finish_reason==tool_calls（而非 length）、ct<max_tokens、开思考 rt<max_tokens（rt 双拼写兼容）；耗时双峰仅日志留痕 | P1  |
+| K9  | required+闲聊必须强制调用工具（按官方行为） | 官方 api.moonshot.cn 实测：闲聊+required → finish=tool_calls、强制返回 get_weather（city 瞎猜不限定）、reasoning 仅 38——符合 [OI] required 必须发起至少一次工具调用规范；Alaya 同场景 finish=length、reasoning 吃满 256/2000 预算、tool_calls=None；有工具意图时两站一致正常 | 关/开思考 × mt=256/2000（温度按档位联动 0.6/1，与 K8 同场景不同级别），按官方行为断言每轮 tool_calls 强制返回（get_weather、arguments 合法 JSON）、finish_reason==tool_calls、ct<max_tokens、开思考 rt<max_tokens（rt 双拼写兼容）；耗时双峰仅日志留痕 | P1  |
 
 ---
 
@@ -314,24 +316,25 @@ G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
                      Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
                      clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
-K1-K7            客户问题复现 7 项（K 类全部 P0，客户报障必测）
+K1-K7            客户问题复现 7 项（均 P0，客户报障必测）
 ```
 
 总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 7 = 43 项。
 
-### P1（选测，58 项）
+### P1（选测，60 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
 B2, B3, B5, B7, B11         高级功能 5 项
 C1, C2, C4, C8, C9, C11     多模态 6 项
 D2, D3, D6-D11              上下文处理 8 项
-E9-E12                      性能指标 4 项
-F2, F5-F8                   稳定性 5 项
-G2, G5                      API 兼容 2 项
+E9-E12                       性能指标 4 项
+F2, F5-F8                    稳定性 5 项
+G2, G5                       API 兼容 2 项
 H2, H3, H10, H11            Chat Completions API 质量评估 4 项
-I1-I12                      Completions API 质量评估 12 项
-J1, J2, J4, J5, J6, J7      clear_thinking 参数行为 6 项
+I1-I12                       Completions API 质量评估 12 项
+J1, J2, J4, J5, J6, J7       clear_thinking 参数行为 6 项
+K8, K9                       客户问题复现 2 项（required 工具调用，按客户工单 P1）
 ```
 
 ### P2（低优，16 项）

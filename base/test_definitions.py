@@ -672,6 +672,38 @@ TEST_CATEGORIES = {
                 "thinking_effort_reasoning_length",
                 "P0",
             ),
+            (
+                "K8",
+                "required+闲聊必须调用工具（客户工单级别）",
+                "客户问题复现（kimi-k3）：工单原始问题为 required+"
+                "闲聊（Reply with exactly: OK）下不发起工具调用——"
+                "tool_calls 缺失、finish=length、ct 恒吃满 max_"
+                "tokens（关思考 1000/3000）、正文仅 OK；预期 finish="
+                "tool_calls、关思考 ct 较小、开思考 rt<max_tokens。"
+                "关思考 mt=1000/3000、开思考 mt=3000（get_weather "
+                "工具），断言 tool_calls 存在（get_weather、"
+                "arguments 合法 JSON）、finish=tool_calls（而非 "
+                "length）、ct<max_tokens、开思考 rt<max_tokens"
+                "（双拼写兼容）；耗时双峰仅日志留痕",
+                "required_chitchat_calls_tool",
+                "P1",
+            ),
+            (
+                "K9",
+                "required+闲聊必须强制调用工具（按官方行为）",
+                "客户问题复现（kimi-k3）：官方 api.moonshot.cn 同场景"
+                "（闲聊+required）finish=tool_calls、强制返回 "
+                "get_weather（city 瞎猜不限定）、reasoning 仅 38——"
+                "符合 [OI] required 必须发起至少一次工具调用规范；"
+                "Alaya 缺陷为 finish=length、reasoning 吃满 256/2000"
+                " 预算、tool_calls=None。按官方行为为预期（与 K8 同"
+                "场景不同级别）：关/开思考 × mt=256/2000，断言 tool_"
+                "calls 强制返回（get_weather、arguments 合法 JSON）、"
+                "finish=tool_calls、ct<max_tokens、开思考 rt<max_"
+                "tokens（双拼写兼容）",
+                "required_chitchat_official_behavior",
+                "P1",
+            ),
         ],
     },
 }

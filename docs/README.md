@@ -16,7 +16,7 @@
 | [test_h_quality_chat_completions.md](test_h_quality_chat_completions.md) | H. Chat Completions API 质量评估与回答相关性 | 13 |
 | [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
 | [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 11 |
-| [test_k_customer_issue.md](test_k_customer_issue.md) | K. 客户问题复现 | 7 |
+| [test_k_customer_issue.md](test_k_customer_issue.md) | K. 客户问题复现 | 9 |
 
 > **注意**：E 类和 I 类测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
 
