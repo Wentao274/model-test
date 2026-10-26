@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（11 大类 × 122 个测试点）
+## 二、测试点总览（11 大类 × 126 个测试点）
 
 ### 分类概览
 
@@ -37,7 +37,7 @@
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 12   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）），P0 为主持续追加 |
+| K. 客户问题复现 | 16   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标），P0 为主持续追加 |
 
 ---
 
@@ -238,7 +238,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | J10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | J11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（J8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 客户问题复现（7 项）
+### K. 客户问题复现（16 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
@@ -258,6 +258,10 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：OpenAI 协议 tool_choice 让模型按请求指定的类型/模式生成工具调用（Agent 自定义工具场景）；上线前版本未指定模型专属工具调用格式解析器，GLM-5.3-Flash 不支持该语义；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（原始脚本 glm53_flash_suite 口径：temperature=0、mt=2048、非流式、不传 thinking；工具 get_weather+get_current_time 两个），断言 auto/required 必须发起工具调用（type=function、arguments 合法 JSON、finish=tool_calls）、named 必须调用指定工具（指定与提示词天气意图不同向的 get_current_time，未生效时按意图调 get_weather 即被检出）、none 禁止调用（无 tool_calls、正文非空、finish=stop）；usage 仅日志 | P0  |
 | K11 | GLM-5.3-Flash response_format 三种模式支持 | 客户问题（AGDC2-16）：OpenAI 协议 response_format 让模型按指定格式输出（Agent 场景）；DingoRouter 不支持该结构化输出语义；修复为 Router 侧支持结构化生成语义并转发至引擎；需支持 json_object/json_schema/text | 三模式各一次（原始脚本 glm53_flash_suite 口径：temperature=0、mt=2048、非流式、不传 thinking），断言 json_object 正文可解析为 JSON 对象、json_schema 正文可解析且 city 为字符串、temperature 为数值、键集合恰为 {city,temperature}（weather strict schema）、text 正文非空；每轮 finish=stop；usage 仅日志 | P0  |
 | K12 | GLM-5.3-Flash reasoning_effort 档位支持 | 客户问题（AGDC2-17）：GLM-5.3-Flash 使用 GLM 自己的聊天模版，字段为 reasoning_effort 且放在 chat_template_kwargs 里；而 OpenAI 协议/参考脚本将其放在顶层；Router 需在 OpenAI 协议外层捕获该字段并传给引擎；修复为 Router 侧支持语义转发；需支持 low/high/max/空（空=不发送该字段，默认档），且不管 reasoning_effort 放在顶层还是嵌套在 chat_template_kwargs 里，请求都能被正常接受和处理并输出正常响应 | 两种放置（顶层/嵌套 chat_template_kwargs）× 四档各一次（原始脚本 glm53_flash_suite 口径：temperature=0、mt=2048、非流式、不传 thinking、chat_template_kwargs={clear_thinking:true}；嵌套放置：reasoning_effort 放进 chat_template_kwargs），断言每轮 200+正文非空+finish=stop；档位对思考的实际影响（rt/reasoning 长度）仅日志留痕；usage 仅日志 | P0  |
+| K13 | stop 序列遵循且被截断正文前置多余字符 | 客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香蕉、"（正文在停止词处截断、不含停止词），实际输出 ">苹果、香蕉、"——被截断正文前面多输出了一个 ">" 符号；同时适用 KimiK3（缺陷为通用 stop 截断逻辑） | 按客户原始请求体还原（stream=true、stop=[橘子]、glm-5.3-flash 另传 thinking={type:enabled}+reasoning_effort=low、其余采样参数不发送；KimiK3 不传 thinking/reasoning_effort），断言 SSE 有正文增量、finish=stop、合并正文严格等于 "苹果、香蕉、"（多余前缀/停止词泄漏/未截断均 FAIL）、不含 "橘子"；usage 仅日志 | P0  |
+| K14 | 孤儿 tool 消息应 HTTP 400 拒绝 | 客户问题：messages 中 tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），属协议非法请求，网关应校验并返回 400 Bad Request；实际返回 200 放行，模型把孤儿 tool 消息当普通上下文推理；同时适用 GLM-5.3 与 GLM-5.3-Flash | 按客户原始请求体还原（user "今天天气怎么样？" 后直接跟 tool tool_call_id=call_abc123、stream=true、无 tools/thinking/采样参数），断言 HTTP 400；若 200 放行（缺陷形态）取样若干 SSE 事件留证后 FAIL；响应体与 usage 仅日志 | P0  |
+| K15 | 细粒度前缀匹配短输入缓存阈值 | 客户问题：短文本缓存命中率不达标，根因推理引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640 tok 量级），客户输入低于该块长（如 625 tok）完全不缓存；平台修复为细粒度前缀匹配（sglang prefix-match-unit=64）；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两个测试点（OpenAI 协议非流式、不发送采样参数，cached_tokens 取 usage.prompt_tokens_details.cached_tokens 兼容 usage.cached_tokens）：1) 输入 64<N<640 的相同请求连发两次，断言第 2 次 cached_tokens>0（修复后应正常缓存，修复前不缓存即缺陷）；2) 输入 N<64 的相同请求连发两次，断言 cached_tokens==0（低于最细粒度不缓存）；以服务端 prompt_tokens 校验输入规模前提；usage 仅日志 | P0  |
+| K16 | 固定前缀/多轮上下文缓存命中率达标 | 客户问题：短文本缓存命中率不达标——修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文 87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断（8192→12×640=7680，损失 512），细粒度匹配（64）后应 ≈94.2%≥90%；同时适用 GLM-5.3 与 GLM-5.3-Flash | 请求规模由原始信息推算（~12800 中文字符共享前缀 ≈8192 tok + ~780 字符/轮唯一问题 ≈501 tok）；两模式（OpenAI 协议非流式、不发送采样参数）：1) 固定前缀 10 轮独立请求（同一前缀+每轮唯一问题）；2) 多轮上下文单会话逐轮追加（回复极短）；均排除第 1 轮预热实测 9 轮，断言各模式 cached_tokens 总和/prompt_tokens 总和 ≥90%，任一 <90% 即 FAIL；零命中轮次留痕、usage 仅日志 | P0  |
 
 ---
 
@@ -305,7 +309,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 
 ## 五、测试执行优先级建议
 
-### P0（上线必测，46 项）
+### P0（上线必测，50 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -319,10 +323,10 @@ G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
                      Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
                      clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
-K1-K7, K10-K12   客户问题复现 10 项（均 P0，客户报障必测）
+K1-K7, K10-K16  客户问题复现 14 项（均 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 10 = 46 项。
+总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 14 = 50 项。
 
 ### P1（选测，60 项）
 

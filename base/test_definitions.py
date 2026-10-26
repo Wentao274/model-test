@@ -761,6 +761,73 @@ TEST_CATEGORIES = {
                 "reasoning_effort_levels_support",
                 "P0",
             ),
+            (
+                "K13",
+                "stop 序列遵循且被截断正文前置多余字符",
+                "客户问题：stop=[\"橘子\"] 的流式请求，期望输出 "
+                "\"苹果、香蕉、\"（正文在停止词处截断、不含停止词），"
+                "实际输出 \">苹果、香蕉、\"——被截断正文前面多输出了"
+                "一个 \">\" 符号。按客户原始请求体还原（glm-5.3-flash："
+                "stream=true、thinking={type:enabled}、reasoning_"
+                "effort=low、stop=[橘子]、其余采样参数不发送）；"
+                "KimiK3 环境不传 thinking/reasoning_effort（按 K5 "
+                "口径），断言完全一致。硬断言：SSE 解析成功且有正文增"
+                "量；finish=stop；合并正文严格等于 \"苹果、香蕉、\""
+                "（多余前缀/停止词泄漏/未截断均 FAIL）；正文不含 "
+                "\"橘子\"。usage 仅日志",
+                "stop_sequence_prefix_leak",
+                "P0",
+            ),
+            (
+                "K14",
+                "孤儿 tool 消息应 HTTP 400 拒绝",
+                "客户问题：messages 中 tool 角色消息前无带 tool_calls "
+                "的 assistant 消息（孤儿 tool 消息，且请求未定义任何 "
+                "tools），属协议非法请求，网关应校验并返回 400 Bad "
+                "Request；实际返回 200 放行，模型把孤儿 tool 消息当普"
+                "通上下文推理。按客户原始请求体还原（user 后直接跟 "
+                "tool tool_call_id=call_abc123，stream=true，无 tools/"
+                "thinking/采样参数）；GLM-5.3 与 GLM-5.3-Flash 断言完"
+                "全一致。硬断言：HTTP 400；若 200 放行（缺陷形态）："
+                "取样若干 SSE 事件留证后 FAIL。响应体与 usage 仅日志",
+                "orphan_tool_message_rejected",
+                "P0",
+            ),
+            (
+                "K15",
+                "细粒度前缀匹配短输入缓存阈值",
+                "客户问题：短文本缓存命中率不达标，根因推理引擎默认前缀缓"
+                "存分块撮合的最小可缓存块长过大（vLLM 默认 640 tok 量级）"
+                "，客户输入低于该块长（如 625 tok）完全不缓存；平台修复"
+                "为细粒度前缀匹配（sglang prefix-match-unit=64）。覆盖两"
+                "个测试点：1) 输入 64<N<640 的相同请求连发两次，断言第 "
+                "2 次 cached_tokens>0（修复后应正常缓存，修复前不缓存即"
+                "缺陷）；2) 输入 N<64 的相同请求连发两次，断言 "
+                "cached_tokens==0（低于最细粒度不缓存）。cached_tokens "
+                "取 usage.prompt_tokens_details.cached_tokens（兼容 "
+                "usage.cached_tokens）。GLM-5.3 与 GLM-5.3-Flash 断言"
+                "一致，非流式、不发送采样参数。响应体与 usage 仅日志",
+                "short_input_prefix_cache_threshold",
+                "P0",
+            ),
+            (
+                "K16",
+                "固定前缀/多轮上下文缓存命中率达标",
+                "客户问题：短文本缓存命中率不达标——修复前固定前缀每轮 "
+                "cached=7680/input=8693（88.35%）、多轮上下文 87.16%，"
+                "均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断"
+                "（8192→12×640=7680，损失 512），细粒度匹配（64）后应 "
+                "≈94.2%≥90%。请求规模由原始信息推算：~12800 中文字符共"
+                "享前缀（≈8192 tok）+ ~780 字符/轮唯一问题（≈501 tok）"
+                "。两模式：1) 固定前缀 10 轮独立请求（排除 1 轮预热实测"
+                " 9 轮）；2) 多轮上下文单会话逐轮追加（回复极短），排除"
+                " 1 轮预热实测 9 轮。断言两模式 cached_tokens 总和/"
+                "prompt_tokens 总和均 ≥90%，任一 <90% 即 FAIL。GLM-5.3 "
+                "与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数。"
+                "usage 仅日志",
+                "prefix_cache_hit_rate_threshold",
+                "P0",
+            ),
         ],
     },
 }

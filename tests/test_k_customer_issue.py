@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K12
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K16
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -171,6 +171,56 @@ K. 客户问题复现测试
   实际影响（reasoning_tokens、reasoning_content 长度）仅日志留
   痕——参考脚本未做档位间断言，思考长度为模型行为质量。（不进
   smoke 集：新用例首跑观察期）
+- K13: stop 序列遵循且被截断正文前置多余字符 [P0]
+  客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香蕉、"（正
+  文在停止词处截断、不含停止词），实际输出 ">苹果、香蕉、"——被截
+  断正文前面多输出了一个 ">" 符号。原始请求体（glm-5.3-flash）：
+  stream=true、thinking={"type": "enabled"}、reasoning_effort=
+  "low"、stop=["橘子"]、其余采样参数不发送（通过 RAW_SAMPLING_
+  PARAM_TESTS 豁免全局覆盖）；KimiK3 环境不传 thinking/
+  reasoning_effort（按 K5 口径），断言完全一致。硬断言：SSE 解析
+  成功且有正文增量；finish_reason=="stop"；合并正文严格等于
+  "苹果、香蕉、"（多余前缀/停止词泄漏/未截断均 FAIL）；正文不含
+  "橘子"。usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+- K14: 孤儿 tool 消息应 HTTP 400 拒绝 [P0]
+  客户问题：messages 中 tool 角色消息前无带 tool_calls 的 assistant
+  消息（孤儿 tool 消息，且请求未定义任何 tools），属协议非法请求，
+  网关应校验并返回 400 Bad Request；实际返回 200 放行，模型把孤儿
+  tool 消息当普通上下文推理。按客户原始请求体还原（user "今天天
+  气怎么样？" 后直接跟 tool tool_call_id="call_abc123" content=
+  "{\"weather\":\"晴\"}"，stream=true，无 tools/thinking/采样参
+  数——通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。硬断言：
+  HTTP 400；若 200 放行（缺陷形态）：取样若干 SSE 事件留证后
+  FAIL。GLM-5.3 与 GLM-5.3-Flash 断言完全一致。响应体与 usage
+  仅日志。（不进 smoke 集：新用例首跑观察期）
+- K15: 细粒度前缀匹配短输入缓存阈值 [P0]
+  客户问题（平台原始验证信息）：短文本缓存命中率不达标，根因推理
+  引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640
+  token 量级），客户输入低于该块长（如 625 token）时完全不缓存，
+  命中率远低于目标；平台修复为细粒度前缀匹配（sglang prefix-
+  match-unit=64 / vLLM 对应参数调小）。本用例覆盖短输入两个方向：
+  1) 输入长度 64<N<640 的相同请求连发两次，断言第 2 次
+  cached_tokens>0（修复后应正常缓存，修复前不缓存即为缺陷）；
+  2) 输入长度 N<64 的相同请求连发两次，断言 cached_tokens==0
+  （低于最小粒度不应缓存）。cached_tokens 取 usage.
+  prompt_tokens_details.cached_tokens（兼容 usage.cached_tokens）。
+  GLM-5.3 与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数
+  （通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。（不进 smoke
+  集：新用例首跑观察期）
+- K16: 固定前缀/多轮上下文缓存命中率达标 [P0]
+  客户问题（平台原始验证信息）：短文本缓存命中率不达标——修复前
+  每轮固定前缀缓存命中 7680/输入 8693（88.35%）、多轮上下文
+  87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断
+  （8192 → 12×640=7680，损失 512），细粒度匹配（64）后固定前缀
+  命中率应 ≈8192/8693≈94.2%≥90%。本用例按 OpenAI /v1/chat/
+  completions 协议构造两个模式验证：模式1 固定前缀——10 轮独立
+  请求 [system 共享长前缀(~8192 token)，user 每轮唯一问题
+  (~501 token)]；模式2 多轮上下文——单会话 history 逐轮追加，
+  共享前缀随轮增长。两模式均排除第 1 轮预热、实测 9 轮，断言
+  cached_tokens 总和/prompt_tokens 总和 ≥90%。GLM-5.3 与
+  GLM-5.3-Flash 断言一致，非流式、不发送采样参数（通过
+  RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。（不进 smoke 集：
+  新用例首跑观察期）
 """
 
 import json
@@ -2916,4 +2966,678 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "（low/high/max/空）均被正常接受和处理（200+正文正常+"
             "自然结束；各轮 rt/reasoning 长度见日志，档位实际效果"
             "仅观测不硬断言）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.KimiK3
+    @pytest.mark.p0
+    def test_stop_sequence_prefix_leak(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K13 [P0]: 客户问题 - stop 序列遵循且被截断正文前置多余字符
+
+        客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香蕉、"
+        （正文在停止词处截断、不含停止词），实际输出 ">苹果、香蕉、"
+        ——被截断正文前面多输出了一个 ">" 符号（stop 截断逻辑把停
+        止词的某个字符/片段泄漏到了正文开头）。
+        本用例按客户原始请求体还原（glm-5.3-flash：stream=true、
+        thinking={"type": "enabled"}、reasoning_effort="low"、
+        stop=["橘子"]、其余采样参数不发送——客户原始请求体即如此，
+        通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖），KimiK3 环境
+        不传 thinking/reasoning_effort/temperature（按 K5 口径），
+        断言完全一致。硬断言：
+        1. SSE 解析成功且有正文增量（收到 content delta）
+        2. finish_reason == "stop"（stop 序列触发，非 length）
+        3. 合并正文 == "苹果、香蕉、"（严格等于——多余前缀/停止
+        词/未截断均 FAIL）
+        4. 正文不含停止词 "橘子"（遵循 stop 语义）
+        修复后应 PASS；缺陷存在时（多余 ">" 前缀等）FAIL。usage 仅
+        日志。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K13: 客户原始请求体口径（勿改——缺陷复现的最小充分条件）
+        K13_PROMPT = (
+            "请依次说出：苹果、香蕉、橘子、西瓜、葡萄。每个水果之间"
+            "用顿号分隔，不要省略。"
+        )
+        K13_STOP = ["橘子"]
+        K13_EXPECTED = "苹果、香蕉、"
+        # K13: KimiK3 环境不传 thinking/reasoning_effort（按 K5 口径：
+        # 网关对 thinking 参数兼容性未知，缺陷本身与其无关）
+        K13_IS_GLM53FLASH = (
+            "flash" in (api_client.model_name or "").lower()
+        )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - stop 序列遵循且被截断正文前置"
+            "多余字符（stop=[\"橘子\"]，期望 \"%s\"，缺陷形态为正文前"
+            "多出 \">\" 等多余前缀）===" % K13_EXPECTED
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 手工构造 payload 直发（需 stop/thinking/reasoning_effort 字
+        # 段原样还原，chat_completion 封装不支持这些组合）
+        payload = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K13_PROMPT}],
+            "stop": list(K13_STOP),
+            "stream": True,
+        }
+        if K13_IS_GLM53FLASH:
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = "low"
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K13_PROMPT}],
+            {
+                "stop": K13_STOP,
+                "stream": True,
+                "thinking": (
+                    {"type": "enabled"} if K13_IS_GLM53FLASH else "(不传)"
+                ),
+                "reasoning_effort": (
+                    "low" if K13_IS_GLM53FLASH else "(不传)"
+                ),
+                "temperature": "(不发送)",
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client.session.post(
+                url,
+                json=payload,
+                timeout=api_client.timeout,
+                stream=True,
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        if response.status_code != 200:
+            pytest.fail(
+                f"请求失败 HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
+        # 解析 SSE：合并正文增量，提取 finish_reason 与 usage
+        content = ""
+        reasoning = ""
+        finish = None
+        usage: Dict[str, Any] = {}
+        events = 0
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8")
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            events += 1
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            if delta.get("content"):
+                content += delta["content"]
+            if delta.get("reasoning_content"):
+                reasoning += delta["reasoning_content"]
+            if choices[0].get("finish_reason"):
+                finish = choices[0].get("finish_reason")
+            evt_usage = event.get("usage")
+            if evt_usage:
+                usage.update(evt_usage)
+
+        # 断言0：SSE 解析成功且有正文
+        assert events > 0, "未返回任何 SSE 事件"
+        assert content, (
+            f"流式响应未收到任何正文增量（content 为空），"
+            f"reasoning_len={len(reasoning)}, finish={finish}"
+        )
+
+        test_logger.info(
+            f"HTTP 200, elapsed={elapsed:.1f}s, finish={finish}, "
+            f"content={content!r}, content_len={len(content)}, "
+            f"reasoning_len={len(reasoning)}, events={events}, "
+            f"usage={json.dumps(usage, ensure_ascii=False)}"
+        )
+
+        # 断言1：stop 序列触发（非 length/其他）
+        assert finish == "stop", (
+            f"客户问题复现失败：stop 序列应触发 finish_reason=stop，"
+            f"实际 {finish}（content={content!r}）"
+        )
+
+        # 断言2（核心）：合并正文严格等于期望——多余前缀（如 ">"）、
+        # 停止词泄漏、未截断均在此检出
+        assert content == K13_EXPECTED, (
+            f"客户问题复现失败：被截断正文应为 {K13_EXPECTED!r}，"
+            f"实际 {content!r}（多余前缀/停止词泄漏/未截断）"
+        )
+
+        # 断言3：正文不含停止词（stop 语义遵循）
+        assert "橘子" not in content, (
+            f"客户问题复现失败：正文不应包含停止词 '橘子'，"
+            f"实际 {content!r}"
+        )
+
+        test_logger.info(
+            "客户问题复现通过: stop 序列遵循且被截断正文无多余前缀"
+            "（content 严格等于期望值，finish=stop，不含停止词）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_orphan_tool_message_rejected(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K14 [P0]: 客户问题 - 孤儿 tool 消息应 HTTP 400 拒绝
+
+        客户问题：messages 中 tool 角色消息前无带 tool_calls 的
+        assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），
+        属协议非法请求，网关应做校验并返回 400 Bad Request；实际
+        返回 200 放行，模型把孤儿 tool 消息当普通上下文推理（流式
+        输出 reasoning_content/正文）。
+        本用例按客户原始请求体还原（glm-5.3-flash：messages=
+        [user "今天天气怎么样？", tool tool_call_id="call_abc123"
+        content="{\"weather\":\"晴\"}"]、stream=true、无 tools/
+        thinking/采样参数——客户原始请求体即如此，通过 RAW_SAMPLING_
+        PARAM_TESTS 豁免全局覆盖；GLM-5.3 与 GLM-5.3-Flash 断言完
+        全一致）。硬断言：
+        1. HTTP 400（Bad Request，拒绝协议非法请求）
+        若 200 放行（缺陷形态）：取样若干 SSE 事件留证后 FAIL。
+        修复后应 PASS。响应体与 usage 仅日志。（不进 smoke 集：
+        新用例首跑观察期）
+        """
+        # K14: 客户原始请求体口径（勿改——孤儿 tool 消息的最小充
+        # 分条件：user 后直接跟 tool，无前置 assistant tool_calls，
+        # 且不定义任何 tools）
+        K14_USER_MESSAGE = "今天天气怎么样？"
+        K14_TOOL_CALL_ID = "call_abc123"
+        K14_TOOL_CONTENT = "{\"weather\":\"晴\"}"
+        # K14: 缺陷形态（200 放行）时的 SSE 取证上限（事件数）
+        K14_PREVIEW_EVENTS = 8
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 孤儿 tool 消息校验（tool 消息"
+            "前无 assistant tool_calls 且未定义 tools，期望 HTTP 400"
+            " 拒绝；缺陷形态为 200 放行并生成）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 手工构造 payload 直发（含 tool 角色消息，chat_completion
+        # 封装不支持；客户原始请求体不发送采样参数）
+        payload = {
+            "model": api_client.model_name,
+            "messages": [
+                {"role": "user", "content": K14_USER_MESSAGE},
+                {
+                    "role": "tool",
+                    "tool_call_id": K14_TOOL_CALL_ID,
+                    "content": K14_TOOL_CONTENT,
+                },
+            ],
+            "stream": True,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [
+                {"role": "user", "content": K14_USER_MESSAGE},
+                {
+                    "role": "tool",
+                    "tool_call_id": K14_TOOL_CALL_ID,
+                    "content": K14_TOOL_CONTENT,
+                },
+            ],
+            {
+                "stream": True,
+                "tools": "(未定义)",
+                "thinking": "(不传，客户原始请求体口径)",
+                "temperature": "(不发送)",
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client.session.post(
+                url,
+                json=payload,
+                timeout=api_client.timeout,
+                stream=True,
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        if response.status_code == 200:
+            # 缺陷形态：放行并开始流式生成——取样若干 SSE 事件留证
+            preview = ""
+            events = 0
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                events += 1
+                choices = event.get("choices") or []
+                if choices:
+                    delta = choices[0].get("delta") or {}
+                    if delta.get("reasoning_content"):
+                        preview += delta["reasoning_content"]
+                    if delta.get("content"):
+                        preview += delta["content"]
+                if events >= K14_PREVIEW_EVENTS:
+                    break
+            response.close()
+            test_logger.info(
+                f"缺陷形态取证: HTTP 200, elapsed={elapsed:.1f}s, "
+                f"events={events}, preview={preview[:200]!r}"
+            )
+            pytest.fail(
+                f"客户问题复现失败：孤儿 tool 消息（tool 消息前无 "
+                f"assistant tool_calls，且请求未定义 tools）应 HTTP "
+                f"400 拒绝，实际 200 放行并生成（SSE 取证 "
+                f"events={events}, reasoning/正文预览: "
+                f"{preview[:120]!r}）"
+            )
+
+        # 断言（核心）：协议非法请求必须被 400 拒绝
+        assert response.status_code == 400, (
+            f"客户问题复现失败：孤儿 tool 消息应 HTTP 400（Bad "
+            f"Request），实际 HTTP {response.status_code}: "
+            f"{response.text[:300]}"
+        )
+
+        test_logger.info(
+            f"HTTP 400, elapsed={elapsed:.1f}s, body="
+            f"{response.text[:300]!r}"
+        )
+        test_logger.info(
+            "客户问题复现通过: 孤儿 tool 消息被 HTTP 400 拒绝（tool "
+            "消息前无 assistant tool_calls 的协议非法请求未放行）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_short_input_prefix_cache_threshold(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K15 [P0]: 客户问题 - 细粒度前缀匹配短输入缓存阈值
+
+        客户问题：vLLM 分块撮合后最小缓存块长 640 tok，用户输入
+        625 tok 不被缓存（短输入缓存失效）。修复：开启细粒度前缀
+        匹配，单一缓存块内补充更细粒度的缓存点（--prefix-match-
+        unit 64）。
+        本用例验证修复后的缓存粒度行为（两个测试点，OpenAI 协议
+        非流式，cached_tokens 取自 usage.prompt_tokens_details.
+        cached_tokens，兼容 usage.cached_tokens 拼写）：
+        1. 用户输入 64 < N < 640：第二次相同请求应正常缓存
+           （cached_tokens > 0；修复前 640 粒度下为 0——即客户
+           625 tok 不缓存场景）
+        2. 用户输入 N < 64：不缓存（cached_tokens == 0，低于最细
+           匹配粒度 64 tok 不可缓存）
+        前置自检（硬断言）：实际输入规模以服务端 usage.prompt_
+        tokens 为准，须落在对应区间——内容长度估算漂移导致前提
+        失效时 FAIL 并提示调整常量。usage 其余字段仅日志。（不进
+        smoke 集：新用例首跑观察期）
+        """
+        # K15: 测试点1 内容（~480 中文字符 ≈ 280-320 tok，落于
+        # 64 < N < 640 区间中部，两侧留裕量）
+        K15_MID_UNIT = "本知识库涵盖产品规格、接口说明与常见问题处理流程。"
+        K15_MID_CONTENT = K15_MID_UNIT * 20
+        # K15: 测试点2 内容（~21 中文字符，含对话模板开销 < 64 tok）
+        K15_SHORT_CONTENT = "请简要介绍北京的历史文化背景与著名景点。"
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 细粒度前缀匹配短输入缓存阈值"
+            "（--prefix-match-unit 64；测试点1: 64<N<640 应缓存，"
+            "测试点2: N<64 应不缓存）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def usage_round(content: str, label: str) -> Dict[str, Any]:
+            """K15 单轮：发送请求并返回 usage（OpenAI 协议非流式）"""
+            payload = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": 16,
+                "stream": False,
+            }
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {
+                        "role": "user",
+                        "content": f"[{len(content)} 字符] {content[:30]}…",
+                    }
+                ],
+                {
+                    "max_tokens": 16,
+                    "stream": False,
+                    "temperature": "(不发送)",
+                    "round": label,
+                },
+            )
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            assert response.status_code == 200, (
+                f"[{label}] 请求失败 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(f"[{label}] 响应不是合法 JSON: {e}")
+            usage = result.get("usage") or {}
+            TestLogger.log_response(
+                test_logger, result, f"K15-响应（{label}）"
+            )
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed="
+                f"{time.time() - started:.1f}s, usage="
+                f"{json.dumps(usage, ensure_ascii=False)}"
+            )
+            return usage
+
+        def cached_of(usage: Dict[str, Any]):
+            """取缓存命中 tokens（prompt_tokens_details.cached_tokens
+            优先，兼容 usage.cached_tokens 拼写）"""
+            details = usage.get("prompt_tokens_details") or {}
+            value = details.get("cached_tokens")
+            if value is None:
+                value = usage.get("cached_tokens")
+            return value
+
+        # ---- 测试点 1：64 < N < 640，第二次相同请求应正常缓存 ----
+        usage_round(K15_MID_CONTENT, "测试点1-第1次（建缓存）")
+        usage2 = usage_round(K15_MID_CONTENT, "测试点1-第2次（相同请求）")
+        pt1 = usage2.get("prompt_tokens")
+        assert isinstance(pt1, int) and 64 < pt1 < 640, (
+            f"测试点1 前提失效：实际输入 {pt1} tok 不在 (64, 640) 区"
+            f"间（内容长度估算漂移），请调整 K15_MID_CONTENT 重复次"
+            f"数（当前 usage={usage2}）"
+        )
+        cached1 = cached_of(usage2) or 0
+        assert cached1 > 0, (
+            f"客户问题复现失败：用户输入 {pt1} tok（64<N<640）第二次"
+            f"相同请求应正常缓存（--prefix-match-unit 64 细粒度前缀"
+            f"匹配生效），实际 cached_tokens={cached1}（640 最小缓存"
+            f"块长未修复——即客户 625 tok 不缓存场景，usage={usage2}）"
+        )
+
+        # ---- 测试点 2：N < 64，应不缓存 ----
+        usage_round(K15_SHORT_CONTENT, "测试点2-第1次")
+        usage4 = usage_round(K15_SHORT_CONTENT, "测试点2-第2次（相同请求）")
+        pt2 = usage4.get("prompt_tokens")
+        assert isinstance(pt2, int) and pt2 < 64, (
+            f"测试点2 前提失效：实际输入 {pt2} tok 不小于 64（内容长"
+            f"度估算漂移），请缩短 K15_SHORT_CONTENT（当前 "
+            f"usage={usage4}）"
+        )
+        cached2 = cached_of(usage4) or 0
+        assert cached2 == 0, (
+            f"测试点2 断言失败：用户输入 {pt2} tok（<64，低于最细匹"
+            f"配粒度）应不缓存，实际 cached_tokens={cached2}（"
+            f"usage={usage4}）"
+        )
+
+        test_logger.info(
+            f"客户问题复现通过: 细粒度前缀匹配生效（输入 {pt1} tok "
+            f"缓存 {cached1} tok；输入 {pt2} tok 不缓存——低于最细"
+            f"粒度 64 tok）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_prefix_cache_hit_rate_threshold(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K16 [P0]: 客户问题 - 固定前缀/多轮上下文缓存命中率达标
+
+        客户问题：短文本缓存命中率不达标（原始验证：固定前缀
+        88.35%、多轮上下文 87.16%/87.14%，目标 90%）——根因同
+        K15（vLLM 640 tok 最小缓存块长），修复（--prefix-match-
+        unit 64）后命中率应达标。
+        请求规模由原始信息推算（原始 fixed_prefix: 每轮 cached=
+        7680、input=8693、实测 9 轮、排除 1 轮预热）：共享前缀
+        ≈8192 tok（640 粒度截断为 12×640=7680，损失 512）+ 每轮
+        新增问题 ≈501 tok——即 ~12800 中文字符前缀 + ~780 字符/
+        轮问题。修复后预期固定前缀命中率 ≈8192/8693≈94.2%≥90%
+        （修复前 7680/8693≈88.35%<90%）。
+        两种模式（OpenAI 协议非流式，cached_tokens 取自 usage.
+        prompt_tokens_details.cached_tokens，兼容 usage.cached_
+        tokens 拼写）：
+        1. 固定前缀：10 轮独立请求（同一 ~8192 tok 系统前缀 + 每
+           轮唯一 ~501 tok 问题），第 1 轮为预热不计入
+        2. 多轮上下文：同一会话逐轮追加（前缀 + 历史问答 + 新问
+           题，回复极短），第 1 轮为预热不计入
+        断言：两模式实测命中率 = Σcached_tokens / Σprompt_tokens
+        （各 9 轮实测）均 ≥ 90%，任一 < 90% 即 FAIL。usage 其余
+        字段仅日志；零命中轮次记录留痕（zero_cache_rounds）。
+        （不进 smoke 集：新用例首跑观察期）
+        """
+        K16_TARGET_RATE = 0.9
+        K16_ROUNDS = 10
+        K16_WARMUP_ROUNDS = 1
+        # K16: 共享前缀 ~8192 tok（由原始信息推算：640 粒度下每轮
+        # 命中 7680 = 12×640，前缀 8192 截断损失 512）
+        K16_PREFIX_FILLER_UNIT = (
+            "本知识库涵盖产品规格、接口说明、计费策略、常见问题与"
+            "处理流程，供客服助手检索引用。"
+        )
+        K16_PREFIX_TARGET_CHARS = 12800  # ≈8192 tok（中文 ~1.55 字符/tok）
+        K16_PREFIX_TEXT = K16_PREFIX_FILLER_UNIT * (
+            K16_PREFIX_TARGET_CHARS // len(K16_PREFIX_FILLER_UNIT) + 1
+        )
+        # K16: 每轮问题 ~501 tok（input 8693 - 前缀 8192）
+        K16_QUESTION_FILLER = (
+            "补充材料：客户在部署与验收阶段需核对接口说明、计费策略"
+            "与规格参数，涉及多部门协作、流程审批与回归验证节点，请"
+            "结合知识库内容作答。"
+        ) * 11
+
+        def question_for(k: int, brief_reply: bool) -> str:
+            """每轮唯一问题（轮次号保证前缀在问题开头处分叉）"""
+            text = (
+                f"检索问题（第 {k} 轮）：请在上述知识库中定位与第 "
+                f"{k} 号主题相关的条目，归纳其适用范围、注意事项与"
+                f"处理流程，并给出要点摘要。" + K16_QUESTION_FILLER
+            )
+            if brief_reply:
+                text += "本轮请仅回复：收到。"
+            return text
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 固定前缀/多轮上下文缓存命中率"
+            "达标（目标 ≥90%；前缀 ~8192 tok + 每轮新增 ~501 tok，"
+            "各 10 轮排除 1 轮预热实测 9 轮，由原始信息推算）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def cached_of(usage: Dict[str, Any]):
+            """取缓存命中 tokens（prompt_tokens_details.cached_tokens
+            优先，兼容 usage.cached_tokens 拼写）"""
+            details = usage.get("prompt_tokens_details") or {}
+            value = details.get("cached_tokens")
+            if value is None:
+                value = usage.get("cached_tokens")
+            return value
+
+        def completion_round(
+            messages: List[Dict[str, Any]], label: str
+        ) -> Dict[str, Any]:
+            """K16 单轮：发送请求并返回完整响应（非流式）"""
+            payload = {
+                "model": api_client.model_name,
+                "messages": messages,
+                "max_tokens": 16,
+                "stream": False,
+            }
+            logged = []
+            for m in messages:
+                content = m.get("content") or ""
+                logged.append(
+                    {
+                        "role": m.get("role"),
+                        "content": (
+                            f"[{len(content)} 字符] {content[:30]}…"
+                            if len(content) > 60
+                            else content
+                        ),
+                    }
+                )
+            TestLogger.log_request(
+                test_logger,
+                logged,
+                {
+                    "max_tokens": 16,
+                    "stream": False,
+                    "temperature": "(不发送)",
+                    "round": label,
+                },
+            )
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            assert response.status_code == 200, (
+                f"[{label}] 请求失败 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(f"[{label}] 响应不是合法 JSON: {e}")
+            TestLogger.log_response(
+                test_logger, result, f"K16-响应（{label}）"
+            )
+            usage = result.get("usage") or {}
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed="
+                f"{time.time() - started:.1f}s, pt="
+                f"{usage.get('prompt_tokens')}, cached="
+                f"{cached_of(usage)}"
+            )
+            return result
+
+        # ---- 模式 1：固定前缀（10 轮独立请求，同一前缀 + 唯一问题） ----
+        fixed_pt_sum = 0
+        fixed_cached_sum = 0
+        fixed_zero_rounds = []
+        for k in range(1, K16_ROUNDS + 1):
+            messages = [
+                {"role": "system", "content": K16_PREFIX_TEXT},
+                {"role": "user", "content": question_for(k, False)},
+            ]
+            usage = (
+                completion_round(messages, f"固定前缀-第{k}轮").get(
+                    "usage"
+                )
+                or {}
+            )
+            if k > K16_WARMUP_ROUNDS:
+                fixed_pt_sum += usage.get("prompt_tokens") or 0
+                fixed_cached_sum += cached_of(usage) or 0
+                if not cached_of(usage):
+                    fixed_zero_rounds.append(k)
+        measured = K16_ROUNDS - K16_WARMUP_ROUNDS
+        fixed_rate = (
+            fixed_cached_sum / fixed_pt_sum if fixed_pt_sum else 0.0
+        )
+        test_logger.info(
+            f"固定前缀: rate={fixed_rate:.4f}, Σcached="
+            f"{fixed_cached_sum}, Σinput={fixed_pt_sum}, 实测 "
+            f"{measured} 轮, zero_cache_rounds={fixed_zero_rounds}"
+        )
+        assert fixed_rate >= K16_TARGET_RATE, (
+            f"客户问题复现失败：固定前缀缓存命中率 {fixed_rate:.2%} "
+            f"未达标（目标 ≥90%；Σcached={fixed_cached_sum}, "
+            f"Σinput={fixed_pt_sum}, 实测 {measured} 轮, "
+            f"zero_cache_rounds={fixed_zero_rounds}；对照原始验证 "
+            f"88.35%<90%——640 粒度截断未修复）"
+        )
+
+        # ---- 模式 2：多轮上下文（同一会话逐轮追加） ----
+        history: List[Dict[str, Any]] = [
+            {"role": "system", "content": K16_PREFIX_TEXT}
+        ]
+        mt_pt_sum = 0
+        mt_cached_sum = 0
+        mt_zero_rounds = []
+        for k in range(1, K16_ROUNDS + 1):
+            question = question_for(k, True)
+            messages = history + [
+                {"role": "user", "content": question}
+            ]
+            result = completion_round(messages, f"多轮上下文-第{k}轮")
+            usage = result.get("usage") or {}
+            choices = result.get("choices") or []
+            reply = "收到。"
+            if choices:
+                reply = (
+                    (choices[0].get("message") or {}).get("content")
+                    or "收到。"
+                )
+            history = history + [
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": reply},
+            ]
+            if k > K16_WARMUP_ROUNDS:
+                mt_pt_sum += usage.get("prompt_tokens") or 0
+                mt_cached_sum += cached_of(usage) or 0
+                if not cached_of(usage):
+                    mt_zero_rounds.append(k)
+        mt_rate = mt_cached_sum / mt_pt_sum if mt_pt_sum else 0.0
+        test_logger.info(
+            f"多轮上下文: rate={mt_rate:.4f}, Σcached="
+            f"{mt_cached_sum}, Σinput={mt_pt_sum}, 实测 {measured} "
+            f"轮, zero_cache_rounds={mt_zero_rounds}"
+        )
+        assert mt_rate >= K16_TARGET_RATE, (
+            f"客户问题复现失败：多轮上下文缓存命中率 {mt_rate:.2%} "
+            f"未达标（目标 ≥90%；Σcached={mt_cached_sum}, "
+            f"Σinput={mt_pt_sum}, 实测 {measured} 轮, "
+            f"zero_cache_rounds={mt_zero_rounds}；对照原始验证 "
+            f"87.16%<90%——640 粒度截断未修复）"
+        )
+
+        test_logger.info(
+            f"客户问题复现通过: 缓存命中率全部达标——固定前缀 "
+            f"{fixed_rate:.2%}、多轮上下文 {mt_rate:.2%}（目标 90%，"
+            f"Σcached/Σinput 各实测 {measured} 轮、排除 "
+            f"{K16_WARMUP_ROUNDS} 轮预热）"
         )

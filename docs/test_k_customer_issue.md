@@ -46,6 +46,10 @@
 | K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：上线前版本未指定模型专属工具调用格式解析器，tool_choice 语义不被支持；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（temperature=0、mt=2048、非流式、不传 thinking；get_weather+get_current_time 两工具），断言 auto/required 必须发起工具调用（形状合法、finish=tool_calls）、named 必须调用指定工具（指定与天气意图不同向的 get_current_time）、none 禁止调用（无 tool_calls、正文非空、finish=stop） | P0 |
 | K11 | GLM-5.3-Flash response_format 三种模式支持 | 客户问题（AGDC2-16）：DingoRouter 不支持结构化输出语义；修复为 Router 侧支持结构化生成语义并转发至引擎；需支持 json_object/json_schema/text | 三模式各一次（temperature=0、mt=2048、非流式、不传 thinking），断言 json_object 正文可解析为 JSON 对象、json_schema 正文可解析且 city 为字符串、temperature 为数值、键集合恰为 {city,temperature}（weather strict schema）、text 正文非空；每轮 finish=stop | P0 |
 | K12 | GLM-5.3-Flash reasoning_effort 档位支持 | 客户问题（AGDC2-17）：字段为 reasoning_effort 且放在 chat_template_kwargs 里（GLM 聊天模版），而 OpenAI 协议/参考脚本将其放在顶层；Router 需在 OpenAI 协议外层捕获该字段并传给引擎；修复为 Router 侧支持语义转发；需支持 low/high/max/空（空=不发送该字段，默认档），且不管放在顶层还是嵌套在 chat_template_kwargs 里，请求都能被正常接受和处理并输出正常响应 | 两种放置（顶层/嵌套 chat_template_kwargs）× 四档各一次（temperature=0、mt=2048、非流式、不传 thinking、chat_template_kwargs={clear_thinking:true}；嵌套放置：reasoning_effort 放进 chat_template_kwargs），断言每轮 200+正文非空+finish=stop；档位对思考的实际影响（rt/reasoning 长度）仅日志留痕 | P0 |
+| K13 | stop 序列遵循且被截断正文前置多余字符 | 客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香蕉、"，实际输出 ">苹果、香蕉、"——被截断正文前面多输出了一个 ">" 符号；同时适用 KimiK3 | 按客户原始请求体还原（stream=true、stop=[橘子]、glm-5.3-flash 另传 thinking={type:enabled}+reasoning_effort=low；KimiK3 不传），断言 SSE 有正文增量、finish=stop、合并正文严格等于 "苹果、香蕉、"、不含 "橘子" | P0 |
+| K14 | 孤儿 tool 消息应 HTTP 400 拒绝 | 客户问题：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），属协议非法请求，网关应校验并返回 400 Bad Request；实际返回 200 放行；同时适用 GLM-5.3 与 GLM-5.3-Flash | 按客户原始请求体还原（user 后直接跟 tool tool_call_id=call_abc123、stream=true、无 tools/thinking/采样参数），断言 HTTP 400；若 200 放行（缺陷形态）取样 SSE 事件留证后 FAIL | P0 |
+| K15 | 细粒度前缀匹配短输入缓存阈值 | 客户问题：短文本缓存命中率不达标，根因推理引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640 tok 量级），客户输入低于该块长（如 625 tok）完全不缓存；平台修复为细粒度前缀匹配（sglang prefix-match-unit=64）；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两个测试点（OpenAI 协议非流式、不发送采样参数，cached_tokens 取 usage.prompt_tokens_details.cached_tokens 兼容 usage.cached_tokens）：1) 输入 64<N<640 相同请求连发两次，断言第 2 次 cached_tokens>0；2) 输入 N<64 相同请求连发两次，断言 cached_tokens==0；以服务端 prompt_tokens 校验规模前提 | P0 |
+| K16 | 固定前缀/多轮上下文缓存命中率达标 | 客户问题：修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文 87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断（8192→12×640=7680，损失 512），细粒度匹配（64）后应 ≈94.2%≥90%；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两模式（OpenAI 协议非流式、不发送采样参数，规模由原始信息推算：~12800 字符共享前缀 ≈8192 tok + ~780 字符/轮唯一问题 ≈501 tok）：1) 固定前缀 10 轮独立请求；2) 多轮上下文单会话逐轮追加（回复极短）；均排除第 1 轮预热实测 9 轮，断言各模式 Σcached/Σprompt_tokens ≥90%，任一 <90% 即 FAIL | P0 |
 
 ## 运行方式
 
@@ -702,3 +706,205 @@ reasoning_effort 放在顶层还是嵌套在 chat_template_kwargs 里，
 - Router 若静默剥离该字段（请求仍 200），响应侧不可观测区分——
   各轮 rt/reasoning 长度日志可作人工核查线索
 - marker：`GLM53FLASH`（K 套件按模型分组标记）
+
+### test_stop_sequence_prefix_leak (K13)
+
+**背景**：客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香
+蕉、"（正文在停止词处截断、不含停止词），实际输出 ">苹果、香蕉、"
+——被截断正文前面多输出了一个 ">" 符号（stop 截断逻辑把停止词
+的某个字符/片段泄漏到了正文开头）。缺陷为通用 stop 截断逻辑，
+同时适用于 GLM-5.3-Flash 与 KimiK3。
+
+**请求构造**（按客户原始请求体还原）：
+- 提示词 "请依次说出：苹果、香蕉、橘子、西瓜、葡萄。每个水果之
+  间用顿号分隔，不要省略。"
+- `stop=["橘子"]`、`stream=true`
+- glm-5.3-flash（模型名含 flash）：另传 `thinking={"type":
+  "enabled"}`、`reasoning_effort="low"`（客户原始请求体口径）
+- KimiK3：不传 thinking/reasoning_effort（按 K5 口径：网关对
+  thinking 参数兼容性未知，缺陷本身与其无关）
+- 其余采样参数（temperature/top_p/seed）不发送（客户原始请求体
+  即如此；通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+
+**断言**（硬）：
+1. SSE 解析成功且有正文增量（收到 content delta）
+2. finish_reason == "stop"（stop 序列触发，非 length）
+3. 合并正文严格等于 "苹果、香蕉、"（多余前缀如 ">"、停止词泄
+   漏、未截断均 FAIL）
+4. 正文不含停止词 "橘子"（遵循 stop 语义）
+
+**判定矩阵**：
+- 无 SSE 事件 / 无正文增量 → FAIL
+- finish ≠ stop → FAIL（stop 序列未触发）
+- content ≠ "苹果、香蕉、" → FAIL（核心缺陷检出：多余前缀/停
+  止词泄漏/未截断）
+- content 含 "橘子" → FAIL
+- 全部满足 → PASS（修复后预期）
+
+**设计决策记录**：
+- **P0**（客户报障，逐字符契约明确）
+- **双标记**：`GLM53FLASH` + `KimiK3`（缺陷为通用 stop 截断逻
+  辑，两个环境均需回归）
+- **严格相等断言**：客户期望输出完全确定（">苹果、香蕉、" 对
+  "苹果、香蕉、"），逐字符比对最敏感；温度未固定（客户原始请
+  请求体不发送采样参数），水果列表+顿号结构在正常采样下稳定
+  截断于停止词前
+- **thinking 参数差异化**：glm-5.3-flash 按客户原始请求体传
+  thinking+reasoning_effort；KimiK3 按既有 K5 口径不传
+- **usage 仅日志**：客户问题与预算无关
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 若 FAIL 形态为 "苹果、香蕉、橘子、..."（未截断）说明 stop 未
+  生效（另一种缺陷形态，同样 FAIL）
+- 若 FAIL 形态为多余前缀（如 ">"），即客户原始缺陷
+- marker：`GLM53FLASH` + `KimiK3`（K 套件按模型分组标记）
+
+### test_orphan_tool_message_rejected (K14)
+
+**背景**：客户问题：messages 中 tool 角色消息前无带 tool_calls 的
+assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），属协议
+非法请求，网关应做校验并返回 400 Bad Request；实际返回 200 放行，
+模型把孤儿 tool 消息当普通上下文推理（流式输出 reasoning_content/
+正文）。
+
+**请求构造**（按客户原始请求体还原）：
+- messages：user "今天天气怎么样？" 后直接跟 tool 消息
+  （`tool_call_id="call_abc123"`、`content="{\"weather\":\"晴\"}"`），
+  中间无 assistant tool_calls
+- `stream=true`；不定义 `tools`；不传 thinking/采样参数（客户原
+  始请求体即如此；通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+- GLM-5.3 与 GLM-5.3-Flash 请求完全一致（原始请求体无模型专属字
+  段，仅 model 名不同）
+
+**断言**（硬）：
+1. HTTP 400（Bad Request——协议非法请求必须被拒绝）
+
+**判定矩阵**：
+- HTTP 400 → PASS（修复后预期）
+- HTTP 200（放行并生成）→ FAIL（核心缺陷检出；测试取样至多 8 个
+  SSE 事件留证 reasoning/正文预览后失败）
+- 其他状态码 → FAIL（非预期拒绝形态）
+
+**设计决策记录**：
+- **P0**（协议校验缺失，客户报障）
+- **双标记**：`GLM53FLASH` + `GLM53`（缺陷为通用消息校验逻辑，
+  两个环境均需回归）
+- **严格 400**：客户口径 "期望 HTTP 400"；422 等其他 4xx 属不同
+  修复实现，如网关改用其他状态码需同步调整本断言
+- **取证设计**：缺陷形态（200 放行）下先取样 SSE 事件再 FAIL，
+  失败信息中直接携带模型"把孤儿 tool 消息当上下文推理"的证据
+  （对齐客户原始日志中 reasoning_content 逐段推理的现象）
+- **usage 仅日志**：客户问题与预算无关
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 修复方向为网关/引擎侧消息协议校验（tool 消息必须跟随带
+  tool_calls 的 assistant 消息）
+- marker：`GLM53FLASH` + `GLM53`（K 套件按模型分组标记）
+
+### test_short_input_prefix_cache_threshold (K15)
+
+**背景**：客户问题（平台原始验证信息）：短文本缓存命中率不达标，根
+因推理引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640
+token 量级），客户输入低于该块长（如 625 token）时完全不缓存，命中
+率远低于目标；平台修复为细粒度前缀匹配（sglang `--prefix-match-
+unit 64` / vLLM 对应参数调小，单一缓存块内补充更细粒度的缓存点）。
+
+**请求构造**（OpenAI 协议 `/v1/chat/completions`，非流式）：
+- 测试点1 内容：K15_MID_UNIT（"本知识库涵盖产品规格、接口说明与
+  常见问题处理流程。"）× 20 ≈ 480 中文字符（≈280-320 tok，落于
+  64 < N < 640 区间中部，两侧留裕量）
+- 测试点2 内容：K15_SHORT_CONTENT（"请简要介绍北京的历史文化背景
+  与著名景点。"）≈ 21 字符（含对话模板开销 < 64 tok）
+- `max_tokens=16`；不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS
+  豁免全局覆盖）
+- 每个测试点相同请求连发两次（第 1 次建缓存、第 2 次测命中）
+
+**断言**（硬）：
+1. 前提自检：服务端 `usage.prompt_tokens` 落在对应区间（64 < pt1 <
+   640、pt2 < 64）——内容长度估算漂移导致前提失效时 FAIL 并提示
+   调整常量
+2. 测试点1：第 2 次请求 `cached_tokens > 0`（修复后应正常缓存；
+   修复前 640 粒度下为 0——即客户 625 tok 不缓存场景）
+3. 测试点2：第 2 次请求 `cached_tokens == 0`（低于最细匹配粒度
+   64 tok 不可缓存）
+
+**取值约定**：cached_tokens 取 `usage.prompt_tokens_details.
+cached_tokens`（OpenAI 标准位置），兼容 `usage.cached_tokens` 拼
+写；GLM-5.3 与 GLM-5.3-Flash 请求完全一致（仅 model 名不同）。
+
+**设计决策记录**：
+- **P0**（缓存核心功能失效，客户报障）
+- **双标记**：`GLM53` + `GLM53FLASH`（前缀缓存为引擎/推理平台通
+  用能力，两个环境均需回归）
+- **协议选择**：原始验证信息来自 /v1/messages 与 /v1/responses
+  协议的 usage 统计，本用例统一走 OpenAI /v1/chat/completions 并
+  取 prompt_tokens_details.cached_tokens（框架主协议，便于 CI 全
+  量回归）
+- **双向断言**：既验证修复（短输入应缓存）也验证粒度下限（<64 不
+  缓存），避免"全部 cached=pt"的过拟合假实现
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 修复前 640 粒度下测试点1 即 FAIL（cached=0），测试点2 恒 PASS
+- 若实际 prompt_tokens 接近区间边界（640 或 64），优先调整内容
+  常量而非放宽断言
+- marker：`GLM53` + `GLM53FLASH`（K 套件按模型分组标记）
+
+### test_prefix_cache_hit_rate_threshold (K16)
+
+**背景**：客户问题（平台原始验证信息）：短文本缓存命中率不达标——
+修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文
+87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断
+（8192 → 12×640=7680，损失 512），细粒度匹配（64）后固定前缀命中
+率应 ≈8192/8693≈94.2% ≥ 90%。
+
+**请求规模推算**（由原始信息反推，对齐客户场景）：
+- 共享前缀 ≈8192 tok → K16_PREFIX_TEXT ≈12800 中文字符
+  （K16_PREFIX_FILLER_UNIT 41 字符 × 313 = 12833 字符，中文 ~1.55 字符/tok）
+- 每轮新增问题 ≈501 tok（input 8693 − 前缀 8192）→ 每轮
+  ~780 字符（问题开头 ~60 字符 + K16_QUESTION_FILLER 64 字符 × 11）
+- 轮次：10 轮，排除第 1 轮预热，实测 9 轮（对齐原始验证口径）
+
+**请求构造**（OpenAI 协议 `/v1/chat/completions`，非流式）：
+- 模式1 固定前缀：10 轮独立请求 `[system K16_PREFIX_TEXT,
+  user question_for(k)]`——每轮问题以轮次号开头保证前缀在问题
+  开头处分叉，user 内容每轮唯一
+- 模式2 多轮上下文：单会话 history 逐轮追加（system 前缀 + 历史
+  问答 + 新问题），问题带 "本轮请仅回复：收到。"（控制 assistant
+  回复极短、不放大每轮新增 token），assistant 回复取实际响应
+  content
+- `max_tokens=16`；不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS
+  豁免全局覆盖）
+
+**断言**（硬）：
+1. 固定前缀模式：Σcached_tokens / Σprompt_tokens（实测 9 轮）
+   ≥ 90%，FAIL 信息携带对照原始验证 88.35%<90%
+2. 多轮上下文模式：Σcached_tokens / Σprompt_tokens（实测 9 轮）
+   ≥ 90%，FAIL 信息携带对照原始验证 87.16%<90%
+
+**取值约定**：同 K15——`usage.prompt_tokens_details.cached_tokens`
+优先，兼容 `usage.cached_tokens`；zero_cache_rounds（零命中轮次）
+仅日志留痕；usage 其余字段仅日志。
+
+**设计决策记录**：
+- **P0**（缓存命中率低于承诺目标，客户报障）
+- **双标记**：`GLM53` + `GLM53FLASH`（同 K15，两个环境均需回归）
+- **推算口径**：640 粒度下每轮命中 7680 = 12×640 反推前缀为
+  8192 tok（截断损失 512）——由此构造 ~12800 字符前缀，使修复
+  前后命中率分别落在 90% 阈值两侧（88.35% vs 94.2%），确保断言
+  有检出力
+- **两种模式**：固定前缀（Agent 场景：同一 system prompt 反复使
+  用）与多轮上下文（对话场景：会话内历史增长），对齐原始验证的
+  两个维度
+- **预热排除**：第 1 轮为首建缓存（cached 必为 0），排除后实测
+  9 轮，与原始验证口径一致
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 模式2 多轮上下文修复前 ≈92-93%（7680 截断 + 历史追加稀释），
+  固定前缀模式（≈87-88%）为主要检出点
+- 实际模型回复若超短（"收到。"）以外内容过多，会稀释命中率——
+  问题已带 "本轮请仅回复：收到。" 约束
+- marker：`GLM53` + `GLM53FLASH`（K 套件按模型分组标记）
