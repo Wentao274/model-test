@@ -12,7 +12,9 @@
   P0 必测（任何失败应阻断发布），K8/K9 按客户工单优先级为 P1。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免**：K 类用例加入 `RAW_SAMPLING_PARAM_TESTS` 豁免名单，全局
-  `--sampling-params` 覆盖对其不生效，始终按客户原始采样参数执行。
+  `--sampling-params` 覆盖对其不生效，始终按客户原始采样参数执行（例外：
+  K10 已按用户指令取消豁免，其采样参数由全局 SAMPLING_PARAMS 覆盖——
+  temperature 全局值优先，原始口径 0 为无覆盖时回退值；top_p/seed 注入）。
 - **环境注入（不硬编码）**：客户 curl 中的 **URL、API key、模型名不写入测试
   代码**——与其他测试类一致，由 Jenkinsfile 构建参数（`BASE_URL` / `API_KEY` /
   `MODEL`）透传至 pytest 的 `--base-url` / `--api-key` / `--model-name`，经
@@ -43,13 +45,15 @@
 | K7 | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃）。只按官方格式传参（无回退）：low→high→max 比对后 max→high→low 再比对（正逆两轮，medium 不参与对比）；最后 medium 顶层 200 放行、嵌套 thinking.effort=medium 预期 400；倒挂/持平不判失败，仅告警 | P0 |
 | K8 | required+闲聊必须调用工具（客户工单级别） | 客户工单原始问题：required+闲聊（"Reply with exactly: OK"）不发起工具调用——tool_calls 缺失、finish=length、ct 恒吃满 max_tokens、正文仅 OK；预期 finish=tool_calls、关思考 ct 较小、开思考 rt<max_tokens | 关思考 mt=1000/3000、开思考 mt=3000（get_weather 工具），断言 tool_calls+get_weather+arguments 合法 JSON、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
 | K9 | required+闲聊必须强制调用工具（按官方行为） | 官方实测：闲聊+required → finish=tool_calls、强制返回 get_weather（city 瞎猜不限定）、reasoning 仅 38；Alaya 同场景 finish=length、reasoning 吃满 256/2000 预算、tool_calls=None；有意图时两站一致正常 | 关/开思考 × mt=256/2000（与 K8 同场景不同级别），按官方行为断言 tool_calls 强制返回（get_weather、arguments 合法 JSON）、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
-| K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：上线前版本未指定模型专属工具调用格式解析器，tool_choice 语义不被支持；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（temperature=0、mt=2048、非流式、不传 thinking；get_weather+get_current_time 两工具），断言 auto/required 必须发起工具调用（形状合法、finish=tool_calls）、named 必须调用指定工具（指定与天气意图不同向的 get_current_time）、none 禁止调用（无 tool_calls、正文非空、finish=stop） | P0 |
+| K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：上线前版本未指定模型专属工具调用格式解析器，tool_choice 语义不被支持；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（mt=2048、非流式、不传 thinking；采样参数不豁免——由全局 SAMPLING_PARAMS（Jenkinsfile）覆盖，temperature=0 为无覆盖时回退值；get_weather+get_current_time 两工具），断言 auto/required 必须发起工具调用（形状合法、finish=tool_calls）、named 必须调用指定工具（指定与天气意图不同向的 get_current_time）、none 禁止调用（无 tool_calls、正文非空、finish=stop） | P0 |
 | K11 | GLM-5.3-Flash response_format 三种模式支持 | 客户问题（AGDC2-16）：DingoRouter 不支持结构化输出语义；修复为 Router 侧支持结构化生成语义并转发至引擎；需支持 json_object/json_schema/text | 三模式各一次（temperature=0、mt=2048、非流式、不传 thinking），断言 json_object 正文可解析为 JSON 对象、json_schema 正文可解析且 city 为字符串、temperature 为数值、键集合恰为 {city,temperature}（weather strict schema）、text 正文非空；每轮 finish=stop | P0 |
 | K12 | GLM-5.3-Flash reasoning_effort 档位支持 | 客户问题（AGDC2-17）：字段为 reasoning_effort 且放在 chat_template_kwargs 里（GLM 聊天模版），而 OpenAI 协议/参考脚本将其放在顶层；Router 需在 OpenAI 协议外层捕获该字段并传给引擎；修复为 Router 侧支持语义转发；需支持 low/high/max/空（空=不发送该字段，默认档），且不管放在顶层还是嵌套在 chat_template_kwargs 里，请求都能被正常接受和处理并输出正常响应 | 两种放置（顶层/嵌套 chat_template_kwargs）× 四档各一次（temperature=0、mt=2048、非流式、不传 thinking、chat_template_kwargs={clear_thinking:true}；嵌套放置：reasoning_effort 放进 chat_template_kwargs），断言每轮 200+正文非空+finish=stop；档位对思考的实际影响（rt/reasoning 长度）仅日志留痕 | P0 |
 | K13 | stop 序列遵循且被截断正文前置多余字符 | 客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香蕉、"，实际输出 ">苹果、香蕉、"——被截断正文前面多输出了一个 ">" 符号；同时适用 KimiK3 | 按客户原始请求体还原（stream=true、stop=[橘子]、glm-5.3-flash 另传 thinking={type:enabled}+reasoning_effort=low；KimiK3 不传），断言 SSE 有正文增量、finish=stop、合并正文严格等于 "苹果、香蕉、"、不含 "橘子" | P0 |
 | K14 | 孤儿 tool 消息应 HTTP 400 拒绝 | 客户问题：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），属协议非法请求，网关应校验并返回 400 Bad Request；实际返回 200 放行；同时适用 GLM-5.3 与 GLM-5.3-Flash | 按客户原始请求体还原（user 后直接跟 tool tool_call_id=call_abc123、stream=true、无 tools/thinking/采样参数），断言 HTTP 400；若 200 放行（缺陷形态）取样 SSE 事件留证后 FAIL | P0 |
 | K15 | 细粒度前缀匹配短输入缓存阈值 | 客户问题：短文本缓存命中率不达标，根因推理引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640 tok 量级），客户输入低于该块长（如 625 tok）完全不缓存；平台修复为细粒度前缀匹配（sglang prefix-match-unit=64）；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两个测试点（OpenAI 协议非流式、不发送采样参数，cached_tokens 取 usage.prompt_tokens_details.cached_tokens 兼容 usage.cached_tokens）：1) 输入 64<N<640 相同请求连发两次，断言第 2 次 cached_tokens>0；2) 输入 N<64 相同请求连发两次，断言 cached_tokens==0；以服务端 prompt_tokens 校验规模前提 | P0 |
 | K16 | 固定前缀/多轮上下文缓存命中率达标 | 客户问题：修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文 87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断（8192→12×640=7680，损失 512），细粒度匹配（64）后应 ≈94.2%≥90%；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两模式（OpenAI 协议非流式、不发送采样参数，规模由原始信息推算：~12800 字符共享前缀 ≈8192 tok + ~780 字符/轮唯一问题 ≈501 tok）：1) 固定前缀 10 轮独立请求；2) 多轮上下文单会话逐轮追加（回复极短）；均排除第 1 轮预热实测 9 轮，断言各模式 Σcached/Σprompt_tokens ≥90%，任一 <90% 即 FAIL | P0 |
+| K17 | stop 停止符（换行符）在推理阶段生效 | 客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用于推理输出——推理里的第一个换行即触发停止，正文不会生成；反之若换行未触发停止、继续输出正文，则换行符未生效；适用 GLM-5.3 | 按场景构造流式请求（stream=true、stop=["\n"]、thinking={type:enabled}（K1 口径）、max_tokens=512 防御性预算、不发送采样参数），断言 SSE 有事件、合并正文为空（核心）、finish_reason==stop、合并 reasoning 不含换行（停止符不泄漏） | P0 |
+| K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按工单还原该 assistant 消息回填为多轮上下文（user→assistant→user，带 bash 工具定义，非流式，采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖），断言 HTTP 200（核心）、choices 存在、message 结构存在 | P0 |
 
 ## 运行方式
 
@@ -541,9 +545,13 @@ required（必须调用工具）、named（必须调用指定工具）、none
 
 **请求构造**：
 - 原始验证脚本口径（glm53_flash_suite 的 tool_auto/tool_
-  required/tool_named/tool_none.sh）：temperature=0、
-  max_tokens=2048、非流式、不传 thinking（GLM-5.3-Flash 默认
-  思考，参考结果含 reasoning_content，不做思考断言）
+  required/tool_named/tool_none.sh）：max_tokens=2048、非流式、
+  不传 thinking（GLM-5.3-Flash 默认思考，参考结果含
+  reasoning_content，不做思考断言）
+- 采样参数不豁免（用户指令）——由全局 SAMPLING_PARAMS
+  （Jenkinsfile，经 `--sampling-params` 注入）覆盖：temperature
+  全局值优先（原始脚本口径 0 为无覆盖时的回退值），top_p/seed
+  未显式指定时注入；reasoning_effort 不在此列，保持原始口径不传
 - 工具两个：get_weather(city) + get_current_time(timezone)
   （两个工具使 named 模式可判定）
 - 轮次：auto/required/none 用工具意图提示词 "Call get_weather
@@ -572,6 +580,14 @@ required（必须调用工具）、named（必须调用指定工具）、none
 
 **设计决策记录**：
 - **P0（按客户工单，AGDC2-15）**
+- **采样参数不豁免（用户指令）**：本用例已从
+  `RAW_SAMPLING_PARAM_TESTS` 豁免名单移除——采样参数由全局
+  SAMPLING_PARAMS（Jenkinsfile，默认
+  `{"temperature": 1.0, "top_p": 0.95, "seed": ""}`）覆盖：
+  temperature 全局值优先（原始脚本口径 0 为无覆盖时回退值，
+  SAMPLING_PARAMS 留空即框架原有行为）、top_p=0.95 注入、seed
+  空（不发送）；reasoning_effort 不在 SAMPLING_PARAMS 内，保持
+  原始口径不传
 - **named 判定设计**：指定与提示词意图不同的工具（提示词为天
   气意图、named 指定 get_current_time）——原始脚本 named 与意
   图同向（named=get_weather+天气提示词），无法区分「named 生
@@ -908,3 +924,132 @@ cached_tokens`（OpenAI 标准位置），兼容 `usage.cached_tokens` 拼
 - 实际模型回复若超短（"收到。"）以外内容过多，会稀释命中率——
   问题已带 "本轮请仅回复：收到。" 约束
 - marker：`GLM53` + `GLM53FLASH`（K 套件按模型分组标记）
+
+### test_stop_newline_in_reasoning (K17)
+
+**背景**：客户契约：指定停止符为换行符 `"\n"` 并开启思考时，停止
+符同样作用于推理（reasoning）输出——推理里出现的第一个换行即触
+发停止，正文（content）不会生成；反之若换行未触发停止、继续输
+出正文，则换行符未生效。
+
+**请求构造**（按场景构造，OpenAI 协议 `/v1/chat/completions` 流式）：
+- messages：单条 user "请简要介绍量子计算的基本概念与应用前景。"
+  （思考开启下推理输出自然含换行——第一个换行即应触发停止）
+- `stop=["\n"]`、`stream=true`
+- `thinking={"type":"enabled"}` 显式开启思考（K1 口径）
+- `max_tokens=512` 防御性预算（正常应在推理早期几十个 token 内触
+  发停止，仅防缺陷形态下无界生成）
+- 不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+
+**断言**（硬）：
+1. SSE 解析成功（收到事件）
+2. 合并正文为空（核心——stop 在推理阶段触发，正文未生成；收到
+   正文即换行符未生效）
+3. `finish_reason == "stop"`（停止符触发，非 length）
+4. 合并 reasoning 不含 `"\n"`（stop 语义：输出在停止符前截断、
+   停止符不泄漏到输出）
+
+**判定矩阵**：
+- 推理中第一个换行触发停止、无正文、finish=stop、reasoning 无
+  换行 → PASS（契约行为）
+- 换行未触发停止、推理带换行继续并输出正文 → FAIL（核心缺陷检
+  出：正文断言/换行泄漏断言任一命中）
+- 思考被忽略直接输出正文 → FAIL（正文非空，同样命中核心断言）
+- finish=length 且正文为空（换行未生效且思考吃满预算）→ FAIL
+  （finish 断言命中）
+
+**设计决策记录**：
+- **P0**（stop 核心语义在推理阶段失效，客户报障）
+- **单标记**：仅 `GLM53`（用户指定，本用例仅在 GLM-5.3 环境回
+  归，不进 GLM53FLASH 集）
+- **测试技术**："将 stop 用到推理上"——思考输出几乎必然在早期出
+  现换行，因此无需构造特殊提示词即可确定性验证停止符是否作用于
+  推理阶段；正文是否生成即判定分水岭
+- **max_tokens=512 防御性预算**：无客户原始 curl，设预算仅防缺陷
+  形态下无界生成；契约行为下远用不到
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 若引擎将 stop 仅作用于正文（不作用于推理）：推理完整输出（含
+  换行）、正文在第一个正文换行处截断——正文非空 + reasoning 含
+  换行，断言 2/4 双重检出
+- usage 仅日志（流式下客户场景未带 stream_options.include_usage，
+  usage 可能为空）
+- marker：仅 `GLM53`（K 套件按模型分组标记；用户指定不含
+  GLM53FLASH）
+
+### test_output_json_as_input_context (K18)
+
+**背景**：客户问题（AGDC2-28）：上次请求输出的 assistant JSON
+作为下次请求的输入上下文提交即报错——`Failed to deserialize
+the JSON body into the target type: missing field 'name'`。触发
+形态：助手历史 tool_calls 列表混有
+1. 空占位调用：`function.name=""`、`id=null`、`arguments="{}"`
+   （报错 missing field `name` 即指向它）；
+2. 真实 bash 调用：`name="bash"`、`id="call_8af1ab36a4154c25"`，
+   arguments 为 `'"command":"cd ... ", "description": "..."}'`
+   ——缺开头 `{`、非合法 JSON（内部 `data,json`、`SKlLL` 等怪
+   字符均为工单原文，原样保留）。
+修复逻辑（开发回复）：
+1. 先按原有逻辑解析、校验请求，正常请求直接通过；
+2. 解析失败后，识别 assistant 历史中的空占位调用；同一列表还有
+   其他真实调用时，移除空占位项、保留真实调用，再重新校验（只有
+   空占位项时不直接删除）；
+3. 真实 bash 调用的 arguments 即使缺少开头 `{`，仍作为字符串保
+   留，不补 `{`（请求能通过 router 不代表该字符串成为合法工具
+   参数 JSON）；
+4. 兼容 assistant 历史里重复的 reasoning_content /
+   reasoning_context，保留最后一个值。
+
+**请求构造**（按工单还原，OpenAI 协议 `/v1/chat/completions`
+非流式，手工 payload 直发）：
+- messages：user（"请分析工作区数据并生成技能周报图表。"）→
+  assistant（工单原样还原：content=null、reasoning_content +
+  reasoning_context 双字段并存、tool_calls=[空占位调用, 真实
+  bash 调用（arguments 缺 `{`）]）→ user（"请继续完成任务。"）
+- tools：bash 工具定义（agent 场景——模型输出调用了 bash，请求
+  必然定义了该工具）
+- max_tokens=512；采样参数不豁免（用户指令）——由全局
+  SAMPLING_PARAMS（Jenkinsfile，经 `--sampling-params` 注入）
+  覆盖：temperature 全局值优先（无覆盖时回退 0.7），top_p/seed
+  未显式指定时注入
+
+**断言**（硬）：
+1. HTTP 200（核心——上次输出 JSON 必须可作为下次请求的输入上
+   下文，报错复现即 FAIL）
+2. choices 存在且非空
+3. message 结构存在（响应可正常生成）
+
+**判定矩阵**：
+- 请求被接受（200）且正常生成 → PASS（上下文回填成功）
+- HTTP 400 报 missing field `name`（或同型反序列化错误）→
+  FAIL（工单缺陷复现——空占位调用未被容忍）
+- 200 但无 choices / 无 message 结构 → FAIL（上下文被接受但未
+  正常生成）
+
+**设计决策记录**：
+- **P0**（按客户工单，AGDC2-28）
+- **明确不断言**：arguments 被补 `{`（修复明确不补——通过
+  router 不代表该字符串成为合法参数 JSON）；空占位被移除
+  （router 内部行为，响应不可见）
+- **响应形态宽松**：只测"上下文被接受"——正文或继续调用工具
+  均可（历史是工具调用场景且提供了 bash 工具），content/
+  tool_calls 仅日志
+- **role 拼写**：docx 中为 `"assitant"`——报错与修复逻辑均不涉
+  及 role，判定为文档笔误，按标准 `assistant` 还原
+- **reasoning 重复字段覆盖方式**：dict 无法表达同键字面重复，
+  以 reasoning_content + reasoning_context 两拼写并存覆盖兼容
+  路径（"保留最后一个值"为 router 内部合并行为，响应不可见，
+  不断言）
+- **采样参数不豁免（用户指令）**：对齐 K10 新口径——由全局
+  SAMPLING_PARAMS 覆盖（默认 temperature=1.0、top_p=0.95、seed
+  不发送；SAMPLING_PARAMS 留空即无覆盖回退 temperature=0.7）
+- **多轮最小还原**：user→assistant(工单输出)→user 追问——
+  工单核心是"输出回填为上下文"，不额外自造 tool 响应消息
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 修复逻辑第 2 条的"只有空占位项时不直接删除"分支不在本用例
+  覆盖范围（工单报错场景为占位+真实调用并存）
+- usage 仅日志
+- marker：仅 `GLM53`（用户指定；采样参数不豁免）

@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K16
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K18
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -118,8 +118,11 @@ K. 客户问题复现测试
   修复：Worker 侧指定生成解释器，支持渲染字段至模型聊天模版
   （chat_template.jinja）。本用例对四种模式各发一次请求（原始
   验证脚本 glm53_flash_suite 的 tool_auto/tool_required/tool_
-  named/tool_none.sh 口径：temperature=0、max_tokens=2048、非流
-  式、不传 thinking——GLM-5.3-Flash 默认思考，不做思考断言）。
+  named/tool_none.sh 口径：max_tokens=2048、非流式、不传
+  thinking——GLM-5.3-Flash 默认思考，不做思考断言；采样参数不豁
+  免（用户指令）——由全局 SAMPLING_PARAMS（Jenkinsfile，经
+  --sampling-params 注入）覆盖：temperature 全局值优先（原始脚
+  本口径 0 为无覆盖时的回退值），top_p/seed 未显式指定时注入）。
   工具两个：get_weather(city)+get_current_time(timezone)。
   auto/required/none 用工具意图提示词（原始脚本口径）；named 指
   定 get_current_time 且提示词保持原始口径的天气意图——named 与
@@ -218,9 +221,41 @@ K. 客户问题复现测试
   (~501 token)]；模式2 多轮上下文——单会话 history 逐轮追加，
   共享前缀随轮增长。两模式均排除第 1 轮预热、实测 9 轮，断言
   cached_tokens 总和/prompt_tokens 总和 ≥90%。GLM-5.3 与
-  GLM-5.3-Flash 断言一致，非流式、不发送采样参数（通过
+  GLM-5.3-Flash 断言  一致，非流式、不发送采样参数（通过
   RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。（不进 smoke 集：
   新用例首跑观察期）
+- K17: stop 停止符（换行符）在推理阶段生效 [P0]
+  客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用
+  于推理（reasoning）输出——推理里出现的第一个换行即触发停止，
+  正文（content）不会生成；反之若换行未触发停止、继续输出正文，
+  则换行符未生效。本用例按该场景构造（GLM-5.3：
+  thinking={"type":"enabled"} 显式开启思考（K1 口径）；
+  stream=true、stop=["\n"]、
+  max_tokens=512 仅作防御性预算（正常应在推理早期触发停止）、其余
+  采样参数不发送——通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。
+  硬断言：SSE 解析成功有事件；合并正文为空（stop 在推理阶段触
+  发、正文未生成——核心断言）；finish_reason=="stop"；合并
+  reasoning 不含 "\n"（stop 语义：输出在停止符前截断、停止符不泄
+  漏）。usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+- K18: 模型输出 JSON 可回填为下次请求输入上下文 [P0]
+  客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请
+  求的输入上下文提交即报错——"Failed to deserialize the JSON
+  body into the target type: missing field `name`"。触发形态：助
+  手历史 tool_calls 列表混有空占位调用（name=""、id=null、
+  arguments="{}"）与真实 bash 调用（arguments 缺开头 "{"、非合法
+  JSON，按工单原样保留）。修复：解析失败后同列表有真实调用时移
+  除空占位项再重新校验；缺 "{" 的 arguments 原样保留（不补）；
+  兼容 assistant 历史重复的 reasoning_content/reasoning_context
+  （保留最后一个值）。本用例按工单还原该 assistant 消息回填为多
+  轮上下文（user→assistant(空占位+bash 调用+reasoning 双字段)→
+  user 追问，带 bash 工具定义，非流式），硬断言 HTTP 200+choices
+  存在+message 结构存在——上次输出 JSON 必须可作为下次输入上下
+  文，报错复现即 FAIL。不断言 arguments 被补 "{"（修复明确不
+  补）与占位被移除（router 内部行为）。GLM-5.3 专用；采样参数
+  不豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回
+  退 0.7、top_p/seed 注入）。docx 中 role 拼写 "assitant" 判定为
+  笔误（报错与修复均不涉及 role），按标准 assistant 还原。
+  usage 仅日志。（不进 smoke 集：新用例首跑观察期）
 """
 
 import json
@@ -2338,9 +2373,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         工具）、named（必须调用指定工具）、none（禁止调用工具）。
         本用例对四种模式各发一次请求（原始验证脚本 glm53_flash_
         suite 的 tool_auto/tool_required/tool_named/tool_none.sh
-        口径：temperature=0、max_tokens=2048、非流式、不传
-        thinking——GLM-5.3-Flash 默认思考，参考结果含 reasoning_
-        content，不做思考断言）。工具两个：get_weather(city)+
+        口径：max_tokens=2048、非流式、不传 thinking——GLM-5.3-
+        Flash 默认思考，参考结果含 reasoning_content，不做思考断
+        言；采样参数不豁免（用户指令）——由全局 SAMPLING_PARAMS
+        （Jenkinsfile，经 --sampling-params 注入）覆盖：temperature
+        全局值优先（原始脚本口径 0 为无覆盖时的回退值），top_p/
+        seed 未显式指定时注入；reasoning_effort 不在此列，保持原
+        始口径不传）。工具两个：get_weather(city)+
         get_current_time(timezone)。auto/required/none 用工具意图
         提示词（原始脚本口径）；named 指定 get_current_time 且提
         示词保持原始口径的天气意图——named 与提示词自然意图不同
@@ -2434,30 +2473,45 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             label: str, tool_choice: Any, prompt: str, expect: str
         ) -> None:
             """K10 单轮：按 tool_choice 模式断言语义生效"""
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": prompt}],
-                {
-                    "tools": [t["function"]["name"] for t in K10_TOOLS],
-                    "tool_choice": tool_choice,
-                    "temperature": 0,
-                    "max_tokens": 2048,
-                    "stream": False,
-                    "round": label,
-                },
-            )
-
-            # 手工构造 payload 直发（需 tools/tool_choice/temperature=0，
-            # chat_completion 封装会强制覆盖 max_tokens/temperature）
+            # 手工构造 payload 直发（需 tools/tool_choice 直进 payload；
+            # 采样参数不豁免（用户指令）——由全局 SAMPLING_PARAMS
+            # （Jenkinsfile，经 conftest 注入 client）覆盖：
+            # temperature 全局值优先（原始脚本口径 0 为无覆盖时的回退
+            # 值），top_p/seed 未显式指定时注入；reasoning_effort 不在
+            # 此列，保持原始口径不传）
+            sampling_extra: Dict[str, Any] = {}
+            if api_client.top_p is not None:
+                sampling_extra["top_p"] = api_client.top_p
+            if api_client.seed:
+                try:
+                    sampling_extra["seed"] = int(api_client.seed)
+                except (ValueError, TypeError):
+                    sampling_extra["seed"] = api_client.seed
             payload = {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": prompt}],
                 "tools": K10_TOOLS,
                 "tool_choice": tool_choice,
                 "max_tokens": 2048,
-                "temperature": 0,
+                "temperature": api_client._effective_temperature(0),
                 "stream": False,
+                **sampling_extra,
             }
+
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": prompt}],
+                {
+                    "tools": [t["function"]["name"] for t in K10_TOOLS],
+                    "tool_choice": tool_choice,
+                    "temperature": payload["temperature"],
+                    "top_p": payload.get("top_p", "(不注入)"),
+                    "seed": payload.get("seed", "(不注入)"),
+                    "max_tokens": 2048,
+                    "stream": False,
+                    "round": label,
+                },
+            )
 
             started = time.time()
             try:
@@ -3640,4 +3694,380 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"{fixed_rate:.2%}、多轮上下文 {mt_rate:.2%}（目标 90%，"
             f"Σcached/Σinput 各实测 {measured} 轮、排除 "
             f"{K16_WARMUP_ROUNDS} 轮预热）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_stop_newline_in_reasoning(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K17 [P0]: 客户问题 - stop 停止符（换行符）在推理阶段生效
+
+        客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样
+        作用于推理（reasoning）输出——推理里出现的第一个换行即触发
+        停止，正文（content）不会生成；反之若换行未触发停止、继续
+        输出正文，则换行符未生效，用例 FAIL。
+        本用例按该场景构造（GLM-5.3：thinking={"type":"enabled"}
+        显式开启思考（K1 口径））：
+        - stream=true、stop=["\n"]、max_tokens=512（防御性预算——
+          正常应在推理早期几十个 token 内触发停止，仅防缺陷形态下
+          无界生成）
+        - 其余采样参数不发送（通过 RAW_SAMPLING_PARAM_TESTS 豁免
+          全局覆盖）
+        硬断言：
+        1. SSE 解析成功（收到事件）
+        2. 合并正文为空（stop 在推理阶段触发，正文未生成——核心：
+           若收到正文即换行符未生效）
+        3. finish_reason == "stop"（停止符触发，非 length）
+        4. 合并 reasoning 不含 "\n"（stop 语义：输出在停止符前截
+           断、停止符不泄漏到输出）
+        usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K17: 场景常量（思考开启下推理输出自然含换行——第一个换行
+        # 即应触发停止，正文不生成）
+        K17_PROMPT = "请简要介绍量子计算的基本概念与应用前景。"
+        K17_STOP = ["\n"]
+        K17_MAX_TOKENS = 512  # 防御性预算，见 docstring
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - stop 停止符（换行符）在推理阶段"
+            "生效（stop=[\"\\n\"]，推理中第一个换行即触发停止、正文"
+            "不生成；缺陷形态为换行未停止且继续输出正文）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 手工构造 payload 直发（需 stop/thinking 字段原样还原，
+        # chat_completion 封装不支持这些组合）
+        payload = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K17_PROMPT}],
+            "stop": list(K17_STOP),
+            "stream": True,
+            "max_tokens": K17_MAX_TOKENS,
+            "thinking": {"type": "enabled"},
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K17_PROMPT}],
+            {
+                "stop": K17_STOP,
+                "stream": True,
+                "max_tokens": K17_MAX_TOKENS,
+                "thinking": {"type": "enabled"},
+                "temperature": "(不发送)",
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client.session.post(
+                url,
+                json=payload,
+                timeout=api_client.timeout,
+                stream=True,
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        if response.status_code != 200:
+            pytest.fail(
+                f"请求失败 HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
+        # 解析 SSE：合并正文/思考增量，提取 finish_reason 与 usage
+        # （口径同 K13）
+        content = ""
+        reasoning = ""
+        finish = None
+        usage: Dict[str, Any] = {}
+        events = 0
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8")
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            events += 1
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            if delta.get("content"):
+                content += delta["content"]
+            if delta.get("reasoning_content"):
+                reasoning += delta["reasoning_content"]
+            if choices[0].get("finish_reason"):
+                finish = choices[0].get("finish_reason")
+            evt_usage = event.get("usage")
+            if evt_usage:
+                usage.update(evt_usage)
+
+        # 断言0：SSE 解析成功
+        assert events > 0, "未返回任何 SSE 事件"
+
+        # 断言1（核心）：正文未生成——stop 应在推理阶段的第一个换行
+        # 处触发，正文不应出现（收到正文即换行符未生效）
+        assert content == "", (
+            f"客户问题复现失败：stop=[\"\\n\"] 应在推理阶段的第一个"
+            f"换行处触发停止、正文不应生成，实际收到正文 "
+            f"{content[:120]!r}（长度 {len(content)}）——换行符未生效"
+            f"（推理继续并输出了正文；reasoning_len={len(reasoning)}, "
+            f"finish={finish}）"
+        )
+
+        # 断言2：stop 触发（非 length/其他）
+        assert finish == "stop", (
+            f"客户问题复现失败：换行停止符应触发 finish_reason=stop，"
+            f"实际 {finish}（content={content!r}, "
+            f"reasoning_len={len(reasoning)}）"
+        )
+
+        # 断言3：合并 reasoning 不含换行（停止符前截断、不泄漏）
+        assert "\n" not in reasoning, (
+            f"客户问题复现失败：stop=[\"\\n\"] 下输出应在第一个换行"
+            f"前截断，合并 reasoning 中出现换行（{len(reasoning)} "
+            f"字符，前 120 字符 {reasoning[:120]!r}）——推理中的换行"
+            f"未触发停止（停止符泄漏/未作用于推理）"
+        )
+
+        test_logger.info(
+            f"HTTP 200, elapsed={elapsed:.1f}s, finish={finish}, "
+            f"content={content!r}, reasoning_len={len(reasoning)}, "
+            f"events={events}, usage="
+            f"{json.dumps(usage, ensure_ascii=False)}"
+        )
+        test_logger.info(
+            "客户问题复现通过: 换行停止符在推理阶段生效（推理中第一"
+            "个换行触发停止，正文未生成，reasoning 中无换行泄漏）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_output_json_as_input_context(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K18 [P0]: 客户问题 - 模型输出 JSON 可回填为下次请求输入上下文
+
+        客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次
+        请求的输入上下文提交即报错——"Failed to deserialize the
+        JSON body into the target type: missing field `name`"。触
+        发形态（docx 原样还原）：助手历史 tool_calls 列表混有
+        1) 空占位调用：function.name=""、id=null、arguments="{}"
+           （报错 missing field `name` 即指向它）；
+        2) 真实 bash 调用：name="bash"、id="call_8af1ab36a4154c25"，
+           arguments 为 '"command":"cd ... ", "description":
+           "..."}'——缺开头 "{"、非合法 JSON（内部 data,json、SKlLL
+           等怪字符均为工单原文，原样保留）。
+        修复逻辑：解析失败后，同列表还有其他真实调用时移除空占位
+        项、保留真实调用再重新校验；缺 "{" 的 arguments 原样保留
+        （不补 "{"——通过 router 不代表该字符串成为合法参数
+        JSON）；兼容 assistant 历史重复的 reasoning_content/
+        reasoning_context（保留最后一个值）。
+        本用例按工单还原该 assistant 消息回填为多轮上下文：
+        user → assistant(空占位+bash 调用+reasoning 双字段并存) →
+        user 追问，带 bash 工具定义，非流式。
+        硬断言：
+        1. HTTP 200（核心——上次输出 JSON 必须可作为下次请求的输
+           入上下文，报错复现即 FAIL）
+        2. choices 存在且非空
+        3. message 结构存在（响应可正常生成）
+        明确不断言：arguments 被补 "{"（修复明确不补）、空占位被
+        移除（router 内部行为，响应不可见）。响应形态（正文/继续
+        调用工具）宽松留日志——测试要点是上下文被接受。
+        docx 中 role 拼写 "assitant" 判定为笔误（报错与修复均不涉
+        及 role），按标准 assistant 还原。reasoning 同键字面重复
+        无法经 dict 表达，以 reasoning_content + reasoning_context
+        两拼写并存覆盖兼容路径。GLM-5.3 专用；采样参数不豁免——
+        由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
+        0.7、top_p/seed 注入）。usage 仅日志。（不进 smoke 集：
+        新用例首跑观察期）
+        """
+        # K18: 工单原始 bash 调用 arguments（缺开头 "{"、非合法
+        # JSON；内部 data,json/SKlLL 等怪字符均为工单原文，原样保留）
+        K18_BASH_ARGS = (
+            '"command":"cd /mnt/user-data/workspace/gb-audit && '
+            'python3 plot_skill.py && cp skill_weekly.json '
+            '/mnt/user-data/outputs/gammabull_skill_events_data,'
+            'json && ls -la /mnt/user-data/outputs/", '
+            '"description": "Render SKlLL chart and copy evidence '
+            'data"}'
+        )
+        # K18: bash 工具定义（agent 场景——模型输出调用了 bash，请
+        # 求必然定义了该工具）
+        K18_TOOLS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "description": (
+                        "Run a shell command in the workspace"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["command"],
+                    },
+                },
+            }
+        ]
+        # K18: 按工单还原的 assistant 历史消息（上次请求的输出 JSON）
+        # ——空占位调用（name=""、id=null、arguments="{}"）与真实
+        # bash 调用（arguments 缺 "{"）同列表，reasoning 双拼写并
+        # 存（重复 reasoning 字段兼容路径）
+        K18_ASSISTANT = {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": (
+                "先分析工作区数据结构，再规划绘图步骤。"
+            ),
+            "reasoning_context": (
+                "已确认数据文件位置，准备调用 bash 执行绘图脚本。"
+            ),
+            "tool_calls": [
+                {
+                    "function": {"arguments": "{}", "name": ""},
+                    "id": None,
+                    "type": "function",
+                },
+                {
+                    "function": {
+                        "arguments": K18_BASH_ARGS,
+                        "name": "bash",
+                    },
+                    "id": "call_8af1ab36a4154c25",
+                    "type": "function",
+                },
+            ],
+        }
+        K18_MAX_TOKENS = 512
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 模型输出 JSON 回填为下次请求"
+            "输入上下文（assistant 历史含空占位调用/缺 \"{\" 的 bash "
+            "arguments/reasoning 双字段；修复后应被接受，报错复现即 "
+            "FAIL）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 手工构造 payload 直发（需按工单原样还原 assistant 历史怪
+        # 异结构，chat_completion 封装不支持）；采样参数不豁免（用户
+        # 指令）——由全局 SAMPLING_PARAMS（Jenkinsfile，经 conftest
+        # 注入 client）覆盖：temperature 全局值优先（无覆盖时回退
+        # 0.7），top_p/seed 未显式指定时注入
+        sampling_extra: Dict[str, Any] = {}
+        if api_client.top_p is not None:
+            sampling_extra["top_p"] = api_client.top_p
+        if api_client.seed:
+            try:
+                sampling_extra["seed"] = int(api_client.seed)
+            except (ValueError, TypeError):
+                sampling_extra["seed"] = api_client.seed
+        payload = {
+            "model": api_client.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "请分析工作区数据并生成技能周报图表。",
+                },
+                K18_ASSISTANT,
+                {"role": "user", "content": "请继续完成任务。"},
+            ],
+            "tools": K18_TOOLS,
+            "max_tokens": K18_MAX_TOKENS,
+            "temperature": api_client._effective_temperature(0.7),
+            "stream": False,
+            **sampling_extra,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            payload["messages"],
+            {
+                "tools": [t["function"]["name"] for t in K18_TOOLS],
+                "max_tokens": K18_MAX_TOKENS,
+                "temperature": payload["temperature"],
+                "top_p": payload.get("top_p", "(不注入)"),
+                "seed": payload.get("seed", "(不注入)"),
+                "stream": False,
+                "assistant_history": (
+                    "空占位调用(name=\"\", id=null) + bash 调用"
+                    "(arguments 缺 \"{\") + reasoning 双字段"
+                ),
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        # 断言1（核心）：上次输出 JSON 可作为下次请求输入上下文——
+        # 修复前此请求报 400（missing field `name`），报错复现即 FAIL
+        assert response.status_code == 200, (
+            f"客户问题复现失败：上次请求输出的 assistant JSON 应可"
+            f"作为下次请求的输入上下文，实际 HTTP "
+            f"{response.status_code}（工单原始报错：missing field "
+            f"`name`；修复应移除空占位项后重新校验放行）: "
+            f"{response.text[:400]}"
+        )
+
+        try:
+            result = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            pytest.fail(
+                f"响应不是合法 JSON: {e}. 响应体: {response.text[:300]}"
+            )
+
+        # 断言2：choices 存在（上下文被接受且正常生成）
+        choices = result.get("choices") or []
+        assert choices, (
+            f"响应缺少 choices: "
+            f"{json.dumps(result, ensure_ascii=False)[:500]}"
+        )
+        message = choices[0].get("message")
+
+        # 断言3：message 结构存在
+        assert isinstance(message, dict), (
+            f"响应 message 结构缺失: "
+            f"{json.dumps(result, ensure_ascii=False)[:500]}"
+        )
+
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls")
+        finish = choices[0].get("finish_reason")
+        usage = result.get("usage") or {}
+
+        TestLogger.log_response(test_logger, result, "K18-响应")
+        test_logger.info(
+            f"HTTP 200, elapsed={elapsed:.1f}s, finish={finish}, "
+            f"content_len={len(content)}, tool_calls="
+            f"{'有' if tool_calls else '无'}, usage="
+            f"{json.dumps(usage, ensure_ascii=False)}"
+        )
+        test_logger.info(
+            "客户问题复现通过: 上次输出 JSON 已被接受为下次请求的"
+            "输入上下文（含空占位调用/缺 \"{\" 的 bash arguments/"
+            "reasoning 双字段的 assistant 历史通过校验，正常生成响"
+            "应）"
         )

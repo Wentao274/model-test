@@ -713,8 +713,10 @@ TEST_CATEGORIES = {
                 "器，GLM-5.3-Flash 不支持该语义（修复：Worker 侧指定"
                 "生成解释器，渲染字段至模型聊天模版）。需支持四种模"
                 "式：auto/required/named/none。四模式各一次（原始脚"
-                "本 glm53_flash_suite 口径：temperature=0、mt=2048、"
-                "非流式、不传 thinking；工具 get_weather+get_current_"
+                "本 glm53_flash_suite 口径：mt=2048、非流式、不传 "
+                "thinking；采样参数不豁免（用户指令）——由全局 "
+                "SAMPLING_PARAMS 覆盖，temperature=0 为无覆盖时回退"
+                "值；工具 get_weather+get_current_"
                 "time 两个），断言 auto/required 必须发起工具调用（形"
                 "状合法、finish=tool_calls）、named 必须调用指定工具"
                 "（指定与提示词意图不同向的 get_current_time，未生效"
@@ -826,6 +828,42 @@ TEST_CATEGORIES = {
                 "与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数。"
                 "usage 仅日志",
                 "prefix_cache_hit_rate_threshold",
+                "P0",
+            ),
+            (
+                "K17",
+                "stop 停止符（换行符）在推理阶段生效",
+                "客户契约：指定停止符为换行符 \"\\n\" 并开启思考时，停"
+                "止符同样作用于推理（reasoning）输出——推理里出现的第"
+                "一个换行即触发停止，正文（content）不会生成；反之若"
+                "换行未触发停止、继续输出正文，则换行符未生效。适用 "
+                "GLM-5.3（thinking={type:enabled} 显式开启思考——K1 "
+                "口径）。硬断言：SSE 有事件；合并正文为空（stop 在推"
+                "理阶段触发、正文未生成——核心）；finish_reason=="
+                "stop；合并 reasoning 不含换行（停止符不泄漏）。usage "
+                "仅日志",
+                "stop_newline_in_reasoning",
+                "P0",
+            ),
+            (
+                "K18",
+                "模型输出 JSON 可回填为下次请求输入上下文",
+                "客户问题（AGDC2-28）：上次请求输出的 assistant JSON "
+                "作为下次请求的输入上下文提交即报错（missing field "
+                "`name`）——助手历史 tool_calls 混有空占位调用"
+                "（name=\"\"、id=null）与真实 bash 调用（arguments "
+                "缺开头 \"{\"、非合法 JSON）。修复：解析失败后同列表"
+                "有真实调用时移除空占位项再重新校验；缺 \"{\" 的 "
+                "arguments 原样保留（不补）；兼容重复的 reasoning_"
+                "content/reasoning_context（保留最后一个值）。按工单"
+                "还原该 assistant 消息回填为多轮上下文（user→"
+                "assistant→user，带 bash 工具定义，非流式），断言 "
+                "HTTP 200+choices+message——上次输出 JSON 必须可作为"
+                "下次输入上下文，报错复现即 FAIL；不断言 arguments "
+                "被补 \"{\" 与占位被移除。适用 GLM-5.3；采样参数不"
+                "豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无"
+                "覆盖时回退 0.7、top_p/seed 注入）",
+                "output_json_as_input_context",
                 "P0",
             ),
         ],

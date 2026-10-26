@@ -117,7 +117,9 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_stop_sequence_prefix_leak',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_orphan_tool_message_rejected',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_short_input_prefix_cache_threshold',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_prefix_cache_hit_rate_threshold'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_prefix_cache_hit_rate_threshold',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stop_newline_in_reasoning',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_output_json_as_input_context'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

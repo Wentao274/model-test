@@ -76,13 +76,13 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约值，思考强度档位对比的前提，不可被全局覆盖）
     "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊工具调用判定的前提，不可被全局覆盖）
     "test_required_chitchat_official_behavior",  # K9: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊强制工具调用判定的前提，不可被全局覆盖）
-    "test_tool_choice_four_modes_support",  # K10: 客户问题复现（temperature=0 为原始脚本口径，tool_choice 模式语义判定的前提，不可被全局覆盖）
     "test_response_format_three_modes_support",  # K11: 客户问题复现（temperature=0 为原始脚本口径，response_format 模式语义判定的前提，不可被全局覆盖）
     "test_reasoning_effort_levels_support",  # K12: 客户问题复现（temperature=0 为原始脚本口径，reasoning_effort 档位支持判定的前提，不可被全局覆盖）
     "test_stop_sequence_prefix_leak",  # K13: 客户问题复现（客户原始请求体不发送采样参数，stop 截断判定的前提，不可被全局覆盖）
     "test_orphan_tool_message_rejected",  # K14: 客户问题复现（客户原始请求体不发送采样参数，孤儿 tool 消息 400 拒绝判定的前提，不可被全局覆盖）
     "test_short_input_prefix_cache_threshold",  # K15: 客户问题复现（客户原始请求体不发送采样参数，短输入缓存阈值判定的前提，不可被全局覆盖）
     "test_prefix_cache_hit_rate_threshold",  # K16: 客户问题复现（客户原始请求体不发送采样参数，缓存命中率阈值判定的前提，不可被全局覆盖）
+    "test_stop_newline_in_reasoning",  # K17: 客户问题复现（场景请求体不发送采样参数，换行停止符作用于推理判定的前提，不可被全局覆盖）
 }
 
 
