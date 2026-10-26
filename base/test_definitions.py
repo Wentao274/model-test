@@ -721,7 +721,10 @@ TEST_CATEGORIES = {
                 "状合法、finish=tool_calls）、named 必须调用指定工具"
                 "（指定与提示词意图不同向的 get_current_time，未生效"
                 "时按意图调 get_weather 即被检出）、none 禁止调用（无"
-                " tool_calls、正文非空、finish=stop）；usage 仅日志",
+                " tool_calls、正文非空、finish=stop）；usage 仅日志。"
+                "同时适用 Kimi K3（OpenAI 协议通用语义，默认思考不"
+                "做断言；2026-10-26 staging 实测 required 轮 500 "
+                "prefill_internal_error，该 FAIL 为待修复基线）",
                 "tool_choice_four_modes_support",
                 "P0",
             ),
@@ -840,7 +843,9 @@ TEST_CATEGORIES = {
                 "GLM-5.3（thinking={type:enabled} 显式开启思考——K1 "
                 "口径）。硬断言：SSE 有事件；合并正文为空（stop 在推"
                 "理阶段触发、正文未生成——核心）；finish_reason=="
-                "stop；合并 reasoning 不含换行（停止符不泄漏）。usage "
+                "stop；合并 reasoning 不含换行（停止符不泄漏）。模型"
+                "真实响应（合并正文/思考全文）断言前打印（失败时同样"
+                "可见）；usage "
                 "仅日志",
                 "stop_newline_in_reasoning",
                 "P0",
@@ -864,6 +869,27 @@ TEST_CATEGORIES = {
                 "豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无"
                 "覆盖时回退 0.7、top_p/seed 注入）",
                 "output_json_as_input_context",
+                "P0",
+            ),
+            (
+                "K19",
+                "单次请求图片数超限（>16）应拒绝并返回恰当错误",
+                "客户问题：单次请求携带超过 16 张图片导致请求失败；根"
+                "因服务端 serving-pool 显式配置 --limit-mm-per-prompt "
+                "{\"image\":16,\"video\":1,\"audio\":0}（vLLM 多模态"
+                "单项限额）。契约：超限请求应失败并返回恰当错误信息"
+                "（参考 \"At most 16 image(s) may be provided in one "
+                "prompt\"）。代码生成 17 张 32x32 纯色 PNG（base64 "
+                "data URL，无外部依赖），单条 user 消息携带 17 个 "
+                "image_url part 提交，断言响应失败（非 200）且错误信"
+                "息含 \"at most 16 image\"（大小写不敏感）——恰当拒"
+                "绝则 PASS；200 放行（限额未生效）或信息不含该模式均"
+                " FAIL。模型真实响应（状态码/响应体全文）断言前打印"
+                "（失败时同样可见）。适用 GLM-5.3-Flash；不发送采样"
+                "参数（豁免）；"
+                "恰好 16 张正向对照未纳入（测试要点仅两条且避免重度"
+                "视觉计算）",
+                "over_image_limit_rejected",
                 "P0",
             ),
         ],

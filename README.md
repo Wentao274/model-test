@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 11 大类共 128 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 11 大类共 129 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -35,9 +35,9 @@
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测（**已默认禁用**） |
 | J. clear_thinking 参数行为 | `j_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
-| K. 客户问题复现 | `k_customer_issue` | 18 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文），P0 为主持续追加 |
+| K. 客户问题复现 | `k_customer_issue` | 19 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝），P0 为主持续追加 |
 
-> 总计：128 个测试点（P0: 52 / P1: 60 / P2: 16）
+> 总计：129 个测试点（P0: 53 / P1: 60 / P2: 16）
 
 ---
 
@@ -457,7 +457,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | P1 | 重要 | 推荐指标，失败建议修复 |
 | P2 | 一般 | 增强指标，失败可酌情接受 |
 
-每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 128 项）：P0 = 52，P1 = 60，P2 = 16。
+每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 129 项）：P0 = 53，P1 = 60，P2 = 16。
 
 ### 判定规则
 

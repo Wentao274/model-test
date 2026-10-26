@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K18
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K19
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -123,6 +123,9 @@ K. 客户问题复现测试
   免（用户指令）——由全局 SAMPLING_PARAMS（Jenkinsfile，经
   --sampling-params 注入）覆盖：temperature 全局值优先（原始脚
   本口径 0 为无覆盖时的回退值），top_p/seed 未显式指定时注入）。
+  同时适用 Kimi K3（OpenAI 协议 tool_choice 通用语义，默认思考
+  不做断言；2026-10-26 staging 实测 kimi-k3 required 轮 500
+  prefill_internal_error，该 FAIL 即为其待修复基线）。
   工具两个：get_weather(city)+get_current_time(timezone)。
   auto/required/none 用工具意图提示词（原始脚本口径）；named 指
   定 get_current_time 且提示词保持原始口径的天气意图——named 与
@@ -236,7 +239,8 @@ K. 客户问题复现测试
   硬断言：SSE 解析成功有事件；合并正文为空（stop 在推理阶段触
   发、正文未生成——核心断言）；finish_reason=="stop"；合并
   reasoning 不含 "\n"（stop 语义：输出在停止符前截断、停止符不泄
-  漏）。usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+  漏）。模型真实响应（合并正文/思考全文）断言前打印到日志（失败时
+  同样可见）；usage 仅日志。（不进 smoke 集：新用例首跑观察期）
 - K18: 模型输出 JSON 可回填为下次请求输入上下文 [P0]
   客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请
   求的输入上下文提交即报错——"Failed to deserialize the JSON
@@ -256,11 +260,31 @@ K. 客户问题复现测试
   退 0.7、top_p/seed 注入）。docx 中 role 拼写 "assitant" 判定为
   笔误（报错与修复均不涉及 role），按标准 assistant 还原。
   usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+- K19: 单次请求图片数超限（>16）应拒绝并返回恰当错误 [P0]
+  客户问题：单次请求携带超过 16 张图片导致请求失败。根因：服务端
+  serving-pool 启动参数显式配置 --limit-mm-per-prompt
+  {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）。契
+  约：超限请求应失败并返回恰当的错误信息（参考 "At most 16
+  image(s) may be provided in one prompt"）。本用例代码生成 17
+  张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user
+  消息携带 17 个 image_url part 发起请求，硬断言：响应失败（非
+  200）；错误信息含 "at most 16 image"（大小写不敏感）——超限
+  被正确拒绝且信息恰当则 PASS；200 放行（限额未生效）或错误信
+  息不含该模式（信息不恰当）均 FAIL。GLM-5.3-Flash 专用；不发
+  送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。
+  原始失败详情截图未收到，断言口径以用户给定的参考信息为准；
+  恰好 16 张的正向对照轮未纳入（用户测试要点仅两条，且避免回
+  归中重度视觉计算）。模型真实响应（状态码/响应体全文）断言前
+  打印到日志（失败时同样可见）；usage 仅日志。（不进 smoke 集：
+  新用例首跑观察期）
 """
 
+import base64
 import json
+import struct
 import time
 import uuid
+import zlib
 import pytest
 import requests
 from typing import Any, Dict, List
@@ -2358,6 +2382,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53FLASH
+    @pytest.mark.KimiK3
     @pytest.mark.p0
     def test_tool_choice_four_modes_support(
         self, api_client: ModelAPIClient, test_logger
@@ -2384,8 +2409,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         提示词（原始脚本口径）；named 指定 get_current_time 且提
         示词保持原始口径的天气意图——named 与提示词自然意图不同
         向，若 named 语义未生效（被忽略按 auto 处理）模型会按意
-        图调 get_weather，从而检出「指定工具未被强制」。每轮硬断
-        言：
+        图调 get_weather，从而检出「指定工具未被强制」。同时适用
+        Kimi K3（OpenAI 协议 tool_choice 通用语义；Kimi K3 默认思
+        考、响应含 reasoning_content，同样不做思考断言；2026-10-26
+        staging 实测 kimi-k3 required 轮 500 prefill_internal_error
+        "Kimi K3 required tool call is missing or incomplete"，
+        该 FAIL 即为其待修复基线）。每轮硬断言：
         - HTTP 200 + choices 存在（该模式不被支持即非 200）
         - auto/required：tool_calls 存在且形状合法（type=
           function、arguments 合法 JSON）、finish_reason==
@@ -2461,10 +2490,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         test_logger.info(
             "=== 测试开始: 客户问题 - GLM-5.3-Flash tool_choice 四种"
-            "模式支持（auto/required/named/none；temperature=0、"
-            "mt=2048、非流式、不传 thinking，按原始脚本口径；named "
-            "指定与天气意图不同向的 get_current_time 以验证强制语"
-            "义）==="
+            "模式支持（auto/required/named/none；mt=2048、非流式、"
+            "不传 thinking，按原始脚本口径；采样参数不豁免——由全局"
+            " SAMPLING_PARAMS 覆盖（temperature=0 为无覆盖时回退"
+            "值）；named 指定与天气意图不同向的 get_current_time "
+            "以验证强制语义）==="
         )
 
         url = f"{api_client.base_url}/v1/chat/completions"
@@ -3722,7 +3752,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         3. finish_reason == "stop"（停止符触发，非 length）
         4. 合并 reasoning 不含 "\n"（stop 语义：输出在停止符前截
            断、停止符不泄漏到输出）
-        usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+        模型真实响应（合并正文/思考全文、finish、usage）在断言前打
+        印到日志（失败时同样可见，便于诊断）。usage 仅日志。
+        （不进 smoke 集：新用例首跑观察期）
         """
         # K17: 场景常量（思考开启下推理输出自然含换行——第一个换行
         # 即应触发停止，正文不生成）
@@ -3814,6 +3846,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             if evt_usage:
                 usage.update(evt_usage)
 
+        # 模型真实响应信息（用户要求打印；置于断言前——失败时日志
+        # 中同样可见，便于诊断）
+        test_logger.info(
+            f"K17 真实响应 - HTTP 200, elapsed={elapsed:.1f}s, "
+            f"finish={finish}, events={events}, usage="
+            f"{json.dumps(usage, ensure_ascii=False)}"
+        )
+        test_logger.info(
+            f"K17 真实响应 - 合并正文({len(content)} 字符): {content!r}"
+        )
+        test_logger.info(
+            f"K17 真实响应 - 合并思考({len(reasoning)} 字符): "
+            f"{reasoning!r}"
+        )
+
         # 断言0：SSE 解析成功
         assert events > 0, "未返回任何 SSE 事件"
 
@@ -3842,12 +3889,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"未触发停止（停止符泄漏/未作用于推理）"
         )
 
-        test_logger.info(
-            f"HTTP 200, elapsed={elapsed:.1f}s, finish={finish}, "
-            f"content={content!r}, reasoning_len={len(reasoning)}, "
-            f"events={events}, usage="
-            f"{json.dumps(usage, ensure_ascii=False)}"
-        )
         test_logger.info(
             "客户问题复现通过: 换行停止符在推理阶段生效（推理中第一"
             "个换行触发停止，正文未生成，reasoning 中无换行泄漏）"
@@ -4070,4 +4111,159 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "输入上下文（含空占位调用/缺 \"{\" 的 bash arguments/"
             "reasoning 双字段的 assistant 历史通过校验，正常生成响"
             "应）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_over_image_limit_rejected(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K19 [P0]: 客户问题 - 单次请求图片数超限（>16）应拒绝并返回恰当错误
+
+        客户问题：单次请求携带超过 16 张图片导致请求失败。根因：服务
+        端 serving-pool 启动参数显式配置 --limit-mm-per-prompt
+        {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）。
+        契约：超限请求应失败并返回恰当的错误信息（参考 "At most
+        16 image(s) may be provided in one prompt"）。
+        本用例（GLM-5.3-Flash 专用）：
+        - 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部
+          依赖，各图颜色不同）
+        - 单条 user 消息携带 17 个 image_url part（单次请求/单次
+          会话超过 16 图）发起非流式请求
+        硬断言：
+        1. 响应失败（HTTP 非 200——超限应被拒绝）
+        2. 错误信息含 "at most 16 image"（大小写不敏感，覆盖
+           "At most 16 image(s) may be provided in one prompt"
+           及网关等价表述）——恰当的失败信息
+        PASS：超限被正确拒绝且信息恰当；FAIL：200 放行（限额未生
+        效）或错误信息不含该模式（信息不恰当）。
+        原始失败详情截图未收到，断言口径以用户给定的参考信息为准。
+        恰好 16 张的正向对照轮未纳入（用户测试要点仅两条，且避免回
+        归中重度视觉计算）。max_tokens=32 防御性预算（应在生成前
+        被拒绝）。不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS
+        豁免全局覆盖）。模型真实响应（状态码/响应体全文）在断言前
+        打印到日志（失败时同样可见，便于诊断）。usage/响应体仅日
+        志。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K19: 场景常量——17 张图（超过 serving 限额 16）
+        K19_IMAGE_COUNT = 17
+        K19_IMAGE_LIMIT = 16
+        K19_TEXT = "请逐一描述以下图片的内容。"
+        K19_MAX_TOKENS = 32  # 防御性预算（应在生成前被拒绝）
+        K19_MSG_NEEDLE = "at most 16 image"  # 大小写不敏感匹配
+
+        def make_png_data_url(index: int) -> str:
+            """生成 32x32 纯色 PNG 的 data URL（代码生成图片，无外部依赖）"""
+            width = height = 32
+            color = (
+                (index * 15) % 256,
+                (index * 7 + 30) % 256,
+                (K19_IMAGE_COUNT - index) * 15 % 256,
+            )
+
+            def chunk(ctype: bytes, data: bytes) -> bytes:
+                return (
+                    struct.pack(">I", len(data))
+                    + ctype
+                    + data
+                    + struct.pack(
+                        ">I", zlib.crc32(ctype + data) & 0xFFFFFFFF
+                    )
+                )
+
+            ihdr = chunk(
+                b"IHDR",
+                struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0),
+            )
+            row = b"\x00" + bytes(color) * width
+            idat = chunk(b"IDAT", zlib.compress(row * height))
+            iend = chunk(b"IEND", b"")
+            png = b"\x89PNG\r\n\x1a\n" + ihdr + idat + iend
+            return (
+                "data:image/png;base64,"
+                + base64.b64encode(png).decode("ascii")
+            )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 单次请求图片数超限（>16）应"
+            "拒绝并返回恰当错误（serving --limit-mm-per-prompt "
+            "{\"image\":16}；17 张代码生成 PNG 单会话提交；期望非 "
+            "200 + \"At most 16 image(s)...\" 类信息）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 手工构造 payload 直发（多模态 image_url part 形态，封
+        # 装不支持）；不发送采样参数（豁免全局覆盖）
+        content_parts: List[Dict[str, Any]] = [
+            {"type": "text", "text": K19_TEXT}
+        ]
+        for i in range(K19_IMAGE_COUNT):
+            content_parts.append(
+                {"type": "image_url", "image_url": {"url": make_png_data_url(i)}}
+            )
+        payload = {
+            "model": api_client.model_name,
+            "messages": [
+                {"role": "user", "content": content_parts}
+            ],
+            "max_tokens": K19_MAX_TOKENS,
+            "stream": False,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": f"[{K19_TEXT} + {K19_IMAGE_COUNT} 张图]"}],
+            {
+                "image_parts": K19_IMAGE_COUNT,
+                "image_limit": K19_IMAGE_LIMIT,
+                "max_tokens": K19_MAX_TOKENS,
+                "stream": False,
+                "temperature": "(不发送)",
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        # 模型真实响应信息（用户要求打印；置于断言前——失败时日志
+        # 中同样可见，便于诊断）
+        test_logger.info(
+            f"K19 真实响应 - HTTP {response.status_code}, "
+            f"elapsed={elapsed:.1f}s"
+        )
+        test_logger.info(
+            f"K19 真实响应 - 响应体({len(response.text)} 字符): "
+            f"{response.text!r}"
+        )
+
+        # 断言1（核心之一）：响应失败——超限应被拒绝
+        assert response.status_code != 200, (
+            f"客户问题复现失败：单次请求携带 {K19_IMAGE_COUNT} 张图"
+            f"（超过 serving 限额 {K19_IMAGE_LIMIT}）应被拒绝，实际"
+            f" HTTP 200 放行（限额未生效）: "
+            f"{response.text[:400]}"
+        )
+
+        # 断言2（核心之二）：恰当的失败信息——含 "at most 16 image"
+        # （大小写不敏感，覆盖 "At most 16 image(s) may be provided
+        # in one prompt" 及网关等价表述）
+        assert K19_MSG_NEEDLE in response.text.lower(), (
+            f"客户问题复现失败：超限请求已失败（HTTP "
+            f"{response.status_code}）但错误信息不恰当——应含类似 "
+            f"\"At most 16 image(s) may be provided in one prompt\" "
+            f"的信息（匹配 \"/{K19_MSG_NEEDLE}/i\"），实际: "
+            f"{response.text[:400]}"
+        )
+
+        test_logger.info(
+            "客户问题复现通过: 单次请求 17 张图被正确拒绝（HTTP "
+            f"{response.status_code}）且返回恰当的超限错误信息"
         )

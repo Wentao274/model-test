@@ -83,6 +83,8 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_short_input_prefix_cache_threshold",  # K15: 客户问题复现（客户原始请求体不发送采样参数，短输入缓存阈值判定的前提，不可被全局覆盖）
     "test_prefix_cache_hit_rate_threshold",  # K16: 客户问题复现（客户原始请求体不发送采样参数，缓存命中率阈值判定的前提，不可被全局覆盖）
     "test_stop_newline_in_reasoning",  # K17: 客户问题复现（场景请求体不发送采样参数，换行停止符作用于推理判定的前提，不可被全局覆盖）
+    "test_output_json_as_input_context",  # K18 不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
+    "test_over_image_limit_rejected",  # K19: 客户问题复现（场景请求体不发送采样参数，图片数超限拒绝判定的前提，不可被全局覆盖）
 }
 
 

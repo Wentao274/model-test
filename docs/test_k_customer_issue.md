@@ -45,7 +45,7 @@
 | K7 | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃）。只按官方格式传参（无回退）：low→high→max 比对后 max→high→low 再比对（正逆两轮，medium 不参与对比）；最后 medium 顶层 200 放行、嵌套 thinking.effort=medium 预期 400；倒挂/持平不判失败，仅告警 | P0 |
 | K8 | required+闲聊必须调用工具（客户工单级别） | 客户工单原始问题：required+闲聊（"Reply with exactly: OK"）不发起工具调用——tool_calls 缺失、finish=length、ct 恒吃满 max_tokens、正文仅 OK；预期 finish=tool_calls、关思考 ct 较小、开思考 rt<max_tokens | 关思考 mt=1000/3000、开思考 mt=3000（get_weather 工具），断言 tool_calls+get_weather+arguments 合法 JSON、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
 | K9 | required+闲聊必须强制调用工具（按官方行为） | 官方实测：闲聊+required → finish=tool_calls、强制返回 get_weather（city 瞎猜不限定）、reasoning 仅 38；Alaya 同场景 finish=length、reasoning 吃满 256/2000 预算、tool_calls=None；有意图时两站一致正常 | 关/开思考 × mt=256/2000（与 K8 同场景不同级别），按官方行为断言 tool_calls 强制返回（get_weather、arguments 合法 JSON）、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
-| K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：上线前版本未指定模型专属工具调用格式解析器，tool_choice 语义不被支持；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（mt=2048、非流式、不传 thinking；采样参数不豁免——由全局 SAMPLING_PARAMS（Jenkinsfile）覆盖，temperature=0 为无覆盖时回退值；get_weather+get_current_time 两工具），断言 auto/required 必须发起工具调用（形状合法、finish=tool_calls）、named 必须调用指定工具（指定与天气意图不同向的 get_current_time）、none 禁止调用（无 tool_calls、正文非空、finish=stop） | P0 |
+| K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：上线前版本未指定模型专属工具调用格式解析器，tool_choice 语义不被支持；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none；同时适用 Kimi K3 | 四模式各一次（mt=2048、非流式、不传 thinking；采样参数不豁免——由全局 SAMPLING_PARAMS（Jenkinsfile）覆盖，temperature=0 为无覆盖时回退值；get_weather+get_current_time 两工具），断言 auto/required 必须发起工具调用（形状合法、finish=tool_calls）、named 必须调用指定工具（指定与天气意图不同向的 get_current_time）、none 禁止调用（无 tool_calls、正文非空、finish=stop） | P0 |
 | K11 | GLM-5.3-Flash response_format 三种模式支持 | 客户问题（AGDC2-16）：DingoRouter 不支持结构化输出语义；修复为 Router 侧支持结构化生成语义并转发至引擎；需支持 json_object/json_schema/text | 三模式各一次（temperature=0、mt=2048、非流式、不传 thinking），断言 json_object 正文可解析为 JSON 对象、json_schema 正文可解析且 city 为字符串、temperature 为数值、键集合恰为 {city,temperature}（weather strict schema）、text 正文非空；每轮 finish=stop | P0 |
 | K12 | GLM-5.3-Flash reasoning_effort 档位支持 | 客户问题（AGDC2-17）：字段为 reasoning_effort 且放在 chat_template_kwargs 里（GLM 聊天模版），而 OpenAI 协议/参考脚本将其放在顶层；Router 需在 OpenAI 协议外层捕获该字段并传给引擎；修复为 Router 侧支持语义转发；需支持 low/high/max/空（空=不发送该字段，默认档），且不管放在顶层还是嵌套在 chat_template_kwargs 里，请求都能被正常接受和处理并输出正常响应 | 两种放置（顶层/嵌套 chat_template_kwargs）× 四档各一次（temperature=0、mt=2048、非流式、不传 thinking、chat_template_kwargs={clear_thinking:true}；嵌套放置：reasoning_effort 放进 chat_template_kwargs），断言每轮 200+正文非空+finish=stop；档位对思考的实际影响（rt/reasoning 长度）仅日志留痕 | P0 |
 | K13 | stop 序列遵循且被截断正文前置多余字符 | 客户问题：stop=["橘子"] 的流式请求，期望输出 "苹果、香蕉、"，实际输出 ">苹果、香蕉、"——被截断正文前面多输出了一个 ">" 符号；同时适用 KimiK3 | 按客户原始请求体还原（stream=true、stop=[橘子]、glm-5.3-flash 另传 thinking={type:enabled}+reasoning_effort=low；KimiK3 不传），断言 SSE 有正文增量、finish=stop、合并正文严格等于 "苹果、香蕉、"、不含 "橘子" | P0 |
@@ -54,6 +54,7 @@
 | K16 | 固定前缀/多轮上下文缓存命中率达标 | 客户问题：修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文 87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断（8192→12×640=7680，损失 512），细粒度匹配（64）后应 ≈94.2%≥90%；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两模式（OpenAI 协议非流式、不发送采样参数，规模由原始信息推算：~12800 字符共享前缀 ≈8192 tok + ~780 字符/轮唯一问题 ≈501 tok）：1) 固定前缀 10 轮独立请求；2) 多轮上下文单会话逐轮追加（回复极短）；均排除第 1 轮预热实测 9 轮，断言各模式 Σcached/Σprompt_tokens ≥90%，任一 <90% 即 FAIL | P0 |
 | K17 | stop 停止符（换行符）在推理阶段生效 | 客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用于推理输出——推理里的第一个换行即触发停止，正文不会生成；反之若换行未触发停止、继续输出正文，则换行符未生效；适用 GLM-5.3 | 按场景构造流式请求（stream=true、stop=["\n"]、thinking={type:enabled}（K1 口径）、max_tokens=512 防御性预算、不发送采样参数），断言 SSE 有事件、合并正文为空（核心）、finish_reason==stop、合并 reasoning 不含换行（停止符不泄漏） | P0 |
 | K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按工单还原该 assistant 消息回填为多轮上下文（user→assistant→user，带 bash 工具定义，非流式，采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖），断言 HTTP 200（核心）、choices 存在、message 结构存在 | P0 |
+| K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
 
 ## 运行方式
 
@@ -602,7 +603,12 @@ required（必须调用工具）、named（必须调用指定工具）、none
 
 **注意事项**：
 - 修复方向为 Worker 侧生成解释器；四模式任一不支持即 FAIL
-- marker：`GLM53FLASH`（K 套件按模型分组标记）
+- Kimi K3 基线：2026-10-26 staging（nvidia-B300）实测 required 轮
+  HTTP 500 `prefill_internal_error`（"Kimi K3 required tool call
+  is missing or incomplete"）——该 FAIL 为 kimi-k3 待修复基线；
+  auto 轮通过（默认思考、响应含 reasoning_content，不做思考断
+  言）
+- marker：`GLM53FLASH` + `KimiK3`（K 套件按模型分组标记）
 
 ### test_response_format_three_modes_support (K11)
 
@@ -973,6 +979,8 @@ cached_tokens`（OpenAI 标准位置），兼容 `usage.cached_tokens` 拼
 - 若引擎将 stop 仅作用于正文（不作用于推理）：推理完整输出（含
   换行）、正文在第一个正文换行处截断——正文非空 + reasoning 含
   换行，断言 2/4 双重检出
+- **模型真实响应打印**（用户要求）：合并正文/思考全文、finish、
+  usage 在断言前打印到日志——失败时日志中同样可见，便于诊断
 - usage 仅日志（流式下客户场景未带 stream_options.include_usage，
   usage 可能为空）
 - marker：仅 `GLM53`（K 套件按模型分组标记；用户指定不含
@@ -1053,3 +1061,54 @@ the JSON body into the target type: missing field 'name'`。触发
   覆盖范围（工单报错场景为占位+真实调用并存）
 - usage 仅日志
 - marker：仅 `GLM53`（用户指定；采样参数不豁免）
+
+### test_over_image_limit_rejected (K19)
+
+**背景**：客户问题：单次请求携带超过 16 张图片导致请求失败。
+根因：服务端 serving-pool 启动参数显式配置
+`--limit-mm-per-prompt {"image":16,"video":1,"audio":0}`（vLLM
+多模态单项限额）。契约：超限请求应失败并返回恰当的错误信息
+（参考 `"At most 16 image(s) may be provided in one prompt"`）。
+
+**请求构造**（GLM-5.3-Flash 专用，OpenAI 协议
+`/v1/chat/completions` 非流式，手工 payload 直发）：
+- 代码生成 17 张 32x32 纯色 PNG（IHDR+IDAT+IEND 手工构造，
+  base64 data URL，各图颜色不同，无外部依赖）
+- 单条 user 消息 content 数组：1 个 text part + 17 个
+  `image_url` part（单次请求/单次会话超过 16 图）
+- `max_tokens=32` 防御性预算（应在生成前被拒绝）
+- 不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+
+**断言**（硬）：
+1. 响应失败（HTTP 非 200——超限应被拒绝；200 放行即限额未生
+   效）
+2. 错误信息含 `"at most 16 image"`（大小写不敏感——覆盖
+   "At most 16 image(s) may be provided in one prompt" 及网关
+   等价表述；信息不恰当即 FAIL）
+
+**判定矩阵**：
+- 非 200 且信息含该模式 → PASS（超限被正确拒绝且信息恰当）
+- HTTP 200 放行 → FAIL（限额未生效）
+- 非 200 但信息不含该模式 → FAIL（失败信息不恰当——如裸
+  500/internal error 无超限说明）
+
+**设计决策记录**：
+- **P0**（客户报障场景）
+- **图片代码生成**：手工构造 PNG 字节（struct/zlib/base64），
+  17 张各色不同——自包含、确定性、无外部 URL 依赖；32x32 尺寸
+  兼顾视觉编码器的最小尺寸要求
+- **恰好 16 张正向对照未纳入**：用户测试要点仅两条（17 张生成
+  + 超限失败断言），且避免回归中重度视觉计算
+- **断言口径**：原始失败详情截图未收到，以用户给定的参考信息
+  "At most 16 image(s) may be provided in one prompt" 为准，
+  匹配取大小写不敏感子串（网关可能等价改写措辞）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 若网关/引擎对超限返回 500 而非 400 但信息恰当，断言 1（非
+  200）+ 断言 2（信息）均满足 → PASS（用户测试要点为"响应应
+  该失败 + 恰当失败信息"，不限定具体状态码）
+- **模型真实响应打印**（用户要求）：状态码与响应体全文在断言
+  前打印到日志——失败时同样可见，便于诊断
+- usage/响应体仅日志
+- marker：`GLM53FLASH`（K 套件按模型分组标记；采样参数豁免）
