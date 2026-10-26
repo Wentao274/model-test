@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（11 大类 × 119 个测试点）
+## 二、测试点总览（11 大类 × 122 个测试点）
 
 ### 分类概览
 
@@ -37,7 +37,7 @@
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 6    | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档），全部 P0，持续追加 |
+| K. 客户问题复现 | 12   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）），P0 为主持续追加 |
 
 ---
 
@@ -255,6 +255,9 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K7  | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃），K3 恒开思考，思考长度（reasoning_tokens）应随档位递增 | 只按官方格式传参（无回退），请求顺序（客户指定）：low→high→max 比对思考长度，max→high→low 逆向重发再比对（正逆两轮排除顺序干扰，均按 low<high<max 软对比，medium 不参与）；最后 medium 顶层 200 放行、medium 嵌套 400（废弃配置下非法档位，客户指定契约）；间隔 3s、内容与 temperature=1 相同；硬断言每次 200+正文非空+自然结束；倒挂/持平不判失败，仅告警记入报告；reasoning_tokens 兼容两种字段拼写 | P0  |
 | K8  | required+闲聊必须调用工具（客户工单级别） | 客户工单原始问题：required+闲聊（"Reply with exactly: OK"，无工具意图）下不发起工具调用——tool_calls 键缺失、finish=length、ct 恒吃满 max_tokens（关思考 1000/3000 均如此）、正文仅 OK、耗时 15.6s 双峰；开思考 reasoning 消耗远小于预算但整体仍被吃满；预期 finish=tool_calls、关思考 ct 较小、开思考 rt<max_tokens、正文收到工具调用响应信息 | 关思考 mt=1000/3000、开思考 mt=3000（get_weather 工具，温度按档位联动 0.6/1），断言每轮 tool_calls 存在（get_weather、arguments 合法 JSON）、finish_reason==tool_calls（而非 length）、ct<max_tokens、开思考 rt<max_tokens（rt 双拼写兼容）；耗时双峰仅日志留痕 | P1  |
 | K9  | required+闲聊必须强制调用工具（按官方行为） | 官方 api.moonshot.cn 实测：闲聊+required → finish=tool_calls、强制返回 get_weather（city 瞎猜不限定）、reasoning 仅 38——符合 [OI] required 必须发起至少一次工具调用规范；Alaya 同场景 finish=length、reasoning 吃满 256/2000 预算、tool_calls=None；有工具意图时两站一致正常 | 关/开思考 × mt=256/2000（温度按档位联动 0.6/1，与 K8 同场景不同级别），按官方行为断言每轮 tool_calls 强制返回（get_weather、arguments 合法 JSON）、finish_reason==tool_calls、ct<max_tokens、开思考 rt<max_tokens（rt 双拼写兼容）；耗时双峰仅日志留痕 | P1  |
+| K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：OpenAI 协议 tool_choice 让模型按请求指定的类型/模式生成工具调用（Agent 自定义工具场景）；上线前版本未指定模型专属工具调用格式解析器，GLM-5.3-Flash 不支持该语义；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（原始脚本 glm53_flash_suite 口径：temperature=0、mt=2048、非流式、不传 thinking；工具 get_weather+get_current_time 两个），断言 auto/required 必须发起工具调用（type=function、arguments 合法 JSON、finish=tool_calls）、named 必须调用指定工具（指定与提示词天气意图不同向的 get_current_time，未生效时按意图调 get_weather 即被检出）、none 禁止调用（无 tool_calls、正文非空、finish=stop）；usage 仅日志 | P0  |
+| K11 | GLM-5.3-Flash response_format 三种模式支持 | 客户问题（AGDC2-16）：OpenAI 协议 response_format 让模型按指定格式输出（Agent 场景）；DingoRouter 不支持该结构化输出语义；修复为 Router 侧支持结构化生成语义并转发至引擎；需支持 json_object/json_schema/text | 三模式各一次（原始脚本 glm53_flash_suite 口径：temperature=0、mt=2048、非流式、不传 thinking），断言 json_object 正文可解析为 JSON 对象、json_schema 正文可解析且 city 为字符串、temperature 为数值、键集合恰为 {city,temperature}（weather strict schema）、text 正文非空；每轮 finish=stop；usage 仅日志 | P0  |
+| K12 | GLM-5.3-Flash reasoning_effort 档位支持 | 客户问题（AGDC2-17）：GLM-5.3-Flash 使用 GLM 自己的聊天模版，字段为 reasoning_effort 且放在 chat_template_kwargs 里；而 OpenAI 协议/参考脚本将其放在顶层；Router 需在 OpenAI 协议外层捕获该字段并传给引擎；修复为 Router 侧支持语义转发；需支持 low/high/max/空（空=不发送该字段，默认档），且不管 reasoning_effort 放在顶层还是嵌套在 chat_template_kwargs 里，请求都能被正常接受和处理并输出正常响应 | 两种放置（顶层/嵌套 chat_template_kwargs）× 四档各一次（原始脚本 glm53_flash_suite 口径：temperature=0、mt=2048、非流式、不传 thinking、chat_template_kwargs={clear_thinking:true}；嵌套放置：reasoning_effort 放进 chat_template_kwargs），断言每轮 200+正文非空+finish=stop；档位对思考的实际影响（rt/reasoning 长度）仅日志留痕；usage 仅日志 | P0  |
 
 ---
 
@@ -302,7 +305,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 
 ## 五、测试执行优先级建议
 
-### P0（上线必测，39 项）
+### P0（上线必测，46 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -316,10 +319,10 @@ G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
                      Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
                      clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
-K1-K7            客户问题复现 7 项（均 P0，客户报障必测）
+K1-K7, K10-K12   客户问题复现 10 项（均 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 7 = 43 项。
+总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 10 = 46 项。
 
 ### P1（选测，60 项）
 

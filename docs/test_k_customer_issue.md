@@ -43,6 +43,9 @@
 | K7 | 思考强度档位思考长度倒挂（官方 reasoning_effort） | 官方契约（kimi-k3 文档）：思考强度为顶层 reasoning_effort（K2.x thinking 配置已废弃）。只按官方格式传参（无回退）：low→high→max 比对后 max→high→low 再比对（正逆两轮，medium 不参与对比）；最后 medium 顶层 200 放行、嵌套 thinking.effort=medium 预期 400；倒挂/持平不判失败，仅告警 | P0 |
 | K8 | required+闲聊必须调用工具（客户工单级别） | 客户工单原始问题：required+闲聊（"Reply with exactly: OK"）不发起工具调用——tool_calls 缺失、finish=length、ct 恒吃满 max_tokens、正文仅 OK；预期 finish=tool_calls、关思考 ct 较小、开思考 rt<max_tokens | 关思考 mt=1000/3000、开思考 mt=3000（get_weather 工具），断言 tool_calls+get_weather+arguments 合法 JSON、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
 | K9 | required+闲聊必须强制调用工具（按官方行为） | 官方实测：闲聊+required → finish=tool_calls、强制返回 get_weather（city 瞎猜不限定）、reasoning 仅 38；Alaya 同场景 finish=length、reasoning 吃满 256/2000 预算、tool_calls=None；有意图时两站一致正常 | 关/开思考 × mt=256/2000（与 K8 同场景不同级别），按官方行为断言 tool_calls 强制返回（get_weather、arguments 合法 JSON）、finish=tool_calls、ct<max_tokens、开思考 rt<max_tokens | P1 |
+| K10 | GLM-5.3-Flash tool_choice 四种模式支持 | 客户问题（AGDC2-15）：上线前版本未指定模型专属工具调用格式解析器，tool_choice 语义不被支持；修复为 Worker 侧指定生成解释器、渲染字段至聊天模版；需支持 auto/required/named/none | 四模式各一次（temperature=0、mt=2048、非流式、不传 thinking；get_weather+get_current_time 两工具），断言 auto/required 必须发起工具调用（形状合法、finish=tool_calls）、named 必须调用指定工具（指定与天气意图不同向的 get_current_time）、none 禁止调用（无 tool_calls、正文非空、finish=stop） | P0 |
+| K11 | GLM-5.3-Flash response_format 三种模式支持 | 客户问题（AGDC2-16）：DingoRouter 不支持结构化输出语义；修复为 Router 侧支持结构化生成语义并转发至引擎；需支持 json_object/json_schema/text | 三模式各一次（temperature=0、mt=2048、非流式、不传 thinking），断言 json_object 正文可解析为 JSON 对象、json_schema 正文可解析且 city 为字符串、temperature 为数值、键集合恰为 {city,temperature}（weather strict schema）、text 正文非空；每轮 finish=stop | P0 |
+| K12 | GLM-5.3-Flash reasoning_effort 档位支持 | 客户问题（AGDC2-17）：字段为 reasoning_effort 且放在 chat_template_kwargs 里（GLM 聊天模版），而 OpenAI 协议/参考脚本将其放在顶层；Router 需在 OpenAI 协议外层捕获该字段并传给引擎；修复为 Router 侧支持语义转发；需支持 low/high/max/空（空=不发送该字段，默认档），且不管放在顶层还是嵌套在 chat_template_kwargs 里，请求都能被正常接受和处理并输出正常响应 | 两种放置（顶层/嵌套 chat_template_kwargs）× 四档各一次（temperature=0、mt=2048、非流式、不传 thinking、chat_template_kwargs={clear_thinking:true}；嵌套放置：reasoning_effort 放进 chat_template_kwargs），断言每轮 200+正文非空+finish=stop；档位对思考的实际影响（rt/reasoning 长度）仅日志留痕 | P0 |
 
 ## 运行方式
 
@@ -520,3 +523,182 @@ tool_calls=None；有工具意图时（北京天气）两站一致正常。
   拦截）
 - **耗时不断言**：同 K8 理由（finish 断言已覆盖缺陷形态）
 - **不进 smoke 集**：缺陷轮 15.6s 级长耗时 + 缺陷概率性
+
+### test_tool_choice_four_modes_support (K10)
+
+**背景**：客户问题（AGDC2-15）：OpenAI 协议 tool_choice 让模型
+在准备工具调用时按请求指定的类型/模式生成调用（Agent 自定义
+工具场景）；上线前版本未指定模型专属的工具调用格式解析器，
+GLM-5.3-Flash 不支持该语义。修复：Worker 侧指定生成解释器，
+支持渲染字段至模型聊天模版（zai-org/GLM-5.3-Flash 的
+chat_template.jinja）。需支持四种模式：auto（模型自主决定）、
+required（必须调用工具）、named（必须调用指定工具）、none
+（禁止调用工具）。
+
+**请求构造**：
+- 原始验证脚本口径（glm53_flash_suite 的 tool_auto/tool_
+  required/tool_named/tool_none.sh）：temperature=0、
+  max_tokens=2048、非流式、不传 thinking（GLM-5.3-Flash 默认
+  思考，参考结果含 reasoning_content，不做思考断言）
+- 工具两个：get_weather(city) + get_current_time(timezone)
+  （两个工具使 named 模式可判定）
+- 轮次：auto/required/none 用工具意图提示词 "Call get_weather
+  for Beijing and report the temperature."；named 指定 get_
+  current_time 且提示词保持原始口径的天气意图 "Look up Beijing
+  weather."——named 与提示词自然意图不同向，若 named 语义未
+  生效（被忽略按 auto 处理）模型会按意图调 get_weather，从而
+  检出「指定工具未被强制」
+
+**断言**（硬）：
+1. 每轮 HTTP 200 + choices 存在（该模式不被支持即非 200）
+2. auto/required：tool_calls 存在且形状合法（type=function、
+   arguments 合法 JSON）、finish_reason=="tool_calls"
+3. named：tool_calls 存在且 function.name==指定工具
+   （get_current_time）、finish_reason=="tool_calls"
+4. none：tool_calls 缺失、content 非空、finish_reason=="stop"
+
+**判定矩阵**：
+- 任一轮非 200 / 缺 choices → FAIL（该模式不被支持）
+- auto/required/named 轮 tool_calls 缺失 / 形状异常 / finish≠
+  tool_calls → FAIL（模式语义未生效）
+- named 轮调用的不是指定工具 → FAIL（named 强制语义未生效）
+- none 轮出现 tool_calls / 正文为空 / finish≠stop → FAIL（none
+  语义未生效）
+- 全部轮满足 → PASS
+
+**设计决策记录**：
+- **P0（按客户工单，AGDC2-15）**
+- **named 判定设计**：指定与提示词意图不同的工具（提示词为天
+  气意图、named 指定 get_current_time）——原始脚本 named 与意
+  图同向（named=get_weather+天气提示词），无法区分「named 生
+  效」与「named 被忽略后按意图调用」；不同向设计使 named 未
+  生效时直接被检出
+- **auto 断言依据**：提示词为明确的工具意图（原始脚本同款），
+  auto 下模型应发起调用；参考结果（results/tool_auto.json）
+  亦为 tool_calls
+- **usage 仅日志**：原始脚本未做预算断言，本用例测模式支持，
+  不引入无关断言
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 修复方向为 Worker 侧生成解释器；四模式任一不支持即 FAIL
+- marker：`GLM53FLASH`（K 套件按模型分组标记）
+
+### test_response_format_three_modes_support (K11)
+
+**背景**：客户问题（AGDC2-16）：OpenAI 协议 response_format 让
+模型按指定格式输出（Agent 场景）；DingoRouter 不支持该结构化输
+出语义。修复：Router 侧支持结构化生成语义并实现语义转发至引
+擎。需支持三种模式：json_object（输出为合法 JSON 对象）、
+json_schema（输出符合指定 JSON Schema）、text（纯文本，协议默
+认）。
+
+**请求构造**：
+- 原始验证脚本口径（glm53_flash_suite 的 response_json_object/
+  response_json_schema.sh）：temperature=0、max_tokens=2048、
+  非流式、不传 thinking
+- json_object 轮：`response_format={"type":"json_object"}`，提
+  示词 "Output a JSON object with fields city=Beijing and
+  value=17. No markdown."
+- json_schema 轮：`response_format={"type":"json_schema",
+  json_schema:{name:"weather", strict:true, schema:{city:
+  string, temperature:number, required, additionalProperties:
+  false}}}`，提示词 "Give estimated temperature for Beijing
+  as a JSON object matching schema."
+- text 轮：`response_format={"type":"text"}`（协议默认模式，
+  原始脚本未单测，按需补齐）
+
+**断言**（硬）：
+1. 每轮 HTTP 200 + choices 存在（该模式不被支持即非 200）
+2. 正文非空、finish_reason=="stop"（参考结果均自然结束）
+3. json_object：json.loads(正文) 为 dict（对齐原始脚本 jq 校验
+   `fromjson | type=="object"`）
+4. json_schema：json.loads(正文) 为 dict 且 city 为字符串、
+   temperature 为数值（非 bool）、键集合恰为 {city, temperature}
+   （对齐原始脚本 jq 校验）
+5. text：正文非空（纯文本语义，不强制 JSON）
+
+**判定矩阵**：
+- 任一轮非 200 / 缺 choices → FAIL（该模式不被支持）
+- 任一轮正文为空 / finish≠stop → FAIL
+- json_object/json_schema 轮正文不可解析为 JSON 对象 → FAIL
+  （结构化输出语义未生效）
+- json_schema 轮键集合/字段类型不符 schema → FAIL（schema 约束
+  未生效）
+- 全部轮满足 → PASS
+
+**设计决策记录**：
+- **P0（按客户工单，AGDC2-16）**
+- **口径对齐原始脚本**：json_object/json_schema 轮的提示词、
+  response_format、jq 校验逻辑均按 response_json_object.sh /
+  response_json_schema.sh 原样还原
+- **text 轮补齐**：原始脚本未单测 text（协议默认模式），按用户
+  要求补齐支持验证——断言保持宽松（正文非空+自然结束），不强
+  制「非 JSON」反向断言（模型输出什么纯文本均合法）
+- **usage 仅日志**：原始脚本无预算断言，不引入无关断言
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 修复方向为 Router 侧结构化生成语义转发；三模式任一不支持即
+  FAIL
+- marker：`GLM53FLASH`（K 套件按模型分组标记）
+
+### test_reasoning_effort_levels_support (K12)
+
+**背景**：客户问题（AGDC2-17）：GLM-5.3-Flash 使用 GLM 自己的聊
+天模版，字段为 reasoning_effort 且放在 chat_template_kwargs 里；
+而 OpenAI 协议/参考脚本将其放在顶层。Router 需要在 OpenAI 协议
+外层捕获该字段并传给引擎。修复：Router 侧支持语义转发。需支持：
+low/high/max/空（空=不发送该字段，默认档），且不管
+reasoning_effort 放在顶层还是嵌套在 chat_template_kwargs 里，
+请求都能被正常接受和处理并输出正常响应，否则用例失败。
+
+**请求构造**：
+- 原始验证脚本口径（glm53_flash_suite 的 reasoning_low/
+  reasoning_high/reasoning_max.sh）：temperature=0、
+  max_tokens=2048、非流式、不传 thinking、顶层
+  `reasoning_effort`、`chat_template_kwargs={"clear_thinking":
+  true}`（原始脚本原样保留）
+- 嵌套放置（GLM 聊天模版原生口径）：`reasoning_effort` 放进
+  `chat_template_kwargs`（与 clear_thinking 并列），不发送顶层
+  reasoning_effort
+- 提示词 "Explain why 17*19=323 with intermediate reasoning if
+  available."（原始脚本口径，各轮相同——放置与档位为唯一变量）
+- 空档：不发送 reasoning_effort 字段（原始脚本无对应档，按需补
+  齐；两种放置口径下同构）
+
+**轮次矩阵**（2 放置 × 4 档 = 8 轮）：
+
+| # | 放置 | reasoning_effort |
+|---|------|------------------|
+| 1-4 | 顶层 | low / high / max / 空 |
+| 5-8 | 嵌套 chat_template_kwargs | low / high / max / 空 |
+
+**断言**（硬）：
+1. 每轮 HTTP 200 + choices 存在（该放置/档位不被支持即非 200）
+2. 正文非空、finish_reason=="stop"（参考结果均自然结束）
+
+**判定矩阵**：
+- 任一轮非 200 / 缺 choices → FAIL（该放置/档位不被支持）
+- 任一轮正文为空 / finish≠stop → FAIL
+- 全部轮满足 → PASS
+
+**设计决策记录**：
+- **P0（按客户工单，AGDC2-17）**
+- **双放置覆盖**：原始问题即"GLM 模版将 reasoning_effort 放在
+  chat_template_kwargs 里，而参考脚本放在顶层"——两种口径都需
+  被正常接受和处理，缺一即 FAIL
+- **档位效果仅观测**：档位对思考的实际影响（rt/reasoning 长度）
+  仅日志留痕——参考脚本未做档位间断言，思考长度为模型行为质量
+  （非确定性行为），不做硬断言
+- **空档补齐**：原始脚本仅覆盖 low/high/max，空档（不发送该字
+  段，默认行为）按用户要求补齐
+- **usage 仅日志**：原始脚本无预算断言，不引入无关断言
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 修复方向为 Router 侧语义转发；任一放置/档位不支持（400/500）
+  即 FAIL
+- Router 若静默剥离该字段（请求仍 200），响应侧不可观测区分——
+  各轮 rt/reasoning 长度日志可作人工核查线索
+- marker：`GLM53FLASH`（K 套件按模型分组标记）

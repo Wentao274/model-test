@@ -14,7 +14,7 @@ pipeline {
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
         string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": 1.0, "top_p": 0.95, "seed": ""}', description: '全局采样参数(JSON)。字段默认: temperature=1.0, top_p=0.95, seed=空(不发送)；字段设为null表示不覆盖该参数；整体留空表示全部不覆盖(框架原有行为)。参数行为用例(A6/A7/A10/F3/H2)始终按自身参数执行')
-        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'k_customer_issue', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型（当SPECIFIC_TEST不为none时此项被忽略）')
+        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'k_customer_issue', 'GLM52', 'GLM53', 'KimiK3', 'GLM53FLASH', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型（当SPECIFIC_TEST不为none时此项被忽略；GLM52/GLM53/KimiK3/GLM53FLASH 为K套件按模型分组的标记）')
         choice(name: 'SPECIFIC_TEST', choices: [
             'none',
             'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_single_turn_conversation',
@@ -41,11 +41,15 @@ pipeline {
             'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_prefix_suffix_constraint',
             'tests/test_b_advanced_generation.py::TestAdvancedGeneration::test_reasoning_effort',
             'tests/test_c_multimodal.py::TestMultimodal::test_single_image_understanding',
+            'tests/test_c_multimodal.py::TestMultimodal::test_real_image_understanding',
             'tests/test_c_multimodal.py::TestMultimodal::test_multi_image_comparison',
             'tests/test_c_multimodal.py::TestMultimodal::test_high_resolution_image',
+            'tests/test_c_multimodal.py::TestMultimodal::test_synthetic_4k_image',
             'tests/test_c_multimodal.py::TestMultimodal::test_chart_ocr',
+            'tests/test_c_multimodal.py::TestMultimodal::test_table_ocr',
             'tests/test_c_multimodal.py::TestMultimodal::test_video_understanding',
-            'tests/test_c_multimodal.py::TestMultimodal::test_screenshot_to_code',
+            'tests/test_c_multimodal.py::TestMultimodal::test_screenshot_to_code_flask',
+            'tests/test_c_multimodal.py::TestMultimodal::test_screenshot_to_code_ui',
             'tests/test_c_multimodal.py::TestMultimodal::test_multimodal_tool_call',
             'tests/test_c_multimodal.py::TestMultimodal::test_image_format_compatibility',
             'tests/test_d_long_context.py::TestLongContext::test_short_context_baseline',
@@ -74,8 +78,6 @@ pipeline {
             'tests/test_g_api_compatibility.py::TestAPICompatibility::test_usage_statistics',
             'tests/test_g_api_compatibility.py::TestAPICompatibility::test_error_codes',
             'tests/test_g_api_compatibility.py::TestAPICompatibility::test_client_sdk_compatibility',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_response_format_variants',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_stream_parameter',
             'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality',
             'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_consistency',
             'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_hallucination_detection',
@@ -97,6 +99,9 @@ pipeline {
             'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_reasoning_field',
             'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_with_reasoning_effort',
             'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_multi_assistant_boundary',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_default_behavior',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_behavioral_verification',
+            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_after_last_user_boundary',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_pydantic_schema_tool_call_stream',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_repeated_request_stability',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_anthropic_prompt_cache_creation',
@@ -105,7 +110,10 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_temperature_tier',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_effort_reasoning_length',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_calls_tool',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_official_behavior'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_official_behavior',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_tool_choice_four_modes_support',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_response_format_three_modes_support',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_effort_levels_support'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

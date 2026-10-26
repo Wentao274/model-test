@@ -704,6 +704,63 @@ TEST_CATEGORIES = {
                 "required_chitchat_official_behavior",
                 "P1",
             ),
+            (
+                "K10",
+                "GLM-5.3-Flash tool_choice 四种模式支持",
+                "客户问题（AGDC2-15）：OpenAI 协议 tool_choice 让模型"
+                "按请求指定的类型/模式生成工具调用（Agent 自定义工具"
+                "场景）；上线前版本未指定模型专属的工具调用格式解析"
+                "器，GLM-5.3-Flash 不支持该语义（修复：Worker 侧指定"
+                "生成解释器，渲染字段至模型聊天模版）。需支持四种模"
+                "式：auto/required/named/none。四模式各一次（原始脚"
+                "本 glm53_flash_suite 口径：temperature=0、mt=2048、"
+                "非流式、不传 thinking；工具 get_weather+get_current_"
+                "time 两个），断言 auto/required 必须发起工具调用（形"
+                "状合法、finish=tool_calls）、named 必须调用指定工具"
+                "（指定与提示词意图不同向的 get_current_time，未生效"
+                "时按意图调 get_weather 即被检出）、none 禁止调用（无"
+                " tool_calls、正文非空、finish=stop）；usage 仅日志",
+                "tool_choice_four_modes_support",
+                "P0",
+            ),
+            (
+                "K11",
+                "GLM-5.3-Flash response_format 三种模式支持",
+                "客户问题（AGDC2-16）：OpenAI 协议 response_format 让"
+                "模型按指定格式输出（Agent 场景）；DingoRouter 不支持"
+                "该结构化输出语义（修复：Router 侧支持结构化生成语义"
+                "并转发至引擎）。需支持三种模式：json_object/json_"
+                "schema/text。三模式各一次（原始脚本 glm53_flash_"
+                "suite 口径：temperature=0、mt=2048、非流式、不传 "
+                "thinking），断言 json_object 正文为合法 JSON 对象、"
+                "json_schema 正文可解析且 city 为字符串、temperature "
+                "为数值、键集合恰为 {city,temperature}（weather "
+                "strict schema）、text 正文非空；每轮 finish=stop；"
+                "usage 仅日志",
+                "response_format_three_modes_support",
+                "P0",
+            ),
+            (
+                "K12",
+                "GLM-5.3-Flash reasoning_effort 档位支持",
+                "客户问题（AGDC2-17）：GLM-5.3-Flash 使用 GLM 自己的"
+                "聊天模版，字段为 reasoning_effort 且放在 chat_"
+                "template_kwargs 里；而 OpenAI 协议/参考脚本将其放"
+                "在顶层。Router 需在 OpenAI 协议外层捕获该字段并传"
+                "给引擎（修复：Router 侧支持语义转发）。需支持 "
+                "low/high/max/空（空=不发送该字段，默认档），且不"
+                "管 reasoning_effort 放在顶层还是嵌套在 chat_"
+                "template_kwargs 里，请求都能被正常接受和处理并输"
+                "出正常响应，否则用例失败。两种放置 × 四档各一次"
+                "（原始脚本 glm53_flash_suite 口径：temperature=0、"
+                "mt=2048、非流式、不传 thinking、chat_template_"
+                "kwargs={clear_thinking:true}；嵌套放置：reasoning_"
+                "effort 放进 chat_template_kwargs），断言每轮 "
+                "200+正文非空+finish=stop；档位对思考的实际影响"
+                "（rt/reasoning 长度）仅日志留痕；usage 仅日志",
+                "reasoning_effort_levels_support",
+                "P0",
+            ),
         ],
     },
 }

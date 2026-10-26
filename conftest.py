@@ -76,6 +76,9 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约值，思考强度档位对比的前提，不可被全局覆盖）
     "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊工具调用判定的前提，不可被全局覆盖）
     "test_required_chitchat_official_behavior",  # K9: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊强制工具调用判定的前提，不可被全局覆盖）
+    "test_tool_choice_four_modes_support",  # K10: 客户问题复现（temperature=0 为原始脚本口径，tool_choice 模式语义判定的前提，不可被全局覆盖）
+    "test_response_format_three_modes_support",  # K11: 客户问题复现（temperature=0 为原始脚本口径，response_format 模式语义判定的前提，不可被全局覆盖）
+    "test_reasoning_effort_levels_support",  # K12: 客户问题复现（temperature=0 为原始脚本口径，reasoning_effort 档位支持判定的前提，不可被全局覆盖）
 }
 
 

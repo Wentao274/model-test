@@ -2,8 +2,8 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7 为 P0
-（任何失败应阻断发布），K8/K9 为 P1。
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K12
+为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -108,8 +108,69 @@ K. 客户问题复现测试
   返回（get_weather、arguments 合法 JSON，city 值不限定）；
   finish_reason=="tool_calls"；ct < max_tokens；开思考 rt <
   max_tokens（rt 双拼写兼容）。temperature 按网关档位联动取
-  0.6/1。耗时双峰仅日志留痕。（不进 smoke 集：缺陷轮 15.6s
-  级长耗时+缺陷概率性）
+  0.6/1。耗时双峰仅日志留痕。（不进 smoke 集：缺陷轮 15.6s 级
+  长耗时+缺陷概率性）
+- K10: GLM-5.3-Flash tool_choice 四种模式支持（auto/required/
+  named/none） [P0]
+  客户问题（AGDC2-15）：OpenAI 协议 tool_choice 让模型按请求指定
+  的类型/模式生成工具调用（Agent 自定义工具场景）；上线前版本未
+  指定模型专属的工具调用格式解析器，GLM-5.3-Flash 不支持该语义。
+  修复：Worker 侧指定生成解释器，支持渲染字段至模型聊天模版
+  （chat_template.jinja）。本用例对四种模式各发一次请求（原始
+  验证脚本 glm53_flash_suite 的 tool_auto/tool_required/tool_
+  named/tool_none.sh 口径：temperature=0、max_tokens=2048、非流
+  式、不传 thinking——GLM-5.3-Flash 默认思考，不做思考断言）。
+  工具两个：get_weather(city)+get_current_time(timezone)。
+  auto/required/none 用工具意图提示词（原始脚本口径）；named 指
+  定 get_current_time 且提示词保持原始口径的天气意图——named 与
+  提示词自然意图不同向，若 named 语义未生效（被忽略按 auto 处
+  理）模型会按意图调 get_weather，从而检出「指定工具未被强制」。
+  每轮硬断言：HTTP 200+choices 存在；auto/required：tool_calls
+  存在且形状合法（type=function、arguments 合法 JSON）、finish=
+  tool_calls；named：tool_calls 存在且 function.name==指定工具、
+  finish=tool_calls；none：tool_calls 缺失、content 非空、
+  finish=stop。usage 仅日志留痕（原始脚本无预算断言）。（不进
+  smoke 集：新用例首跑观察期）
+- K11: GLM-5.3-Flash response_format 三种模式支持（json_object/
+  json_schema/text） [P0]
+  客户问题（AGDC2-16）：OpenAI 协议 response_format 让模型按指定
+  格式输出（Agent 场景）；DingoRouter 不支持该结构化输出语义。修
+  复：Router 侧支持结构化生成语义并实现语义转发至引擎。本用例对
+  三种模式各发一次请求（原始验证脚本 glm53_flash_suite 的
+  response_json_object/response_json_schema.sh 口径：temperature=
+  0、max_tokens=2048、非流式、不传 thinking）。json_object 轮按
+  原始脚本提示词与 jq 校验（正文可解析为 JSON 对象）；json_
+  schema 轮按原始脚本 schema（name=weather、strict=true、city:
+  string+temperature:number、required、additionalProperties=
+  false）与 jq 校验（正文可解析、city 为字符串、temperature 为
+  数值、键集合恰为 {city,temperature}）；text 轮为协议默认模式
+  （原始脚本未单测，按需补齐）：正文非空即可。每轮硬断言：HTTP
+  200+choices 存在；正文非空；finish=stop（参考结果均自然结
+  束）；json_object：json.loads(正文) 为 dict；json_schema：另
+  加键集合与字段类型校验。usage 仅日志留痕。（不进 smoke 集：
+  新用例首跑观察期）
+- K12: GLM-5.3-Flash reasoning_effort 档位支持（顶层/嵌套 ×
+  low/high/max/空） [P0]
+  客户问题（AGDC2-17）：GLM-5.3-Flash 使用 GLM 自己的聊天模版，
+  字段为 reasoning_effort 且放在 chat_template_kwargs 里；而
+  OpenAI 协议/参考脚本将其放在顶层。Router 需要在 OpenAI 协议
+  外层捕获该字段并传给引擎（修复：Router 侧支持语义转发）。需
+  支持：low/high/max/空（空=不发送该字段，默认档），且不管
+  reasoning_effort 放在顶层还是嵌套在 chat_template_kwargs 里，
+  请求都能被正常接受和处理并输出正常响应，否则用例失败。本用
+  例对两种放置 × 四档各发一次请求（原始验证脚本 glm53_flash_
+  suite 的 reasoning_low/reasoning_high/reasoning_max.sh 口径：
+  temperature=0、max_tokens=2048、非流式、不传 thinking；顶层
+  放置：reasoning_effort 在顶层 + chat_template_kwargs=
+  {"clear_thinking": true} 为原始脚本原样保留；嵌套放置：
+  reasoning_effort 放进 chat_template_kwargs（GLM 聊天模版原
+  生口径）；空档无对应脚本，按需补齐为不发送该字段）。提示词
+  "Explain why 17*19=323 with intermediate reasoning if
+  available."（原始脚本口径）。每轮硬断言：HTTP 200+choices 存
+  在；正文非空；finish=stop（参考结果均自然结束）。档位对思考的
+  实际影响（reasoning_tokens、reasoning_content 长度）仅日志留
+  痕——参考脚本未做档位间断言，思考长度为模型行为质量。（不进
+  smoke 集：新用例首跑观察期）
 """
 
 import json
@@ -135,6 +196,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         return "K. 客户问题复现"
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_pydantic_schema_tool_call_stream(
@@ -426,6 +488,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_repeated_request_stability(
@@ -579,6 +642,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.GLM52
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_anthropic_prompt_cache_creation(
@@ -805,6 +869,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             api_client.timeout = original_timeout
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
     @pytest.mark.p0
     def test_negative_frequency_penalty_treated_as_zero(
         self, api_client: ModelAPIClient, test_logger
@@ -1000,6 +1065,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_thinking_disabled_suppresses_reasoning(
@@ -1205,6 +1271,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
     @pytest.mark.p0
     @pytest.mark.smoke
     def test_thinking_temperature_tier(
@@ -1401,6 +1468,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
     @pytest.mark.p0
     def test_thinking_effort_reasoning_length(
         self, api_client: ModelAPIClient, test_logger, record_warning
@@ -1742,6 +1810,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
     @pytest.mark.p1
     def test_required_chitchat_calls_tool(
         self, api_client: ModelAPIClient, test_logger
@@ -1975,6 +2044,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
     @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
     @pytest.mark.p1
     def test_required_chitchat_official_behavior(
         self, api_client: ModelAPIClient, test_logger
@@ -2199,4 +2269,651 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "客户问题复现通过: required+闲聊 关/开思考 × mt=256/2000 "
             "全部按官方行为强制返回 get_weather 调用（finish="
             "tool_calls、ct/rt 均未吃满预算；客户工单级别由 K8 验证）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_tool_choice_four_modes_support(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K10 [P0]: 客户问题 - GLM-5.3-Flash tool_choice 四种模式支持
+
+        客户问题（AGDC2-15）：OpenAI 协议 tool_choice 让模型在准备
+        工具调用时按请求指定的类型/模式生成调用（Agent 自定义工具
+        场景）；上线前版本未指定模型专属的工具调用格式解析器，
+        GLM-5.3-Flash 不支持该语义。修复：Worker 侧指定生成解释
+        器，支持渲染字段至模型聊天模版（chat_template.jinja）。
+        需支持四种模式：auto（模型自主决定）、required（必须调用
+        工具）、named（必须调用指定工具）、none（禁止调用工具）。
+        本用例对四种模式各发一次请求（原始验证脚本 glm53_flash_
+        suite 的 tool_auto/tool_required/tool_named/tool_none.sh
+        口径：temperature=0、max_tokens=2048、非流式、不传
+        thinking——GLM-5.3-Flash 默认思考，参考结果含 reasoning_
+        content，不做思考断言）。工具两个：get_weather(city)+
+        get_current_time(timezone)。auto/required/none 用工具意图
+        提示词（原始脚本口径）；named 指定 get_current_time 且提
+        示词保持原始口径的天气意图——named 与提示词自然意图不同
+        向，若 named 语义未生效（被忽略按 auto 处理）模型会按意
+        图调 get_weather，从而检出「指定工具未被强制」。每轮硬断
+        言：
+        - HTTP 200 + choices 存在（该模式不被支持即非 200）
+        - auto/required：tool_calls 存在且形状合法（type=
+          function、arguments 合法 JSON）、finish_reason==
+          "tool_calls"
+        - named：tool_calls 存在且 function.name==指定工具
+          （get_current_time）、finish_reason=="tool_calls"
+        - none：tool_calls 缺失、content 非空、finish_reason==
+          "stop"
+        usage 仅日志留痕（原始脚本无预算断言，本用例测模式支持，
+        不引入无关断言）。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K10: 工具定义——两个工具使 named 模式可判定（指定与提
+        # 示词意图不同的工具，见 docstring；形状对齐原始脚本）
+        K10_TOOLS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get current weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_current_time",
+                    "description": "Get current time for a timezone",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"timezone": {"type": "string"}},
+                        "required": ["timezone"],
+                    },
+                },
+            },
+        ]
+
+        # K10: 轮次（标签, tool_choice, 提示词, 期望）——期望：call_any
+        # （必须发起调用，工具不限）/ call_named（必须为指定工具）/
+        # no_call（禁止调用）。auto/required/none 提示词为原始脚本
+        # 口径的工具意图；named 提示词保持原始脚本口径的天气意图，
+        # 但指定 get_current_time（与意图不同向，named 未生效时模型
+        # 会按意图调 get_weather 而被检出）
+        K10_ROUNDS = (
+            (
+                "auto",
+                "auto",
+                "Call get_weather for Beijing and report the temperature.",
+                "call_any",
+            ),
+            (
+                "required",
+                "required",
+                "Call get_weather for Beijing and report the temperature.",
+                "call_any",
+            ),
+            (
+                "named(get_current_time)",
+                {"type": "function", "function": {"name": "get_current_time"}},
+                "Look up Beijing weather.",
+                "call_named",
+            ),
+            (
+                "none",
+                "none",
+                "Call get_weather for Beijing and report the temperature.",
+                "no_call",
+            ),
+        )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - GLM-5.3-Flash tool_choice 四种"
+            "模式支持（auto/required/named/none；temperature=0、"
+            "mt=2048、非流式、不传 thinking，按原始脚本口径；named "
+            "指定与天气意图不同向的 get_current_time 以验证强制语"
+            "义）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_round(
+            label: str, tool_choice: Any, prompt: str, expect: str
+        ) -> None:
+            """K10 单轮：按 tool_choice 模式断言语义生效"""
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": prompt}],
+                {
+                    "tools": [t["function"]["name"] for t in K10_TOOLS],
+                    "tool_choice": tool_choice,
+                    "temperature": 0,
+                    "max_tokens": 2048,
+                    "stream": False,
+                    "round": label,
+                },
+            )
+
+            # 手工构造 payload 直发（需 tools/tool_choice/temperature=0，
+            # chat_completion 封装会强制覆盖 max_tokens/temperature）
+            payload = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "tools": K10_TOOLS,
+                "tool_choice": tool_choice,
+                "max_tokens": 2048,
+                "temperature": 0,
+                "stream": False,
+            }
+
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+
+            # 断言0：该模式被支持（不支持通常表现为 400/500）
+            assert response.status_code == 200, (
+                f"[{label}] 客户问题复现失败：应 200 正常返回（该模"
+                f"式不被支持），实际 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"[{label}] 响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"[{label}] 响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls")
+            finish = choices[0].get("finish_reason")
+            usage = result.get("usage") or {}
+
+            TestLogger.log_response(test_logger, result, f"K10-响应（{label}）")
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed={elapsed:.1f}s, "
+                f"finish={finish}, tool_calls="
+                f"{'有' if tool_calls else '无'}, content_len="
+                f"{len(content)}, usage="
+                f"{json.dumps(usage, ensure_ascii=False)}"
+            )
+
+            def check_call_shape(tc: List[Dict[str, Any]]) -> str:
+                """校验工具调用形状，返回被调用的函数名"""
+                first = tc[0] or {}
+                fn = first.get("function") or {}
+                assert (
+                    first.get("type") == "function" and fn.get("name")
+                ), (
+                    f"[{label}] 客户问题复现失败：工具调用形状异常（应 "
+                    f"type=function 且带 name，实际 "
+                    f"{json.dumps(first, ensure_ascii=False)[:200]}）"
+                )
+                try:
+                    fn_args = json.loads(fn.get("arguments") or "")
+                except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    pytest.fail(
+                        f"[{label}] 客户问题复现失败：工具调用 arguments "
+                        f"不是合法 JSON: {e}（{fn.get('arguments')!r}）"
+                    )
+                assert isinstance(fn_args, dict), (
+                    f"[{label}] 客户问题复现失败：工具调用 arguments 应为"
+                    f" JSON 对象: {fn.get('arguments')!r}"
+                )
+                return fn.get("name")
+
+            if expect == "no_call":
+                # 断言（none）：禁止调用工具，正文正常回复
+                assert not tool_calls, (
+                    f"[{label}] 客户问题复现失败：tool_choice=none 下仍"
+                    f"发起工具调用（none 语义未生效）: "
+                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                )
+                assert content, (
+                    f"[{label}] 客户问题复现失败：tool_choice=none 下"
+                    f"正文为空（应正常文本回复）: "
+                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                )
+                assert finish == "stop", (
+                    f"[{label}] 客户问题复现失败：tool_choice=none 下"
+                    f"finish_reason 应为 stop，实际 {finish}: "
+                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                )
+            else:
+                # 断言（auto/required/named）：必须发起工具调用
+                assert tool_calls, (
+                    f"[{label}] 客户问题复现失败：该模式下未发起工具"
+                    f"调用（模式不被支持/语义未生效，finish="
+                    f"{finish}）: "
+                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                )
+                called = check_call_shape(tool_calls)
+                assert finish == "tool_calls", (
+                    f"[{label}] 客户问题复现失败：finish_reason 应为 "
+                    f"tool_calls，实际 {finish}: "
+                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                )
+                if expect == "call_named":
+                    # 断言（named）：必须调用指定工具（与提示词意图
+                    # 不同向，named 未生效时模型按意图调 get_weather
+                    # 即在此被检出）
+                    named_name = tool_choice["function"]["name"]
+                    assert called == named_name, (
+                        f"[{label}] 客户问题复现失败：named 指定 "
+                        f"{named_name} 但实际调用 {called}（named 强"
+                        f"制语义未生效，按提示词意图选择了工具）: "
+                        f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                    )
+
+        for label, tool_choice, prompt, expect in K10_ROUNDS:
+            run_round(label, tool_choice, prompt, expect)
+
+        test_logger.info(
+            "客户问题复现通过: GLM-5.3-Flash tool_choice 四种模式"
+            "（auto/required/named/none）语义均生效（auto/required/"
+            "named 发起工具调用且 named 强制指定工具、none 禁止调用"
+            "且正文正常）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_response_format_three_modes_support(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K11 [P0]: 客户问题 - GLM-5.3-Flash response_format 三种模式支持
+
+        客户问题（AGDC2-16）：OpenAI 协议 response_format 让模型按
+        指定格式输出（Agent 场景）；DingoRouter 不支持该结构化输出
+        语义。修复：Router 侧支持结构化生成语义并实现语义转发至
+        引擎。需支持三种模式：json_object（输出为合法 JSON 对
+        象）、json_schema（输出符合指定 JSON Schema）、text（纯
+        文本，协议默认）。
+        本用例对三种模式各发一次请求（原始验证脚本 glm53_flash_
+        suite 的 response_json_object/response_json_schema.sh 口
+        径：temperature=0、max_tokens=2048、非流式、不传
+        thinking）。json_object 轮与 json_schema 轮的提示词、
+        response_format 均为原始脚本原样口径；text 轮为协议默认
+        模式（原始脚本未单测，按需补齐）。每轮硬断言：
+        - HTTP 200 + choices 存在（该模式不被支持即非 200）
+        - 正文非空、finish_reason=="stop"（参考结果均自然结束）
+        - json_object：json.loads(正文) 为 dict
+        - json_schema：json.loads(正文) 为 dict 且 city 为字符
+          串、temperature 为数值（非 bool）、键集合恰为
+          {city, temperature}
+        - text：正文非空（纯文本语义，不强制 JSON）
+        usage 仅日志留痕（原始脚本无预算断言）。（不进 smoke 集：
+        新用例首跑观察期）
+        """
+        # K11: 轮次（标签, response_format, 提示词, 期望）——json_
+        # object/json_schema 轮为原始脚本原样口径；text 轮为协议默
+        # 认模式（原始脚本未单测，按需补齐支持验证）
+        K11_ROUNDS = (
+            (
+                "json_object",
+                {"type": "json_object"},
+                "Output a JSON object with fields city=Beijing and "
+                "value=17. No markdown.",
+                "json_object",
+            ),
+            (
+                "json_schema",
+                {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "weather",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "city": {"type": "string"},
+                                "temperature": {"type": "number"},
+                            },
+                            "required": ["city", "temperature"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "Give estimated temperature for Beijing as a JSON "
+                "object matching schema.",
+                "json_schema",
+            ),
+            (
+                "text",
+                {"type": "text"},
+                "Respond with a short plain text greeting.",
+                "text",
+            ),
+        )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - GLM-5.3-Flash response_format "
+            "三种模式支持（json_object/json_schema/text；temperature="
+            "0、mt=2048、非流式、不传 thinking，按原始脚本口径）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_round(
+            label: str, response_format: Dict[str, Any],
+            prompt: str, expect: str,
+        ) -> None:
+            """K11 单轮：按 response_format 模式断言语义生效"""
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": prompt}],
+                {
+                    "response_format": response_format,
+                    "temperature": 0,
+                    "max_tokens": 2048,
+                    "stream": False,
+                    "round": label,
+                },
+            )
+
+            # 手工构造 payload 直发（需 response_format/temperature=0，
+            # chat_completion 封装会强制覆盖 max_tokens/temperature）
+            payload = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": response_format,
+                "max_tokens": 2048,
+                "temperature": 0,
+                "stream": False,
+            }
+
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+
+            # 断言0：该模式被支持（不支持通常表现为 400/500）
+            assert response.status_code == 200, (
+                f"[{label}] 客户问题复现失败：应 200 正常返回（该模"
+                f"式不被支持），实际 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"[{label}] 响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"[{label}] 响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            finish = choices[0].get("finish_reason")
+            usage = result.get("usage") or {}
+
+            TestLogger.log_response(
+                test_logger, result, f"K11-响应（{label}）"
+            )
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed={elapsed:.1f}s, "
+                f"finish={finish}, content_len={len(content)}, "
+                f"usage={json.dumps(usage, ensure_ascii=False)}"
+            )
+
+            # 断言1：正文非空且自然结束（三种模式通用）
+            assert content, (
+                f"[{label}] 客户问题复现失败：正文为空: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+            assert finish == "stop", (
+                f"[{label}] 客户问题复现失败：finish_reason 应为 "
+                f"stop，实际 {finish}: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+
+            # 断言2：模式语义（json_object/json_schema 输出结构化
+            # JSON；text 纯文本不强制 JSON）
+            if expect in ("json_object", "json_schema"):
+                try:
+                    parsed = json.loads(content)
+                except (json.JSONDecodeError, ValueError) as e:
+                    pytest.fail(
+                        f"[{label}] 客户问题复现失败：正文不是合法 "
+                        f"JSON（结构化输出语义未生效，{e}）: "
+                        f"{content[:200]!r}"
+                    )
+                assert isinstance(parsed, dict), (
+                    f"[{label}] 客户问题复现失败：正文应为 JSON 对象"
+                    f"（dict），实际 {type(parsed).__name__}: "
+                    f"{content[:200]!r}"
+                )
+                if expect == "json_schema":
+                    keys = set(parsed.keys())
+                    assert keys == {"city", "temperature"}, (
+                        f"[{label}] 客户问题复现失败：json_schema 正文"
+                        f"键集合应为 {{city, temperature}}，实际 "
+                        f"{sorted(keys)}: {content[:200]!r}"
+                    )
+                    city = parsed.get("city")
+                    temperature = parsed.get("temperature")
+                    assert isinstance(city, str), (
+                        f"[{label}] 客户问题复现失败：city 应为字符"
+                        f"串，实际 {city!r}"
+                    )
+                    assert (
+                        isinstance(temperature, (int, float))
+                        and not isinstance(temperature, bool)
+                    ), (
+                        f"[{label}] 客户问题复现失败：temperature 应"
+                        f"为数值，实际 {temperature!r}"
+                    )
+
+        for label, response_format, prompt, expect in K11_ROUNDS:
+            run_round(label, response_format, prompt, expect)
+
+        test_logger.info(
+            "客户问题复现通过: GLM-5.3-Flash response_format 三种"
+            "模式（json_object/json_schema/text）语义均生效（json_"
+            "object 正文为合法 JSON 对象、json_schema 正文符合 "
+            "weather schema、text 正文正常）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_reasoning_effort_levels_support(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K12 [P0]: 客户问题 - GLM-5.3-Flash reasoning_effort 档位支持
+
+        客户问题（AGDC2-17）：GLM-5.3-Flash 使用 GLM 自己的聊天
+        模版，字段为 reasoning_effort 且放在 chat_template_kwargs
+        里；而 OpenAI 协议/参考脚本将其放在顶层。Router 需要在
+        OpenAI 协议外层捕获该字段并传给引擎（修复：Router 侧支持
+        语义转发）。需支持：low/high/max/空（空=不发送该字段，
+        默认档），且不管 reasoning_effort 放在顶层还是嵌套在
+        chat_template_kwargs 里，请求都能被正常接受和处理并输出
+        正常响应，否则用例失败。
+        本用例对两种放置（顶层 / 嵌套 chat_template_kwargs）× 四
+        档各发一次请求（原始验证脚本 glm53_flash_suite 的
+        reasoning_low/reasoning_high/reasoning_max.sh 口径：
+        temperature=0、max_tokens=2048、非流式、不传 thinking；
+        顶层放置：reasoning_effort 在顶层 +
+        chat_template_kwargs={"clear_thinking": true}（原始脚本
+        原样保留）；嵌套放置：reasoning_effort 放进
+        chat_template_kwargs（GLM 聊天模版原生口径）；空档无对应
+        脚本，按需补齐为不发送该字段）。提示词 "Explain why
+        17*19=323 with intermediate reasoning if available."
+        （原始脚本口径）。每轮硬断言：
+        - HTTP 200 + choices 存在（该放置/档位不被支持即非 200）
+        - 正文非空、finish_reason=="stop"（参考结果均自然结束）
+        档位对思考的实际影响（reasoning_tokens、reasoning_
+        content 长度）仅日志留痕——参考脚本未做档位间断言，思考
+        长度为模型行为质量，不做硬断言。usage 仅日志。（不进
+        smoke 集：新用例首跑观察期）
+        """
+        # K12: 提示词（原始脚本口径，各轮相同——放置与档位为唯
+        # 一变量）
+        K12_PROMPT = (
+            "Explain why 17*19=323 with intermediate reasoning "
+            "if available."
+        )
+
+        # K12: 轮次（标签, 放置, reasoning_effort）——顶层为原始
+        # 脚本口径；嵌套为 GLM 聊天模版原生口径（reasoning_
+        # effort 放在 chat_template_kwargs 里）；空=不发送该字
+        # 段（默认档，原始脚本无对应档，按需补齐；两种放置口径
+        # 下同构）
+        K12_ROUNDS = (
+            ("顶层-low", "top", "low"),
+            ("顶层-high", "top", "high"),
+            ("顶层-max", "top", "max"),
+            ("顶层-空（不发送该字段，默认档）", "top", None),
+            ("嵌套-low", "nested", "low"),
+            ("嵌套-high", "nested", "high"),
+            ("嵌套-max", "nested", "max"),
+            ("嵌套-空（不发送该字段，默认档）", "nested", None),
+        )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - GLM-5.3-Flash reasoning_"
+            "effort 档位支持（顶层/嵌套 chat_template_kwargs 两种"
+            "放置 × low/high/max/空 四档；temperature=0、mt=2048、"
+            "非流式、不传 thinking、chat_template_kwargs="
+            "{clear_thinking:true}，按原始脚本口径）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        def run_round(label: str, placement: str, effort) -> None:
+            """K12 单轮：按放置+档位断言请求被支持"""
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K12_PROMPT}],
+                {
+                    "placement": (
+                        "顶层" if placement == "top"
+                        else "嵌套 chat_template_kwargs"
+                    ),
+                    "reasoning_effort": effort if effort else "(空)",
+                    "chat_template_kwargs": {"clear_thinking": True},
+                    "temperature": 0,
+                    "max_tokens": 2048,
+                    "stream": False,
+                    "round": label,
+                },
+            )
+
+            # 手工构造 payload 直发（需按放置构造 reasoning_
+            # effort/chat_template_kwargs/temperature=0，chat_
+            # completion 封装会强制覆盖 max_tokens/temperature；
+            # 空档不发送 reasoning_effort 字段）
+            payload = {
+                "model": api_client.model_name,
+                "messages": [
+                    {"role": "user", "content": K12_PROMPT}
+                ],
+                "max_tokens": 2048,
+                "temperature": 0,
+                "stream": False,
+            }
+            if placement == "top":
+                # 顶层放置（原始脚本口径）
+                payload["chat_template_kwargs"] = {
+                    "clear_thinking": True
+                }
+                if effort is not None:
+                    payload["reasoning_effort"] = effort
+            else:
+                # 嵌套放置（GLM 聊天模版原生口径）
+                ctk = {"clear_thinking": True}
+                if effort is not None:
+                    ctk["reasoning_effort"] = effort
+                payload["chat_template_kwargs"] = ctk
+
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{label}] 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+
+            # 断言0：该放置/档位被支持（不支持通常表现为 400/500）
+            assert response.status_code == 200, (
+                f"[{label}] 客户问题复现失败：应 200 正常返回（该"
+                f"放置/档位不被支持），实际 HTTP "
+                f"{response.status_code}: {response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"[{label}] 响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"[{label}] 响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            reasoning = message.get("reasoning_content") or ""
+            finish = choices[0].get("finish_reason")
+            usage = result.get("usage") or {}
+
+            # rt 双拼写兼容（仅日志观测，不硬断言）
+            rt = usage.get("reasoning_tokens")
+            if rt is None:
+                details = usage.get("completion_tokens_details") or {}
+                rt = details.get("reasoning_tokens")
+
+            TestLogger.log_response(
+                test_logger, result, f"K12-响应（{label}）"
+            )
+            test_logger.info(
+                f"[{label}]: HTTP 200, elapsed={elapsed:.1f}s, "
+                f"finish={finish}, content_len={len(content)}, "
+                f"reasoning_len={len(reasoning)}, rt={rt}, usage="
+                f"{json.dumps(usage, ensure_ascii=False)}"
+            )
+
+            # 断言1：正文非空且自然结束
+            assert content, (
+                f"[{label}] 客户问题复现失败：正文为空: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+            assert finish == "stop", (
+                f"[{label}] 客户问题复现失败：finish_reason 应为 "
+                f"stop，实际 {finish}: "
+                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+            )
+
+        for label, placement, effort in K12_ROUNDS:
+            run_round(label, placement, effort)
+
+        test_logger.info(
+            "客户问题复现通过: GLM-5.3-Flash reasoning_effort 两种"
+            "放置（顶层/嵌套 chat_template_kwargs）× 四档"
+            "（low/high/max/空）均被正常接受和处理（200+正文正常+"
+            "自然结束；各轮 rt/reasoning 长度见日志，档位实际效果"
+            "仅观测不硬断言）"
         )
