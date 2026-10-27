@@ -305,11 +305,18 @@ K. 客户问题复现测试
   入正常响应则 PASS，任一轮被拒（原始报错形态）或空响应均
   FAIL。1M token prefill 耗时长，临时将客户端超时上调至 900s
   （finally 恢复；ReadTimeout 不重试——框架约定）。请求提示词由
-  程序生成（无外部文件）。采样参数不豁免（用户指定）：由全局
-  SAMPLING_PARAMS（Jenkinsfile）覆盖——temperature 无覆盖时回
-  退 0.7、top_p/seed 显式指定时注入（K10/K18 口径）。模型真实
-  响应（状态码/响应体全文）断言前每轮打印（失败时同样可见）；
-  usage 仅日志。（不进 smoke 集：新用例首跑观察期）
+  程序生成（无外部文件）。跑必冷（用户加固，仅 low 轮）：low 轮
+  （含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中
+  文）——前缀必不命中 KV 缓存，真 1M 冷 prefill（缓存只省
+  prefill 重算，不绕过准入长度校验/不省 KV 内存驻留与 decode
+  全窗注意力——核心契约验证本不受缓存影响，此为 prefill 侧压
+  测）；max 轮取消唯一前缀（用户口径：输出侧验证不受缓存影响，
+  允许命中历史缓存加速）。采样参数不豁免
+  （用户指定）：由全局 SAMPLING_PARAMS（Jenkinsfile）覆盖——
+  temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入
+  （K10/K18 口径）。模型真实响应（状态码/响应体全文）断言前每
+  轮打印（失败时同样可见）；usage 仅日志。（不进 smoke 集：
+  新用例首跑观察期）
 """
 
 import base64
@@ -2523,7 +2530,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - GLM-5.3-Flash tool_choice 四种"
+            "=== 测试开始: 客户问题 - tool_choice 四种"
             "模式支持（auto/required/named/none；mt=2048、非流式、"
             "不传 thinking，按原始脚本口径；采样参数不豁免——由全局"
             " SAMPLING_PARAMS 覆盖（temperature=0 为无覆盖时回退"
@@ -2690,7 +2697,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             run_round(label, tool_choice, prompt, expect)
 
         test_logger.info(
-            "客户问题复现通过: GLM-5.3-Flash tool_choice 四种模式"
+            "客户问题复现通过: tool_choice 四种模式"
             "（auto/required/named/none）语义均生效（auto/required/"
             "named 发起工具调用且 named 强制指定工具、none 禁止调用"
             "且正文正常）"
@@ -2768,7 +2775,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - GLM-5.3-Flash response_format "
+            "=== 测试开始: 客户问题 - response_format "
             "三种模式支持（json_object/json_schema/text；temperature="
             "0、mt=2048、非流式、不传 thinking，按原始脚本口径）==="
         )
@@ -2896,7 +2903,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             run_round(label, response_format, prompt, expect)
 
         test_logger.info(
-            "客户问题复现通过: GLM-5.3-Flash response_format 三种"
+            "客户问题复现通过: response_format 三种"
             "模式（json_object/json_schema/text）语义均生效（json_"
             "object 正文为合法 JSON 对象、json_schema 正文符合 "
             "weather schema、text 正文正常）"
@@ -2960,7 +2967,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - GLM-5.3-Flash reasoning_"
+            "=== 测试开始: 客户问题 - reasoning_"
             "effort 档位支持（顶层/嵌套 chat_template_kwargs 两种"
             "放置 × low/high/max/空 四档；temperature=0、mt=2048、"
             "非流式、不传 thinking、chat_template_kwargs="
@@ -3079,7 +3086,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             run_round(label, placement, effort)
 
         test_logger.info(
-            "客户问题复现通过: GLM-5.3-Flash reasoning_effort 两种"
+            "客户问题复现通过: reasoning_effort 两种"
             "放置（顶层/嵌套 chat_template_kwargs）× 四档"
             "（low/high/max/空）均被正常接受和处理（200+正文正常+"
             "自然结束；各轮 rt/reasoning 长度见日志，档位实际效果"
@@ -4340,6 +4347,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         - 采样参数不豁免（用户指定）：由全局 SAMPLING_PARAMS
           （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
           top_p/seed 显式指定时注入（K10/K18 口径）
+        - 跑必冷（用户加固，仅 low 轮）：low 轮（含探针）材料头
+          部置每次请求唯一 nonce（时间戳+uuid，可含中文，几十字
+          符）——前缀必不命中 KV 缓存，真 1M 冷 prefill（缓存
+          命中只省 prefill 重算，不绕过准入长度校验、不省 KV 内
+          存驻留与 decode 全窗注意力——核心契约验证本不受缓存
+          影响，此为 prefill 侧压测加固）；max 轮取消唯一前缀
+          （用户口径：输出侧验证不受缓存影响，允许命中历史缓存
+          加速）；nonce 为常数级几十 tokens，对计量影响可忽略
         - 单条 user 消息非流式提交（程序生成，无外部文件）
         硬断言：
         1. 探针 200 且返回 usage.prompt_tokens（计量前提）
@@ -4363,8 +4378,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         K20_TARGET_PROMPT_TOKENS = 960_000
         # 两轮思考档位（GLM-5.3 不支持禁用思考、仅支持档位——用户
         # 口径）：low 轮常规预算；max 轮最大思考负载（输出侧同步压
-        # 窗口），预算放大覆盖更长思考
-        K20_EFFORT_ROUNDS = [("low", 1024), ("max", 4096)]
+        # 窗口），预算放大覆盖更长思考。第三元素=是否跑必冷（用户
+        # 口径：low 轮唯一 nonce 前缀强制冷 prefill——prefill 侧压
+        # 测；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许
+        # 命中历史缓存加速）
+        K20_EFFORT_ROUNDS = [("low", 1024, True), ("max", 4096, False)]
         K20_PROBE_UNITS = 2000  # 探针规模（约 276K 字符，精确自校准）
         K20_OLD_INPUT_LIMIT = 781_754  # 原始故障上限（规模 sanity 用）
         K20_TIMEOUT_SECONDS = 900  # 1M prefill 需长超时
@@ -4385,6 +4403,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（探针自校准精确计量；目标输入 {K20_TARGET_PROMPT_TOKENS} "
             f"tokens + 输出预算 low 轮 1024 / max 轮 4096——输入+输出 "
             f"略小于 1M；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；"
+            f"low 轮唯一 nonce 头部绕过 KV 缓存——跑必冷、"
+            f"max 轮无唯一前缀（允许命中缓存）；"
             f"期望每轮 HTTP 200 + 非空正文）==="
         )
 
@@ -4400,13 +4420,23 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except (TypeError, ValueError):
                 sampling_extra["seed"] = api_client.seed
 
+        def make_nonce() -> str:
+            """生成唯一 nonce（时间戳+uuid，可含中文，几十字符）——
+            置于材料头部使前缀必不命中 KV 缓存（跑必冷，仅 low 轮及
+            探针使用——用户口径；nonce 为常数级几十 tokens，对探针
+            计量/1M 总量口径影响可忽略）"""
+            return (
+                f"【本次请求唯一标识 {time.strftime('%Y%m%d%H%M%S')}"
+                f" {uuid.uuid4().hex[:8]}】"
+            )
+
         def build_payload(
-            text: str, effort: str, max_tokens: int
+            text: str, effort: str, max_tokens: int, nonce: str = ""
         ) -> Dict[str, Any]:
             """构造带全局采样参数的 K20 请求体（探针/两轮共用）"""
             return {
                 "model": api_client.model_name,
-                "messages": [{"role": "user", "content": text}],
+                "messages": [{"role": "user", "content": nonce + text}],
                 "max_tokens": max_tokens,
                 "reasoning_effort": effort,
                 "temperature": api_client._effective_temperature(0.7),
@@ -4418,17 +4448,20 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 客户端无分词器，chars/token 启发式误差可达 ±30%——先发小
         # 规模探针，从 usage.prompt_tokens 精确得出每单元 token 数
         # （1M 契约判定的前提，主请求规模必须可靠）
-        probe_content = K20_UNIT * K20_PROBE_UNITS
         probe_payload = build_payload(
-            probe_content, K20_EFFORT_ROUNDS[0][0], 1
+            K20_UNIT * K20_PROBE_UNITS,
+            K20_EFFORT_ROUNDS[0][0],
+            1,
+            nonce=make_nonce() if K20_EFFORT_ROUNDS[0][2] else "",
         )
+        probe_content = probe_payload["messages"][0]["content"]
         TestLogger.log_request(
             test_logger,
             [
                 {
                     "role": "user",
                     "content": (
-                        f"[探针自校准材料 {K20_PROBE_UNITS} 单元"
+                        f"[nonce+探针自校准材料 {K20_PROBE_UNITS} 单元"
                         f"（{len(probe_content)} 字符）]"
                     ),
                 }
@@ -4439,6 +4472,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 "temperature": api_client._effective_temperature(0.7),
                 "top_p": sampling_extra.get("top_p", "(未注入)"),
                 "seed": sampling_extra.get("seed", "(未注入)"),
+                "cache": "nonce 前缀绕过（跑必冷）",
                 "stream": False,
             },
         )
@@ -4480,10 +4514,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 两轮（用户指定补 max 场景）：同一工单同一契约——1M 量级输
         # 入在不同思考负载下均应正常响应；探针校准共享，逐轮发送、
         # 逐轮断言（任一轮失败即用例 FAIL）
-        for round_index, (effort, budget) in enumerate(
+        for round_index, (effort, budget, cold) in enumerate(
             K20_EFFORT_ROUNDS, start=1
         ):
-            payload = build_payload(content, effort, budget)
+            payload = build_payload(
+                content, effort, budget, nonce=make_nonce() if cold else ""
+            )
+            req_content = payload["messages"][0]["content"]
 
             TestLogger.log_request(
                 test_logger,
@@ -4491,7 +4528,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     {
                         "role": "user",
                         "content": (
-                            f"[程序生成背景材料 {len(content)} 字符"
+                            f"[{'nonce+' if cold else ''}程序生成背景材料 "
+                            f"{len(req_content)} 字符"
                             f"（自校准预计 {predicted_tokens} tokens）"
                             f"+ 尾部指令]"
                         ),
@@ -4503,17 +4541,22 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         f"（reasoning_effort={effort}）"
                     ),
                     "predicted_prompt_tokens": predicted_tokens,
-                    "chars": len(content),
+                    "chars": len(req_content),
                     "unit_repeats": main_units,
                     "max_tokens": budget,
                     "reasoning_effort": (
                         f"{effort}"
-                        "（GLM-5.3 不支持禁用思考——用户口径）"
+                        "（不支持禁用思考、仅档位——用户口径）"
                     ),
                     "stream": False,
                     "temperature": api_client._effective_temperature(0.7),
                     "top_p": sampling_extra.get("top_p", "(未注入)"),
                     "seed": sampling_extra.get("seed", "(未注入)"),
+                    "cache": (
+                        "nonce 前缀绕过（唯一——跑必冷）"
+                        if cold
+                        else "无唯一前缀（允许命中历史缓存）"
+                    ),
                 },
             )
 
