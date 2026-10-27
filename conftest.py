@@ -86,6 +86,7 @@ RAW_SAMPLING_PARAM_TESTS = {
     # K18（test_output_json_as_input_context）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     "test_over_image_limit_rejected",  # K19: 客户问题复现（场景请求体不发送采样参数，图片数超限拒绝判定的前提，不可被全局覆盖）
     # K20（test_1m_context_request_supported）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
+    "test_system_message_embedded_tools_accepted",  # K21: 客户问题复现（客户原始请求体不发送采样参数，非标结构宽容接受判定的前提，不可被全局覆盖）
 }
 
 

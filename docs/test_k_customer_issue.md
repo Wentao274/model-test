@@ -56,6 +56,7 @@
 | K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按工单还原该 assistant 消息回填为多轮上下文（user→assistant→user，带 bash 工具定义，非流式，采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖），断言 HTTP 200（核心）、choices 存在、message 结构存在 | P0 |
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
 | K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出预算 max_tokens 覆盖思考+正文，两轮思考档位（用户指定补 max 场景）——low 轮（1024）常规、max 轮（4096）最大思考负载，输出侧同步压窗口（总消耗 ≈961K/964K，两种 1M 口径均满足），单条 user 消息非流式提交（采样参数不豁免——用户指定：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入；跑必冷仅 low 轮——用户加固：low 轮（含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中文），前缀必不命中 KV 缓存，真 1M 冷 prefill；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许命中历史缓存加速），断言探针 200 且有 usage、每轮主请求 HTTP 200、choices/content 非空、每轮主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
+| K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；不发送采样参数——豁免），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
 
 ## 运行方式
 
@@ -1227,3 +1228,61 @@ serving 侧上下文长度校验拒绝）。根因：serving 侧未按 1M 上下
 - usage 仅日志（主响应 prompt_tokens 为实际输入 token 数）
 - marker：`GLM53`（K 套件按模型分组标记；采样参数不豁免——用
   户指定）
+
+### test_system_message_embedded_tools_accepted (K21)
+
+**背景**：客户问题（kimi-k3 工单原始请求体）：messages[2] 为
+role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator
+单工具——"计算器，只支持单个算术表达式的求值"），服务端反序
+列化直接报 400 invalid_request_error / json_parse_error：`"messages[2]:
+data did not match any variant of untagged enum MessageContent"`。
+该结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务
+实际在用——契约：服务端应宽容解析该非标结构并正常响应（预期
+200）。
+
+**请求构造**（Kimi-K3 适用，OpenAI 协议
+`/v1/chat/completions` 非流式，手工 payload 直发）：
+- **工单原始请求体原样重放**：三条消息（①role=system 长系统提
+  示词；②role=user "Calculate fuel consumption."；③role=system
+  无 content 字段、tools 内嵌——缺陷触发点，不修复）+
+  stream=false；模型名按框架约定由环境注入，其余字段不改动
+- 不发送采样参数（豁免——客户原始请求体无采样字段）
+- 单次请求（结构解析为确定性行为，无需多次连发）
+
+**断言**（硬）：
+1. HTTP 200（核心——原始报错形态 400 json_parse_error 复现即
+   FAIL）
+2. 响应为合法 JSON 且 choices 存在
+3. message 有效输出：content 非空或 tool_calls 非空（宽容解析后
+   无论按"忽略内嵌 tools 文本作答"或"按工具调用响应"均为有效
+   成功形态；两者皆空即未正常响应）
+
+**判定矩阵**：
+- 200 + choices + 有效输出 → PASS（非标结构被宽容接受并正常响
+  应）
+- 400（原始报错形态）/其他非 200 → FAIL（断言 1——未宽容解析）
+- 200 但 content 与 tool_calls 均为空 → FAIL（断言 3——未正常
+  响应）
+
+**设计决策记录**：
+- **P0**（客户报障场景）
+- **工单原始请求体唯一口径**：非标结构原样重放不修复（缺陷触发
+  点），模型名由环境注入（框架约定——客户 curl 中的模型名仅用于
+  当时定位，不写入测试）
+- **有效输出断言取 content 或 tool_calls**：宽容解析的合理修复
+  形态不止一种（忽略内嵌 tools 文本作答 / 按工具调用响应），两
+  者均为成功形态——仅断言"200 + 有有效输出"，不为服务端选择
+  的实现方式设限
+- **单次请求**：结构解析为确定性行为（K6 先例——参数校验无概
+  率性），无需连发
+- **采样参数豁免**：客户原始请求体无采样字段（K14/K19 先例）
+- **打印口径**（用户指令）：运行日志不出现具体模型名——系统提
+  示词正文含模型自我介绍，日志仅记字符数概要（原文见用例常量/
+  工单）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 模型真实响应打印（用户要求）：状态码与响应体全文在断言前打
+  印到日志——失败时同样可见，便于诊断
+- usage 仅日志
+- marker：`KimiK3`（K 套件按模型分组标记）

@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K20
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K21
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -315,8 +315,27 @@ K. 客户问题复现测试
   （用户指定）：由全局 SAMPLING_PARAMS（Jenkinsfile）覆盖——
   temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入
   （K10/K18 口径）。模型真实响应（状态码/响应体全文）断言前每
-  轮打印（失败时同样可见）；usage 仅日志。（不进 smoke 集：
+  轮打印（失败时同样可见）；usage 仅日志。  （不进 smoke 集：
   新用例首跑观察期）
+- K21: system 消息内嵌 tools 的非标请求结构应被接受 [P0]
+  客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system
+  且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具
+  ——算术表达式求值），服务端反序列化直接报 400
+  invalid_request_error/json_parse_error："messages[2]: data did
+  not match any variant of untagged enum MessageContent"。该结
+  构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务
+  实际在用——契约：应宽容解析该非标结构并正常响应（预期 200）。
+  本用例按工单原始请求体原样重放（模型名按框架约定由环境注入，
+  其余字段——系统提示词/用户问题/内嵌 tools 结构——均不改动），
+  单次请求（结构解析为确定性行为，无需连发），硬断言：HTTP 200
+  （核心——原始报错形态复现即 FAIL）；响应合法 JSON 且 choices
+  存在；message 有效输出——content 非空或 tool_calls 非空（宽容
+  解析后文本作答/工具调用响应均为成功形态）。模型真实响应（状
+  态码/响应体全文）断言前打印（失败时同样可见）；usage 仅日志；
+  不发送采样参数（豁免——客户原始请求体无采样字段）。打印口径
+  （用户指令）：运行日志不出现具体模型名——系统提示词正文含模型
+  自我介绍，日志仅记字符数概要，原文见本 docstring 与用例常量。
+  （不进 smoke 集：新用例首跑观察期）
 """
 
 import base64
@@ -4648,3 +4667,213 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 "被正常接受并返回非空响应（输入+输出 "
                 f"{actual_prompt_tokens}+{budget} tokens，略小于 1M）"
             )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
+    @pytest.mark.p0
+    def test_system_message_embedded_tools_accepted(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K21 [P0]: 客户问题 - system 消息内嵌 tools 的非标请求结构应被接受
+
+        客户问题（kimi-k3 工单原始请求体，request id
+        2026101517465272830754257355159）：messages[2] 为 role=system
+        且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具
+        ——算术表达式求值），服务端反序列化直接报 400：
+        {"error": {"message": "Invalid JSON data: Failed to
+        deserialize the JSON body into the target type: messages[2]:
+        data did not match any variant of untagged enum
+        MessageContent at line 1 column 944 ...", "type":
+        "invalid_request_error", "code": "json_parse_error"}}。
+        该结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户
+        业务实际在用——契约：服务端应宽容解析该非标结构并正常响应
+        （预期 200）。
+        本用例按工单原始请求体原样重放（模型名按框架约定由环境注入，
+        其余字段——系统提示词/用户问题/内嵌 tools 结构——均不改动），
+        单次请求（结构解析为确定性行为，无需多次连发），硬断言：
+        1. HTTP 200（核心——原始报错形态 400 json_parse_error 复现
+           即 FAIL）
+        2. 响应为合法 JSON 且 choices 存在
+        3. message 有效输出：content 非空或 tool_calls 非空（宽容解析
+           后无论按"忽略内嵌 tools 文本作答"或"按工具调用响应"均为
+           有效成功形态；两者皆空即未正常响应）
+        模型真实响应（状态码/响应体全文）断言前打印（失败时同样可
+        见）；usage 仅日志。不发送采样参数（豁免——客户原始请求体
+        无采样字段）。打印口径（用户指令）：运行日志不出现具体模型
+        名——系统提示词正文含模型自我介绍，日志仅记字符数概要，原
+        文见本 docstring 与用例常量。
+        （不进 smoke 集：新用例首跑观察期）
+        """
+        # K21: 工单原始 system 提示词（正文含模型自我介绍——按用户
+        # 指令不进运行日志，原文仅保留于此）
+        K21_SYSTEM_PROMPT = (
+            "You are Kimi, an AI assistant developed by Moonshot AI.\n"
+            "You are capable of a wide range of tasks, including:\n"
+            "📝 Q&A & Explanation – Answer all kinds of questions, "
+            "ranging from scientific knowledge to daily life matters\n"
+            "✍️ Writing Assistance – Draft essays, emails and reports, "
+            "or polish your written text\n"
+            "💻 Coding Support – Write and debug code, and explain "
+            "technical concepts\n"
+            "🔍 Analysis & Summarization – Process lengthy documents, "
+            "extract key points and analyze data\n"
+            "🌍 Translation – Support mutual translation between "
+            "multiple languages\n"
+            "💡 Brainstorming – Help you expand ideas and generate "
+            "creative inspirations\n"
+            "You also accept extremely long context inputs, making you "
+            "ideal for users who need analysis or summaries of lengthy "
+            "documents."
+        )
+
+        # K21: 工单原始 user 提示词
+        K21_USER_PROMPT = "Calculate fuel consumption."
+
+        # K21: 工单原始非标第三条消息的 tools 数组（Calculator 单工
+        # 具）——原样重放：role=system、无 content 字段、tools 内嵌
+        # 于消息（缺陷触发点，不修复）
+        K21_EMBEDDED_TOOLS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "Calculator",
+                    "description": (
+                        "计算器，只支持单个算术表达式的求值"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "expr": {
+                                "type": "string",
+                                "description": (
+                                    "算术表达式，支持四则运算、指数运"
+                                    "算、对数函数、三角函数，使用 "
+                                    "javascript 语法"
+                                ),
+                            }
+                        },
+                        "required": ["expr"],
+                    },
+                },
+            }
+        ]
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - system 消息内嵌 tools 的非标请"
+            "求结构应被接受（工单原始请求体原样重放；期望 HTTP 200 "
+            "正常响应——原始报错形态为 400 json_parse_error："
+            "messages[2] data did not match any variant of untagged "
+            "enum MessageContent）==="
+        )
+
+        # 工单原始 messages 原样重放（第三条为非标结构：role=system、
+        # 无 content、tools 内嵌于消息——缺陷触发点）
+        messages = [
+            {"role": "system", "content": K21_SYSTEM_PROMPT},
+            {"role": "user", "content": K21_USER_PROMPT},
+            {"role": "system", "tools": K21_EMBEDDED_TOOLS},
+        ]
+        payload = {
+            "model": api_client.model_name,
+            "messages": messages,
+            "stream": False,
+        }
+
+        # 打印口径（用户指令）：运行日志不出现具体模型名——系统提
+        # 示词正文含模型自我介绍，仅记字符数概要（原文见用例常量）
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        f"[工单原始系统提示词（{len(K21_SYSTEM_PROMPT)} "
+                        "字符，正文略——含模型自我介绍，不进运行日志）]"
+                    ),
+                },
+                {"role": "user", "content": K21_USER_PROMPT},
+                {
+                    "role": "system",
+                    "content": (
+                        "[无 content 字段——非标结构：tools 数组内嵌于"
+                        "消息（Calculator 单工具，工单原文）]"
+                    ),
+                },
+            ],
+            {
+                "stream": False,
+                "message[2]": (
+                    "role=system + tools 内嵌（无 content 字段——非"
+                    "标结构，工单原样重放）"
+                ),
+                "tools": ["Calculator"],
+                "重放口径": "工单原始请求体（模型名由环境注入——框架约定）",
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        # 模型真实响应（用户要求打印；置于断言前——失败时日志中同
+        # 样可见，便于诊断）
+        test_logger.info(
+            f"K21 真实响应 - HTTP {response.status_code}, "
+            f"elapsed={elapsed:.1f}s"
+        )
+        test_logger.info(
+            f"K21 真实响应 - 响应体({len(response.text)} 字符): "
+            f"{response.text!r}"
+        )
+
+        # 断言1（核心）：未被拒绝——非标结构应被宽容解析并接受
+        assert response.status_code == 200, (
+            f"客户问题复现失败：system 消息内嵌 tools 的非标请求结构"
+            f"应被宽容解析并正常响应，实际被拒绝（HTTP "
+            f"{response.status_code}；原始报错形态为 400 "
+            f"json_parse_error——messages[2] data did not match any "
+            f"variant of untagged enum MessageContent）: "
+            f"{response.text[:400]}"
+        )
+
+        # 断言2：可正常响应——合法 JSON 且 choices 存在
+        try:
+            result = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            pytest.fail(
+                f"响应不是合法 JSON: {e}. 响应体: {response.text[:400]}"
+            )
+        choices = result.get("choices") or []
+        assert choices, (
+            f"响应缺少 choices: {json.dumps(result, ensure_ascii=False)[:500]}"
+        )
+
+        # 断言3：有效输出——content 非空或 tool_calls 非空（宽容解析
+        # 后文本作答/工具调用响应均为成功形态；两者皆空即未正常响应）
+        message = (choices[0] or {}).get("message") or {}
+        content_out = (message.get("content") or "").strip()
+        tool_calls_out = message.get("tool_calls") or []
+        assert content_out or tool_calls_out, (
+            f"客户问题复现失败：请求已接受（HTTP 200）但响应无有效输"
+            f"出（content 与 tool_calls 均为空）: {response.text[:400]}"
+        )
+        output_kind = "content 非空" if content_out else "tool_calls 非空"
+
+        TestLogger.log_response(test_logger, result, "K21-响应")
+        usage = result.get("usage") or {}
+        test_logger.info(
+            f"K21 真实响应 - usage: {json.dumps(usage, ensure_ascii=False)}"
+        )
+        test_logger.info(
+            "客户问题复现通过: 非标请求结构（system 消息内嵌 tools、"
+            f"无 content 字段）被正常接受（HTTP 200）并返回有效输出"
+            f"（{output_kind}）——原始 400 json_parse_error 报错形态"
+            "未复现"
+        )

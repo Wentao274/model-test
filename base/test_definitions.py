@@ -939,6 +939,29 @@ TEST_CATEGORIES = {
                 "1m_context_request_supported",
                 "P0",
             ),
+            (
+                "K21",
+                "system 消息内嵌 tools 的非标请求结构应被接受",
+                "客户问题（kimi-k3 工单原始请求体）：messages[2] 为 "
+                "role=system 且无 content 字段、代之以内嵌 tools 数组"
+                "（Calculator 单工具），服务端反序列化报 400 "
+                "invalid_request_error/json_parse_error（\"messages[2]: "
+                "data did not match any variant of untagged enum "
+                "MessageContent\"）。该结构虽非 OpenAI 协议标准形态"
+                "（tools 应为顶层参数），但客户业务实际在用——契约："
+                "宽容解析该非标结构并正常响应（预期 200）。按工单原"
+                "始请求体原样重放（模型名由环境注入，其余字段不改"
+                "动），单次请求（确定性行为，无需连发），断言 HTTP "
+                "200（核心——原始报错形态复现即 FAIL）、choices 存"
+                "在、message 有效输出（content 或 tool_calls 非空——"
+                "文本作答/工具调用响应均为成功形态）；模型真实响应"
+                "（状态码/响应体全文）断言前打印；usage 仅日志；适用 "
+                "Kimi-K3；不发送采样参数（豁免——客户原始请求体无"
+                "采样字段）；打印口径：运行日志不含具体模型名（系统"
+                "提示词正文含模型自我介绍，仅记字符数概要）",
+                "system_message_embedded_tools_accepted",
+                "P0",
+            ),
         ],
     },
 }
