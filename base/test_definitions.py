@@ -956,8 +956,10 @@ TEST_CATEGORIES = {
                 "在、message 有效输出（content 或 tool_calls 非空——"
                 "文本作答/工具调用响应均为成功形态）；模型真实响应"
                 "（状态码/响应体全文）断言前打印；usage 仅日志；适用 "
-                "Kimi-K3；不发送采样参数（豁免——客户原始请求体无"
-                "采样字段）；打印口径：运行日志不含具体模型名（系统"
+                "Kimi-K3；采样参数不豁免（默认口径——未明确指定加入"
+                "豁免名单）：由全局 SAMPLING_PARAMS 覆盖——"
+                "temperature 无覆盖时回退 0.7、top_p/seed 显式指定时"
+                "注入；打印口径：运行日志不含具体模型名（系统"
                 "提示词正文含模型自我介绍，仅记字符数概要）",
                 "system_message_embedded_tools_accepted",
                 "P0",

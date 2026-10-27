@@ -62,31 +62,27 @@ def expand_env_vars(config: Any) -> Any:
 # 参数行为类测试用例豁免名单：
 # 这些用例显式指定 temperature/top_p/seed，且测试逻辑/断言与采样参数行为相关，
 # 全局采样参数覆盖对其不生效，始终按用例自身参数执行。
+# 默认规则（用户口径）：未明确指定加入豁免的用例一律不豁免——全局采样覆盖生效。
 RAW_SAMPLING_PARAM_TESTS = {
     "test_temperature_control",      # A6: temperature 控制（temp=0/1.0 对比断言）
     "test_top_p_top_k_sampling",     # A7: top_p/top_k 采样（参数化显式传参）
     "test_seed_reproducibility",    # A10: seed 可复现性（seed=42 一致性断言）
     "test_invalid_parameters",       # F3: 非法参数校验（temperature=-1/5.0）
     "test_generation_consistency",  # H2/I2: temperature=0 生成一致性断言
-    "test_pydantic_schema_tool_call_stream",  # K1: 客户问题复现（按客户原始 curl 参数执行）
-    "test_repeated_request_stability",  # K2: 客户问题复现（按客户原始 curl 参数执行）
-    "test_negative_frequency_penalty_treated_as_zero",  # K4: 客户问题复现（按客户原始 curl 参数执行）
-    "test_thinking_disabled_suppresses_reasoning",  # K5: 客户问题复现（按客户原始 curl 参数执行）
-    "test_thinking_temperature_tier",  # K6: 客户问题复现（temperature 与 thinking 档位联动契约，不可被全局覆盖）
-    "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约值，思考强度档位对比的前提，不可被全局覆盖）
-    "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊工具调用判定的前提，不可被全局覆盖）
-    "test_required_chitchat_official_behavior",  # K9: 客户问题复现（0.6/1 为思考档位联动合法温度，required+闲聊强制工具调用判定的前提，不可被全局覆盖）
-    "test_response_format_three_modes_support",  # K11: 客户问题复现（temperature=0 为原始脚本口径，response_format 模式语义判定的前提，不可被全局覆盖）
-    "test_reasoning_effort_levels_support",  # K12: 客户问题复现（temperature=0 为原始脚本口径，reasoning_effort 档位支持判定的前提，不可被全局覆盖）
-    "test_stop_sequence_prefix_leak",  # K13: 客户问题复现（客户原始请求体不发送采样参数，stop 截断判定的前提，不可被全局覆盖）
-    "test_orphan_tool_message_rejected",  # K14: 客户问题复现（客户原始请求体不发送采样参数，孤儿 tool 消息 400 拒绝判定的前提，不可被全局覆盖）
-    "test_short_input_prefix_cache_threshold",  # K15: 客户问题复现（客户原始请求体不发送采样参数，短输入缓存阈值判定的前提，不可被全局覆盖）
-    "test_prefix_cache_hit_rate_threshold",  # K16: 客户问题复现（客户原始请求体不发送采样参数，缓存命中率阈值判定的前提，不可被全局覆盖）
-    "test_stop_newline_in_reasoning",  # K17: 客户问题复现（场景请求体不发送采样参数，换行停止符作用于推理判定的前提，不可被全局覆盖）
+    # ---- K 套件（用户规则：仅测试逻辑确实依赖 temperature/top_p/seed 的用例可豁免）----
+    "test_thinking_disabled_suppresses_reasoning",  # K5: 客户问题复现（显式 temperature=0.6 为关思考档唯一合法温度——非该值 400，请求可执行性依赖温度）
+    "test_thinking_temperature_tier",  # K6: 客户问题复现（测试点即 temperature × thinking 档位联动契约——非法温度 400 断言）
+    "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约温度——非该值 400，思考长度对比的请求可执行前提）
+    "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度——非该值 400，工具调用判定的请求可执行前提）
+    "test_required_chitchat_official_behavior",  # K9: 客户问题复现（同 K8——官方行为对照级别）
+    # K1/K2/K4/K11-K17/K19 已移除（用户规则：测试逻辑与 temperature/top_p/seed 无关即不豁免）：
+    # K1=Pydantic Schema 工具调用、K2=重复请求稳定性、K4=frequency_penalty<0 钳制（fp 不在
+    # temperature/top_p/seed 之列）、K11=response_format 三模式、K12=reasoning_effort 档位、
+    # K13=stop 截断、K14=孤儿 tool 消息 400、K15/K16=前缀缓存阈值与命中率、K17=换行停止符
+    # 作用于推理、K19=图片数超限拒绝
     # K18（test_output_json_as_input_context）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
-    "test_over_image_limit_rejected",  # K19: 客户问题复现（场景请求体不发送采样参数，图片数超限拒绝判定的前提，不可被全局覆盖）
     # K20（test_1m_context_request_supported）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
-    "test_system_message_embedded_tools_accepted",  # K21: 客户问题复现（客户原始请求体不发送采样参数，非标结构宽容接受判定的前提，不可被全局覆盖）
+    # K21（test_system_message_embedded_tools_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
 }
 
 

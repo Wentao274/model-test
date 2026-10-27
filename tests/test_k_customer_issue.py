@@ -332,9 +332,12 @@ K. 客户问题复现测试
   存在；message 有效输出——content 非空或 tool_calls 非空（宽容
   解析后文本作答/工具调用响应均为成功形态）。模型真实响应（状
   态码/响应体全文）断言前打印（失败时同样可见）；usage 仅日志；
-  不发送采样参数（豁免——客户原始请求体无采样字段）。打印口径
-  （用户指令）：运行日志不出现具体模型名——系统提示词正文含模型
-  自我介绍，日志仅记字符数概要，原文见本 docstring 与用例常量。
+  采样参数不豁免（默认口径——未明确指定加入豁免名单）：由全局
+  SAMPLING_PARAMS（Jenkinsfile）覆盖——temperature 无覆盖时回
+  退 0.7、top_p/seed 显式指定时注入（K10/K18/K20 口径）。打印
+  口径（用户指令）：运行日志不出现具体模型名——系统提示词正文含
+  模型自我介绍，日志仅记字符数概要，原文见本 docstring 与用例
+  常量。
   （不进 smoke 集：新用例首跑观察期）
 """
 
@@ -4698,10 +4701,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
            后无论按"忽略内嵌 tools 文本作答"或"按工具调用响应"均为
            有效成功形态；两者皆空即未正常响应）
         模型真实响应（状态码/响应体全文）断言前打印（失败时同样可
-        见）；usage 仅日志。不发送采样参数（豁免——客户原始请求体
-        无采样字段）。打印口径（用户指令）：运行日志不出现具体模型
-        名——系统提示词正文含模型自我介绍，日志仅记字符数概要，原
-        文见本 docstring 与用例常量。
+        见）；usage 仅日志。采样参数不豁免（默认口径——未明确指定
+        加入豁免名单）：由全局 SAMPLING_PARAMS（Jenkinsfile，经
+        conftest 注入 client）覆盖——temperature 无覆盖时回退 0.7、
+        top_p/seed 显式指定时注入（K10/K18/K20 口径）。打印口径
+        （用户指令）：运行日志不出现具体模型名——系统提示词正文含
+        模型自我介绍，日志仅记字符数概要，原文见本 docstring 与用
+        例常量。
         （不进 smoke 集：新用例首跑观察期）
         """
         # K21: 工单原始 system 提示词（正文含模型自我介绍——按用户
@@ -4775,10 +4781,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             {"role": "user", "content": K21_USER_PROMPT},
             {"role": "system", "tools": K21_EMBEDDED_TOOLS},
         ]
+        # 采样参数不豁免（默认口径——未明确指定加入豁免名单）：
+        # 由全局 SAMPLING_PARAMS（Jenkinsfile，经 conftest 注入
+        # client）覆盖：temperature 全局值优先（无覆盖时回退
+        # 0.7），top_p/seed 显式指定时注入（K10/K18/K20 口径）
+        sampling_extra: Dict[str, Any] = {}
+        if api_client.top_p is not None:
+            sampling_extra["top_p"] = api_client.top_p
+        if api_client.seed is not None:
+            try:
+                sampling_extra["seed"] = int(api_client.seed)
+            except (TypeError, ValueError):
+                sampling_extra["seed"] = api_client.seed
         payload = {
             "model": api_client.model_name,
             "messages": messages,
+            "temperature": api_client._effective_temperature(0.7),
             "stream": False,
+            **sampling_extra,
         }
 
         # 打印口径（用户指令）：运行日志不出现具体模型名——系统提
@@ -4810,6 +4830,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 ),
                 "tools": ["Calculator"],
                 "重放口径": "工单原始请求体（模型名由环境注入——框架约定）",
+                "temperature": api_client._effective_temperature(0.7),
+                "top_p": sampling_extra.get("top_p", "(未注入)"),
+                "seed": sampling_extra.get("seed", "(未注入)"),
             },
         )
 
