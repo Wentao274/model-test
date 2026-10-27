@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（11 大类 × 129 个测试点）
+## 二、测试点总览（11 大类 × 130 个测试点）
 
 ### 分类概览
 
@@ -37,7 +37,7 @@
 | H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 19   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝），P0 为主持续追加 |
+| K. 客户问题复现 | 20   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持），P0 为主持续追加 |
 
 ---
 
@@ -238,7 +238,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | J10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | J11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（J8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 客户问题复现（19 项）
+### K. 客户问题复现（20 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
@@ -265,6 +265,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K17 | stop 停止符（换行符）在推理阶段生效 | 客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用于推理（reasoning）输出——推理里出现的第一个换行即触发停止，正文（content）不会生成；反之若换行未触发停止、继续输出正文，则换行符未生效；适用 GLM-5.3 | 按场景构造流式请求（stream=true、stop=["\n"]、thinking={type:enabled} 显式开启思考（K1 口径）、max_tokens=512 防御性预算、不发送采样参数），断言 SSE 有事件、合并正文为空（核心——收到正文即换行符未生效）、finish_reason==stop、合并 reasoning 不含换行（停止符不泄漏）；模型真实响应（合并正文/思考全文）断言前打印、失败时同样可见；usage 仅日志 | P0  |
 | K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为解析失败后同列表有真实调用时移除空占位项再校验、缺 "{" 的 arguments 原样保留（不补）、兼容重复 reasoning_content/reasoning_context；适用 GLM-5.3 | 按工单还原该 assistant 消息回填为多轮上下文（user→assistant(空占位+bash 调用+reasoning 双字段)→user 追问，带 bash 工具定义，非流式，采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖），断言 HTTP 200（核心——报错复现即 FAIL）、choices 存在、message 结构存在；不断言 arguments 被补 "{" 与占位被移除；usage 仅日志 | P0  |
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200——200 放行即限额未生效 FAIL）且错误信息含 "at most 16 image"（大小写不敏感——信息不恰当即 FAIL）；恰好 16 张正向对照未纳入；模型真实响应（状态码/响应体全文）断言前打印、失败时同样可见；usage 仅日志 | P0  |
+| K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 程序生成约 918K tokens（估算）英文背景文本（重复单元+尾部指令，chars/4 估算启发式对齐原始场景规模），单条 user 消息非流式提交（不发送采样参数——豁免；max_tokens=32 防御性预算；1M prefill 临时上调客户端超时至 900s，finally 恢复），断言 HTTP 200（被拒即 FAIL）且 choices/content 非空（空响应即 FAIL）；请求提示词由程序生成；模型真实响应（状态码/响应体全文）断言前打印、失败时同样可见；usage 仅日志（prompt_tokens 可校准估算） | P0  |
 
 ---
 
@@ -312,7 +313,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 
 ## 五、测试执行优先级建议
 
-### P0（上线必测，53 项）
+### P0（上线必测，54 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -326,10 +327,10 @@ G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
 H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
                      Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
                      clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
-K1-K7, K10-K19  客户问题复现 17 项（均 P0，客户报障必测）
+K1-K7, K10-K20  客户问题复现 18 项（均 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 17 = 53 项。
+总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 18 = 54 项。
 
 ### P1（选测，60 项）
 

@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K19
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K20
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -277,10 +277,31 @@ K. 客户问题复现测试
   归中重度视觉计算）。模型真实响应（状态码/响应体全文）断言前
   打印到日志（失败时同样可见）；usage 仅日志。（不进 smoke 集：
   新用例首跑观察期）
+- K20: 1M 上下文请求应被正常支持 [P0]
+  客户问题：请求报错 "Input length (918451 tokens) exceeds the
+  maximum allowed length (781754 tokens). Use a shorter input or
+  enable --allow-auto-truncate."（type: invalid_request_error、
+  code: invalid_request、metadata.provider_code:
+  bad_response_status_code——网关透传 serving 侧上下文长度校验拒
+  绝）。根因：serving 侧未按 1M 上下文契约配置（当时最大允许
+  781754）。契约：模型需支持 1M 上下文请求——1M 量级输入应正常
+  响应。本用例程序生成约 918K tokens（估算）英文背景文本（重复
+  单元 + 尾部简短指令，chars/4 估算启发式对齐原始场景规模
+  918451），单条 user 消息非流式提交（max_tokens=32 防御性预
+  算），硬断言：HTTP 200（未被拒绝）；choices 非空且 content
+  非空（可正常响应）——1M 量级输入正常响应则 PASS，被拒（原始
+  报错形态）或空响应均 FAIL。1M token prefill 耗时长，临时将客
+  户端超时上调至 900s（finally 恢复；ReadTimeout 不重试——框架
+  约定）。请求提示词由程序生成（无外部文件）。不发送采样参数
+  （RAW_SAMPLING_PARAM_TESTS 豁免）。模型真实响应（状态码/响应
+  体全文）断言前打印（失败时同样可见）；usage 仅日志（其中
+  prompt_tokens 可校准估算）。（不进 smoke 集：新用例首跑观察
+  期）
 """
 
 import base64
 import json
+import math
 import struct
 import time
 import uuid
@@ -4266,4 +4287,159 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             "客户问题复现通过: 单次请求 17 张图被正确拒绝（HTTP "
             f"{response.status_code}）且返回恰当的超限错误信息"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_1m_context_request_supported(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K20 [P0]: 客户问题 - 1M 上下文请求应被正常支持
+
+        客户问题：请求报错 "Input length (918451 tokens) exceeds
+        the maximum allowed length (781754 tokens). Use a shorter
+        input or enable --allow-auto-truncate."（type:
+        invalid_request_error、code: invalid_request、
+        metadata.provider_code: bad_response_status_code——网关透传
+        serving 侧上下文长度校验拒绝）。根因：serving 侧未按 1M
+        上下文契约配置（当时最大允许 781754）。
+        契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应。
+        本用例：
+        - 程序生成约 918K tokens（估算）英文背景文本（重复单元
+          + 尾部简短指令；chars/4 估算启发式对齐原始场景规模
+          918451，客户端无法精确计数，误差由 usage.prompt_tokens
+          校准）
+        - 单条 user 消息非流式提交（max_tokens=32 防御性预算）
+        硬断言：
+        1. HTTP 200（未被拒绝——1M 量级输入应被接受）
+        2. choices 非空且 content 非空（可正常响应）
+        PASS：1M 量级输入正常响应；FAIL：被拒（原始报错形态）或
+        空响应。
+        超时处理：1M token prefill 耗时长，临时将客户端超时上调
+        至 900s（finally 恢复；ReadTimeout 不重试——框架约定）。
+        请求提示词由程序生成（无外部文件）。不发送采样参数
+        （RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。模型真实响应
+        （状态码/响应体全文）断言前打印（失败时同样可见，便于诊
+        断）。usage/响应体仅日志（其中 prompt_tokens 可校准估算）。
+        （不进 smoke 集：新用例首跑观察期）
+        """
+        # K20: 场景常量——目标约 918K tokens（对齐原始场景 918451）
+        K20_TARGET_TOKENS_EST = 918_000
+        K20_CHARS_PER_TOKEN = 4.0  # 英文估算启发式（重复单元比率稳定）
+        K20_MAX_TOKENS = 32  # 防御性预算（只需证明输入被接受）
+        K20_TIMEOUT_SECONDS = 900  # 1M prefill 需长超时
+        K20_UNIT = (
+            "Long context verification material. The platform must "
+            "accept very large document inputs and process them "
+            "without truncation or rejection. "
+        )
+        K20_INSTRUCTION = (
+            "\n\n以上为背景材料。请直接回复一句话，确认已完整收到"
+            "全部材料。"
+        )
+
+        # 程序生成约 918K tokens（估算）的背景文本
+        target_chars = K20_TARGET_TOKENS_EST * K20_CHARS_PER_TOKEN
+        repeats = math.ceil(target_chars / len(K20_UNIT))
+        content = K20_UNIT * repeats + K20_INSTRUCTION
+        est_tokens = round(len(content) / K20_CHARS_PER_TOKEN)
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 1M 上下文请求应被正常支持"
+            f"（程序生成约 {est_tokens} tokens（估算）背景文本，"
+            f"chars/4 启发式；期望 HTTP 200 + 非空正文）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 手工构造 payload 直发（超长单消息形态）；不发送采样参数
+        # （豁免全局覆盖）
+        payload = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": K20_MAX_TOKENS,
+            "stream": False,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        f"[程序生成背景材料 {len(content)} 字符"
+                        f"（约 {est_tokens} tokens 估算）+ 尾部指令]"
+                    ),
+                }
+            ],
+            {
+                "est_tokens": est_tokens,
+                "chars": len(content),
+                "unit_repeats": repeats,
+                "max_tokens": K20_MAX_TOKENS,
+                "stream": False,
+                "temperature": "(不发送)",
+            },
+        )
+
+        # 1M prefill 耗时长：临时上调客户端超时（finally 恢复，
+        # 不影响其他用例；ReadTimeout 不在重试名单——框架约定）
+        original_timeout = api_client.timeout
+        api_client.timeout = K20_TIMEOUT_SECONDS
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        finally:
+            api_client.timeout = original_timeout
+        elapsed = time.time() - started
+
+        # 模型真实响应信息（用户要求打印；置于断言前——失败时日志
+        # 中同样可见，便于诊断）
+        test_logger.info(
+            f"K20 真实响应 - HTTP {response.status_code}, "
+            f"elapsed={elapsed:.1f}s"
+        )
+        test_logger.info(
+            f"K20 真实响应 - 响应体({len(response.text)} 字符): "
+            f"{response.text!r}"
+        )
+
+        # 断言1（核心之一）：未被拒绝——1M 量级输入应被接受
+        assert response.status_code == 200, (
+            f"客户问题复现失败：约 {est_tokens} tokens（估算）的 "
+            f"1M 量级输入应被支持，实际被拒绝（HTTP "
+            f"{response.status_code}）: {response.text[:400]}"
+        )
+
+        # 断言2（核心之二）：可正常响应——choices/content 非空
+        try:
+            body = response.json()
+        except ValueError as e:
+            pytest.fail(
+                f"响应体非 JSON（{e}）: {response.text[:400]}"
+            )
+        choices = body.get("choices") or []
+        assert choices, f"choices 为空: {response.text[:400]}"
+        message = (choices[0] or {}).get("message") or {}
+        content_out = (message.get("content") or "").strip()
+        assert content_out, (
+            "客户问题复现失败：1M 量级输入已接受（HTTP 200）但响应"
+            f"正文为空: {response.text[:400]}"
+        )
+
+        # usage 仅日志（prompt_tokens 为实际 token 数，可校准
+        # chars/4 估算启发式）
+        usage = body.get("usage") or {}
+        test_logger.info(
+            f"K20 真实响应 - usage（prompt_tokens 可校准估算）: "
+            f"{json.dumps(usage, ensure_ascii=False)}"
+        )
+        test_logger.info(
+            "客户问题复现通过: 1M 量级输入（估算 "
+            f"{est_tokens} tokens）被正常接受并返回非空响应"
         )

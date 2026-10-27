@@ -892,6 +892,27 @@ TEST_CATEGORIES = {
                 "over_image_limit_rejected",
                 "P0",
             ),
+            (
+                "K20",
+                "1M 上下文请求应被正常支持",
+                "客户问题：请求报错 \"Input length (918451 tokens) "
+                "exceeds the maximum allowed length (781754 tokens). "
+                "Use a shorter input or enable --allow-auto-truncate."
+                "\"（invalid_request_error——网关透传 serving 侧上下"
+                "文长度校验拒绝；当时最大允许 781754，未按 1M 上下文"
+                "契约配置）。契约：模型需支持 1M 上下文请求——1M 量"
+                "级输入应正常响应。程序生成约 918K tokens（估算）英"
+                "文背景文本（重复单元+尾部指令，chars/4 估算启发式"
+                "对齐原始场景规模），单条 user 消息非流式提交，断言 "
+                "HTTP 200 且 choices/content 非空——正常响应则 "
+                "PASS，被拒（原始报错形态）或空响应均 FAIL。请求提"
+                "示词由程序生成；1M prefill 临时上调客户端超时至 "
+                "900s（finally 恢复）。模型真实响应（状态码/响应体"
+                "全文）断言前打印（失败时同样可见）。适用 GLM-5.3；"
+                "不发送采样参数（豁免）",
+                "1m_context_request_supported",
+                "P0",
+            ),
         ],
     },
 }
