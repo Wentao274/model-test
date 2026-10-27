@@ -85,7 +85,7 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_stop_newline_in_reasoning",  # K17: 客户问题复现（场景请求体不发送采样参数，换行停止符作用于推理判定的前提，不可被全局覆盖）
     # K18（test_output_json_as_input_context）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     "test_over_image_limit_rejected",  # K19: 客户问题复现（场景请求体不发送采样参数，图片数超限拒绝判定的前提，不可被全局覆盖）
-    "test_1m_context_request_supported",  # K20: 客户问题复现（场景请求体不发送采样参数，1M 上下文支持判定的前提，不可被全局覆盖）
+    # K20（test_1m_context_request_supported）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
 }
 
 

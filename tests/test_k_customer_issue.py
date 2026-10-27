@@ -290,22 +290,26 @@ K. 客户问题复现测试
   usage.prompt_tokens 精确计量每单元 token 数——客户端无分词
   器，chars/token 启发式误差大：真实环境实测该单元 6.28 字符/
   token，chars/4 高估 57%）后按目标生成主请求：输入 960,000
-  tokens（自校准计量）+ 输出 max_tokens=1024 且 reasoning_effort=
-  low（GLM-5.3 不支持禁用思考、仅支持档位——用户口径；low 最小
-  化思考，预算覆盖思考+正文——真实环境实测默认档思考耗尽 32 预
-  算致 content 为空）
-  → 总消耗 ≈961K，两种 1M 口径（1,000,000/1,048,576）下均略
-  小于 1M，且高于原始故障上限 781,754 约 178K（缺陷可复现），
-  单条 user 消息非流式提交，硬断言：探针 200 且返回 usage；主请
-  求 HTTP 200（未被拒绝）；choices 非空且 content 非空（可正常
-  响应）；主响应 usage.prompt_tokens（如有）> 781,754（规模
-  sanity——确保真正压过原始故障点）——1M 量级输入正常响应则
-  PASS，被拒（原始报错形态）或空响应均 FAIL。1M token prefill
-  耗时长，临时将客户端超时上调至 900s（finally 恢复；ReadTimeout
-  不重试——框架约定）。请求提示词由程序生成（无外部文件）。不
-  发送采样参数（RAW_SAMPLING_PARAM_TESTS 豁免）。模型真实响应
-  （状态码/响应体全文）断言前打印（失败时同样可见）；usage 仅
-  日志。（不进 smoke 集：新用例首跑观察期）
+  tokens（自校准计量）+ 输出预算 max_tokens 覆盖思考+正文，两轮
+  思考档位（用户口径：GLM-5.3 不支持禁用思考、仅支持
+  reasoning_effort 档位；用户指定补 max 场景）——①low 轮（预算
+  1024）常规；②max 轮（预算 4096）最大思考负载，输出侧同步压
+  窗口（真实环境实测默认档思考耗尽 32 预算致 content 为空——预
+  算必须覆盖思考+正文的教训）
+  → 总消耗 ≈961K/964K，两种 1M 口径（1,000,000/1,048,576）下
+  均略小于 1M，且高于原始故障上限 781,754 约 178K（缺陷可复现），
+  单条 user 消息非流式提交，硬断言：探针 200 且返回 usage；每轮
+  主请求 HTTP 200（未被拒绝）；choices 非空且 content 非空（可
+  正常响应）；每轮主响应 usage.prompt_tokens（如有）> 781,754
+  （规模 sanity——确保真正压过原始故障点）——两轮均 1M 量级输
+  入正常响应则 PASS，任一轮被拒（原始报错形态）或空响应均
+  FAIL。1M token prefill 耗时长，临时将客户端超时上调至 900s
+  （finally 恢复；ReadTimeout 不重试——框架约定）。请求提示词由
+  程序生成（无外部文件）。采样参数不豁免（用户指定）：由全局
+  SAMPLING_PARAMS（Jenkinsfile）覆盖——temperature 无覆盖时回
+  退 0.7、top_p/seed 显式指定时注入（K10/K18 口径）。模型真实
+  响应（状态码/响应体全文）断言前每轮打印（失败时同样可见）；
+  usage 仅日志。（不进 smoke 集：新用例首跑观察期）
 """
 
 import base64
@@ -4322,38 +4326,45 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
           实测该单元 6.28 字符/token，chars/4 高估 57%，1M 契约
           判定的前提是主请求规模可靠）
         - 按目标生成主请求：输入目标 960,000 tokens（自校准计量）
-          + 输出预算 max_tokens=1024 且 reasoning_effort=low
-          （GLM-5.3 不支持禁用思考、仅支持档位——用户口径；low
-          最小化思考，预算覆盖思考+正文。真实环境实测默认档思考
-          耗尽 32 预算致 content 为空——预算过小的教训）→ 总消耗
-          ≈961K，两种 1M 口径
-          （1,000,000 / 1,048,576）下均略小于 1M（余量 39K/87K
-          tokens；prompt_tokens 已含聊天模板等框架开销），且高
-          于原始故障上限 781,754 约 178K（缺陷可复现）
+          + 输出预算 max_tokens 覆盖思考+正文 → 总消耗 ≈961K/964K，
+          两种 1M 口径（1,000,000 / 1,048,576）下均略小于 1M
+          （余量 36K/84K tokens；prompt_tokens 已含聊天模板等框
+          架开销），且高于原始故障上限 781,754 约 178K（缺陷可复
+          现）
+        - 两轮思考档位（用户口径：GLM-5.3 不支持禁用思考、仅支持
+          reasoning_effort 档位；用户指定补 max 场景）：①low 轮
+          （预算 1024）——常规；②max 轮（预算 4096）——最大思考
+          负载，输出侧同步压窗口（真实环境实测默认档思考耗尽 32
+          预算致 content 为空——预算必须覆盖思考+正文的教训；
+          max 档思考显著更长，预算放大至 4096）
+        - 采样参数不豁免（用户指定）：由全局 SAMPLING_PARAMS
+          （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
+          top_p/seed 显式指定时注入（K10/K18 口径）
         - 单条 user 消息非流式提交（程序生成，无外部文件）
         硬断言：
         1. 探针 200 且返回 usage.prompt_tokens（计量前提）
-        2. 主请求 HTTP 200（未被拒绝——1M 量级输入应被接受）
-        3. choices 非空且 content 非空（可正常响应）
-        4. 主响应 usage.prompt_tokens（如有）> 781,754——规模
-           sanity（确保真正压过原始故障点，防计量偏差）
-        PASS：1M 量级输入正常响应；FAIL：被拒（原始报错形态）或
-        空响应。
+        2. 每轮主请求 HTTP 200（未被拒绝——1M 量级输入应被接受）
+        3. 每轮 choices 非空且 content 非空（可正常响应）
+        4. 每轮主响应 usage.prompt_tokens（如有）> 781,754——
+           规模 sanity（确保真正压过原始故障点，防计量偏差）
+        PASS：两轮均 1M 量级输入正常响应；FAIL：任一轮被拒（原
+        始报错形态）或空响应。
         超时处理：1M token prefill 耗时长，临时将客户端超时上调
         至 900s（finally 恢复；ReadTimeout 不重试——框架约定）。
-        请求提示词由程序生成（无外部文件）。不发送采样参数
-        （RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。模型真实响应
-        （状态码/响应体全文）断言前打印（失败时同样可见，便于诊
-        断）。usage/响应体仅日志。
+        请求提示词由程序生成（无外部文件）。模型真实响应（状态码/
+        响应体全文）断言前每轮打印（失败时同样可见，便于诊断）。
+        usage/响应体仅日志。
         （不进 smoke 集：新用例首跑观察期）
         """
         # K20: 场景常量——1M = 输入+输出（用户口径），总量略小于 1M
         # （1,000,000 / 1,048,576 两种 1M 口径均满足；余量留给推理
         # 框架额外补充的长度——prompt_tokens 已含聊天模板等开销，
-        # 输出预算 1024 计入总量）
+        # 输出预算计入总量）
         K20_TARGET_PROMPT_TOKENS = 960_000
-        K20_MAX_TOKENS = 1024  # 输出预算（思考+正文，计入总量）
-        K20_REASONING_EFFORT = "low"  # 思考强度档位（GLM-5.3 不支持禁用思考——用户口径）
+        # 两轮思考档位（GLM-5.3 不支持禁用思考、仅支持档位——用户
+        # 口径）：low 轮常规预算；max 轮最大思考负载（输出侧同步压
+        # 窗口），预算放大覆盖更长思考
+        K20_EFFORT_ROUNDS = [("low", 1024), ("max", 4096)]
         K20_PROBE_UNITS = 2000  # 探针规模（约 276K 字符，精确自校准）
         K20_OLD_INPUT_LIMIT = 781_754  # 原始故障上限（规模 sanity 用）
         K20_TIMEOUT_SECONDS = 900  # 1M prefill 需长超时
@@ -4372,22 +4383,65 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             "=== 测试开始: 客户问题 - 1M 上下文请求应被正常支持"
             f"（探针自校准精确计量；目标输入 {K20_TARGET_PROMPT_TOKENS} "
-            f"tokens + 输出 {K20_MAX_TOKENS}——输入+输出 略小于 1M；"
-            f"期望 HTTP 200 + 非空正文）==="
+            f"tokens + 输出预算 low 轮 1024 / max 轮 4096——输入+输出 "
+            f"略小于 1M；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；"
+            f"期望每轮 HTTP 200 + 非空正文）==="
         )
+
+        # 采样参数不豁免（用户指定）：由全局 SAMPLING_PARAMS
+        # （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
+        # top_p/seed 显式指定时注入（K10/K18 口径）
+        sampling_extra: Dict[str, Any] = {}
+        if api_client.top_p is not None:
+            sampling_extra["top_p"] = api_client.top_p
+        if api_client.seed is not None:
+            try:
+                sampling_extra["seed"] = int(api_client.seed)
+            except (TypeError, ValueError):
+                sampling_extra["seed"] = api_client.seed
+
+        def build_payload(
+            text: str, effort: str, max_tokens: int
+        ) -> Dict[str, Any]:
+            """构造带全局采样参数的 K20 请求体（探针/两轮共用）"""
+            return {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": text}],
+                "max_tokens": max_tokens,
+                "reasoning_effort": effort,
+                "temperature": api_client._effective_temperature(0.7),
+                "stream": False,
+                **sampling_extra,
+            }
 
         # ---- 阶段1：探针自校准（精确测量每单元 token 数）----
         # 客户端无分词器，chars/token 启发式误差可达 ±30%——先发小
         # 规模探针，从 usage.prompt_tokens 精确得出每单元 token 数
         # （1M 契约判定的前提，主请求规模必须可靠）
         probe_content = K20_UNIT * K20_PROBE_UNITS
-        probe_payload = {
-            "model": api_client.model_name,
-            "messages": [{"role": "user", "content": probe_content}],
-            "max_tokens": 1,
-            "reasoning_effort": K20_REASONING_EFFORT,
-            "stream": False,
-        }
+        probe_payload = build_payload(
+            probe_content, K20_EFFORT_ROUNDS[0][0], 1
+        )
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        f"[探针自校准材料 {K20_PROBE_UNITS} 单元"
+                        f"（{len(probe_content)} 字符）]"
+                    ),
+                }
+            ],
+            {
+                "max_tokens": 1,
+                "reasoning_effort": K20_EFFORT_ROUNDS[0][0],
+                "temperature": api_client._effective_temperature(0.7),
+                "top_p": sampling_extra.get("top_p", "(未注入)"),
+                "seed": sampling_extra.get("seed", "(未注入)"),
+                "stream": False,
+            },
+        )
         try:
             probe_resp = api_client._post_with_retry(
                 url, probe_payload, stream=False
@@ -4423,117 +4477,131 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         content = K20_UNIT * main_units + K20_INSTRUCTION
         predicted_tokens = round(main_units * tokens_per_unit)
 
-        # 手工构造 payload 直发（超长单消息形态）；不发送采样参数
-        # （豁免全局覆盖）；GLM-5.3 不支持禁用思考、仅支持
-        # reasoning_effort 档位（用户口径）——取 low 最小化思考，
-        # 输出预算 1024 覆盖思考+正文（真实环境实测默认档思考对该
-        # 指令约 40 tokens 即将收尾，low 档更短，1024 为充分余量）
-        payload = {
-            "model": api_client.model_name,
-            "messages": [{"role": "user", "content": content}],
-            "max_tokens": K20_MAX_TOKENS,
-            "reasoning_effort": K20_REASONING_EFFORT,
-            "stream": False,
-        }
+        # 两轮（用户指定补 max 场景）：同一工单同一契约——1M 量级输
+        # 入在不同思考负载下均应正常响应；探针校准共享，逐轮发送、
+        # 逐轮断言（任一轮失败即用例 FAIL）
+        for round_index, (effort, budget) in enumerate(
+            K20_EFFORT_ROUNDS, start=1
+        ):
+            payload = build_payload(content, effort, budget)
 
-        TestLogger.log_request(
-            test_logger,
-            [
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {
+                        "role": "user",
+                        "content": (
+                            f"[程序生成背景材料 {len(content)} 字符"
+                            f"（自校准预计 {predicted_tokens} tokens）"
+                            f"+ 尾部指令]"
+                        ),
+                    }
+                ],
                 {
-                    "role": "user",
-                    "content": (
-                        f"[程序生成背景材料 {len(content)} 字符"
-                        f"（自校准预计 {predicted_tokens} tokens）"
-                        f"+ 尾部指令]"
+                    "round": (
+                        f"{round_index}/{len(K20_EFFORT_ROUNDS)}"
+                        f"（reasoning_effort={effort}）"
                     ),
-                }
-            ],
-            {
-                "predicted_prompt_tokens": predicted_tokens,
-                "chars": len(content),
-                "unit_repeats": main_units,
-                "max_tokens": K20_MAX_TOKENS,
-                "reasoning_effort": (
-                    f"{K20_REASONING_EFFORT}"
-                    "（GLM-5.3 不支持禁用思考——用户口径）"
-                ),
-                "stream": False,
-                "temperature": "(不发送)",
-            },
-        )
-
-        # 1M prefill 耗时长：临时上调客户端超时（finally 恢复，
-        # 不影响其他用例；ReadTimeout 不在重试名单——框架约定）
-        original_timeout = api_client.timeout
-        api_client.timeout = K20_TIMEOUT_SECONDS
-        started = time.time()
-        try:
-            response = api_client._post_with_retry(
-                url, payload, stream=False
+                    "predicted_prompt_tokens": predicted_tokens,
+                    "chars": len(content),
+                    "unit_repeats": main_units,
+                    "max_tokens": budget,
+                    "reasoning_effort": (
+                        f"{effort}"
+                        "（GLM-5.3 不支持禁用思考——用户口径）"
+                    ),
+                    "stream": False,
+                    "temperature": api_client._effective_temperature(0.7),
+                    "top_p": sampling_extra.get("top_p", "(未注入)"),
+                    "seed": sampling_extra.get("seed", "(未注入)"),
+                },
             )
-        except Exception as e:
-            pytest.fail(f"请求发送异常（{url}）: {e}")
-        finally:
-            api_client.timeout = original_timeout
-        elapsed = time.time() - started
 
-        # 模型真实响应信息（用户要求打印；置于断言前——失败时日志
-        # 中同样可见，便于诊断）
-        test_logger.info(
-            f"K20 真实响应 - HTTP {response.status_code}, "
-            f"elapsed={elapsed:.1f}s"
-        )
-        test_logger.info(
-            f"K20 真实响应 - 响应体({len(response.text)} 字符): "
-            f"{response.text!r}"
-        )
+            # 1M prefill 耗时长：临时上调客户端超时（finally 恢复，
+            # 不影响其他用例；ReadTimeout 不在重试名单——框架约定）
+            original_timeout = api_client.timeout
+            api_client.timeout = K20_TIMEOUT_SECONDS
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"第 {round_index} 轮（reasoning_effort={effort}）"
+                    f"请求发送异常（{url}）: {e}"
+                )
+            finally:
+                api_client.timeout = original_timeout
+            elapsed = time.time() - started
 
-        # 断言1（核心之一）：未被拒绝——1M 量级输入应被接受
-        assert response.status_code == 200, (
-            f"客户问题复现失败：约 {predicted_tokens} tokens（自校准）"
-            f"的 1M 量级输入应被支持，实际被拒绝（HTTP "
-            f"{response.status_code}）: {response.text[:400]}"
-        )
-
-        # 断言2（核心之二）：可正常响应——choices/content 非空
-        try:
-            body = response.json()
-        except ValueError as e:
-            pytest.fail(
-                f"响应体非 JSON（{e}）: {response.text[:400]}"
-            )
-        choices = body.get("choices") or []
-        assert choices, f"choices 为空: {response.text[:400]}"
-        message = (choices[0] or {}).get("message") or {}
-        content_out = (message.get("content") or "").strip()
-        assert content_out, (
-            "客户问题复现失败：1M 量级输入已接受（HTTP 200）但响应"
-            f"正文为空: {response.text[:400]}"
-        )
-
-        # usage 仅日志；prompt_tokens 附加规模 sanity 断言——必须高
-        # 于原始故障上限 781754（确保用例真正压过故障点，防计量偏差）
-        usage = body.get("usage") or {}
-        actual_prompt_tokens = usage.get("prompt_tokens")
-        if actual_prompt_tokens is None:
+            # 模型真实响应信息（用户要求打印；置于断言前——失败时
+            # 日志中同样可见，便于诊断）
             test_logger.info(
-                "K20 真实响应 - usage 缺 prompt_tokens（跳过规模 "
-                "sanity 断言）"
+                f"K20 第{round_index}轮（reasoning_effort={effort}）"
+                f"真实响应 - HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s"
             )
-        else:
-            assert actual_prompt_tokens > K20_OLD_INPUT_LIMIT, (
-                f"规模 sanity 断言失败：实际 prompt_tokens="
-                f"{actual_prompt_tokens} 未超过原始故障上限 "
-                f"{K20_OLD_INPUT_LIMIT}——用例未真正压过故障点（探针"
-                f"自校准 {tokens_per_unit:.3f} tokens/单元，预计 "
-                f"{predicted_tokens}）"
+            test_logger.info(
+                f"K20 第{round_index}轮（reasoning_effort={effort}）"
+                f"真实响应 - 响应体({len(response.text)} 字符): "
+                f"{response.text!r}"
             )
-        test_logger.info(
-            f"K20 真实响应 - usage: {json.dumps(usage, ensure_ascii=False)}"
-        )
-        test_logger.info(
-            "客户问题复现通过: 1M 量级输入（自校准预计 "
-            f"{predicted_tokens} tokens，实际 {actual_prompt_tokens}）"
-            "被正常接受并返回非空响应（输入+输出 "
-            f"{actual_prompt_tokens}+{K20_MAX_TOKENS} tokens，略小于 1M）"
-        )
+
+            # 断言1（核心之一）：未被拒绝——1M 量级输入应被接受
+            assert response.status_code == 200, (
+                f"客户问题复现失败（第 {round_index} 轮 "
+                f"reasoning_effort={effort}）：约 {predicted_tokens} "
+                f"tokens（自校准）的 1M 量级输入应被支持，实际被拒绝"
+                f"（HTTP {response.status_code}）: {response.text[:400]}"
+            )
+
+            # 断言2（核心之二）：可正常响应——choices/content 非空
+            try:
+                body = response.json()
+            except ValueError as e:
+                pytest.fail(
+                    f"第 {round_index} 轮响应体非 JSON（{e}）: "
+                    f"{response.text[:400]}"
+                )
+            choices = body.get("choices") or []
+            assert choices, (
+                f"第 {round_index} 轮 choices 为空: {response.text[:400]}"
+            )
+            message = (choices[0] or {}).get("message") or {}
+            content_out = (message.get("content") or "").strip()
+            assert content_out, (
+                f"客户问题复现失败（第 {round_index} 轮 "
+                f"reasoning_effort={effort}）：1M 量级输入已接受"
+                f"（HTTP 200）但响应正文为空: {response.text[:400]}"
+            )
+
+            # usage 仅日志；prompt_tokens 附加规模 sanity 断言——必须
+            # 高于原始故障上限 781754（确保用例真正压过故障点，防计
+            # 量偏差）
+            usage = body.get("usage") or {}
+            actual_prompt_tokens = usage.get("prompt_tokens")
+            if actual_prompt_tokens is None:
+                test_logger.info(
+                    f"K20 第{round_index}轮真实响应 - usage 缺 "
+                    "prompt_tokens（跳过规模 sanity 断言）"
+                )
+            else:
+                assert actual_prompt_tokens > K20_OLD_INPUT_LIMIT, (
+                    f"规模 sanity 断言失败（第 {round_index} 轮）：实际 "
+                    f"prompt_tokens={actual_prompt_tokens} 未超过原始"
+                    f"故障上限 {K20_OLD_INPUT_LIMIT}——用例未真正压过"
+                    f"故障点（探针自校准 {tokens_per_unit:.3f} "
+                    f"tokens/单元，预计 {predicted_tokens}）"
+                )
+            test_logger.info(
+                f"K20 第{round_index}轮（reasoning_effort={effort}）"
+                f"真实响应 - usage: {json.dumps(usage, ensure_ascii=False)}"
+            )
+            test_logger.info(
+                f"客户问题复现通过（第 {round_index} 轮 "
+                f"reasoning_effort={effort}）: 1M 量级输入（自校准预计 "
+                f"{predicted_tokens} tokens，实际 {actual_prompt_tokens}）"
+                "被正常接受并返回非空响应（输入+输出 "
+                f"{actual_prompt_tokens}+{budget} tokens，略小于 1M）"
+            )
