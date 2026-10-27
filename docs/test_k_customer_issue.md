@@ -55,7 +55,7 @@
 | K17 | stop 停止符（换行符）在推理阶段生效 | 客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用于推理输出——推理里的第一个换行即触发停止，正文不会生成；反之若换行未触发停止、继续输出正文，则换行符未生效；适用 GLM-5.3 | 按场景构造流式请求（stream=true、stop=["\n"]、thinking={type:enabled}（K1 口径）、max_tokens=512 防御性预算、不发送采样参数），断言 SSE 有事件、合并正文为空（核心）、finish_reason==stop、合并 reasoning 不含换行（停止符不泄漏） | P0 |
 | K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按工单还原该 assistant 消息回填为多轮上下文（user→assistant→user，带 bash 工具定义，非流式，采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖），断言 HTTP 200（核心）、choices 存在、message 结构存在 | P0 |
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
-| K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 程序生成约 918K tokens（估算）英文背景文本（重复单元+尾部指令，chars/4 估算启发式对齐原始场景规模），单条 user 消息非流式提交（不发送采样参数——豁免；max_tokens=32；1M prefill 临时上调客户端超时至 900s，finally 恢复），断言 HTTP 200 且 choices/content 非空 | P0 |
+| K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出 max_tokens=1024 且 reasoning_effort=low（GLM-5.3 不支持禁用思考——用户口径）（总消耗 ≈961K，两种 1M 口径均满足），单条 user 消息非流式提交（不发送采样参数——豁免），断言探针 200 且有 usage、主请求 HTTP 200、choices/content 非空、主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
 
 ## 运行方式
 
@@ -1127,43 +1127,69 @@ serving 侧上下文长度校验拒绝）。根因：serving 侧未按 1M 上下
 
 **请求构造**（GLM-5.3 适用，OpenAI 协议
 `/v1/chat/completions` 非流式，手工 payload 直发）：
-- **请求提示词由程序生成**（用户指定，无外部文件）：英文重复
-  单元（"Long context verification material. ..."）× 重复至约
-  918K tokens（估算，chars/4 启发式对齐原始场景规模 918451）
+- **两阶段：探针自校准 + 主请求**（1M = 输入+输出，总量略小于
+  1M——用户口径，余量留给推理框架额外补充的长度）
+- **阶段1 探针自校准**：英文重复单元（"Long context
+  verification material. ..."）× 2000（约 276K 字符），max_tokens=1，
+  从响应 usage.prompt_tokens 精确得出每单元 token 数——客户端
+  无分词器，chars/token 启发式误差大（真实环境实测该单元 6.28
+  字符/token，chars/4 高估 57%——估算偏低会造成实际输入低于
+  旧限 781,754 → 假阳性），规模必须可靠计量
+- **阶段2 主请求**：按自校准结果重复至输入目标 960,000 tokens
   + 尾部简短指令（"以上为背景材料。请直接回复一句话，确认已
-  完整收到全部材料。"）
+  完整收到全部材料。"）；`max_tokens=1024`（输出预算=思考+正
+  文，计入总量）且 `reasoning_effort="low"`（**GLM-5.3 不支持
+  禁用思考、仅支持 reasoning_effort 档位**——用户口径；low
+  最小化思考。真实环境实测默认档思考耗尽 32 预算：
+  reasoning_tokens==max_tokens、finish_reason=length、content
+  为空——预算过小的教训）→ 总消耗 ≈961K tokens
 - 单条 user 消息（超长单字符串 content）
-- `max_tokens=32` 防御性预算（只需证明输入被接受）
 - 不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
 - **超时处理**：1M token prefill 耗时长，临时将客户端超时上
   调至 900s（finally 恢复；ReadTimeout 不重试——框架约定）
 
 **断言**（硬）：
-1. HTTP 200（未被拒绝——1M 量级输入应被接受）
-2. choices 非空且 content 非空（可正常响应）
+1. 探针 200 且返回 usage.prompt_tokens（计量前提）
+2. 主请求 HTTP 200（未被拒绝——1M 量级输入应被接受）
+3. choices 非空且 content 非空（可正常响应）
+4. 主响应 usage.prompt_tokens（如有）> 781,754——规模 sanity
+   （确保真正压过原始故障点，防计量偏差）
 
 **判定矩阵**：
-- 200 + content 非空 → PASS（1M 量级输入正常响应）
-- 非 200（如原始报错形态 Input length...exceeds...）→ FAIL
-  （断言 1——上下文未按 1M 契约支持）
-- 200 但 content 为空 → FAIL（断言 2——未正常响应）
+- 探针 200 + 主请求 200 + content 非空 + prompt_tokens > 781,754
+  → PASS（1M 量级输入正常响应）
+- 探针失败/缺 usage → FAIL（断言 1——无法计量规模）
+- 主请求非 200（如原始报错形态 Input length...exceeds...）→
+  FAIL（断言 2——上下文未按 1M 契约支持）
+- 主请求 200 但 content 为空 → FAIL（断言 3——未正常响应）
+- prompt_tokens ≤ 781,754 → FAIL（断言 4——用例未真正压过故
+  障点）
 
 **设计决策记录**：
 - **P0**（客户报障场景）
-- **目标规模 ~918K tokens（估算）**：对齐原始场景 918451——
-  高于当时错误上限 781754（证明旧限已解除）、低于 1M（1M 契
-  约内的安全余量）
-- **chars/4 估算启发式**：客户端无法精确计数 token，重复单元
-  使 token/char 比率稳定；实际值由响应 usage.prompt_tokens 校
-  准（日志留痕，首跑观察期校验）
-- **超时 900s 临时上调**：1M prefill 耗时长于默认 120s；
-  finally 恢复不影响其他用例
+- **1M = 输入+输出，总量略小于 1M**（用户口径）：输入目标
+  960,000 + 输出 32 → 总消耗 ≈960K——两种 1M 口径
+  （1,000,000 / 1,048,576）下均略小于 1M（余量 40K/88K
+  tokens 留给推理框架额外补充的长度；prompt_tokens 本身已含
+  聊天模板等框架开销）
+- **探针自校准**：客户端无分词器、估算不可靠——先小规模实测
+  每单元 token 数再精确生成主请求（真实环境实测：6.28 字符/
+  token，探针自动适配任意比率）；高于原始故障上限 781,754 约
+  178K（缺陷可复现）
+- **禁用思考改为 reasoning_effort=low + 输出预算 1024**：
+  GLM-5.3 不支持禁用思考、仅支持 reasoning_effort 档位（用户
+  口径）——low 档最小化思考，max_tokens=1024 覆盖思考+正文
+  （真实环境首轮实测默认档思考对该指令约 40 tokens 即将收尾，
+  1024 为充分余量）；总消耗 ≈961K（960,000+1,024）
+- **超时 900s 临时上调**：1M prefill 耗时长于默认 120s（真实
+  环境 585K tokens 实测 73.2s，960K 预计约 2 分钟）；finally
+  恢复不影响其他用例
 - **不进 smoke 集**：新用例首跑观察期
 
 **注意事项**：
-- 真实环境首跑耗时长（1M token prefill + 可能的重试），预期
-  数分钟量级
+- 真实环境首跑耗时长（探针 + 1M token prefill），预期数分钟
+  量级
 - **模型真实响应打印**（用户要求）：状态码与响应体全文在断言
   前打印到日志——失败时同样可见，便于诊断
-- usage 仅日志（prompt_tokens 为实际 token 数，可校准估算）
+- usage 仅日志（主响应 prompt_tokens 为实际输入 token 数）
 - marker：`GLM53`（K 套件按模型分组标记；采样参数豁免）
