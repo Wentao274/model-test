@@ -58,7 +58,7 @@
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
 | K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出预算 max_tokens 覆盖思考+正文，两轮思考档位（用户指定补 max 场景）——low 轮（1024）常规、max 轮（4096）最大思考负载，输出侧同步压窗口（总消耗 ≈961K/964K，两种 1M 口径均满足），单条 user 消息非流式提交（采样参数不豁免——用户指定：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入；跑必冷仅 low 轮——用户加固：low 轮（含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中文），前缀必不命中 KV 缓存，真 1M 冷 prefill；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许命中历史缓存加速），断言探针 200 且有 usage、每轮主请求 HTTP 200、choices/content 非空、每轮主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
 | K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
-| K22 | /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 | 客户问题：相同请求下 Anthropic 协议（/anthropic/v1/messages）前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）——根因：该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态计费行（字符串/块数组两种 system 形态），前缀缓存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证 ≥90%）；开发修复：入引擎前条件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、其余内容原样保留；适用 GLM-5.3 | 测试要点（用户口径）：相同请求逐轮交替发送两协议（同轮同问），统计二者缓存命中率并逐轮比较——冷轮不参与比较（需热轮才能统计命中率），热轮任意一轮差值超过 3 个百分点（用户指定容差）即失败；每请求在 system 头部构造逐请求变化的计费行；循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1 组中英混合，整请求长度尽量超过 8k tokens；覆盖两条剥离代码路径（块数组断点挂 system 块——K3 口径；字符串断点挂 user 首块）；每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮不参与比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求；硬断言：①每热轮两协议命中率差值 ≤3 个百分点；②每请求 HTTP 200 且响应正常；缺陷形态 messages ≈0% vs chat ≈94% → FAIL、修复后两协议每热轮均 ≈94% → PASS；热轮 cache_creation>0（剥离失效直接信号）与双低形态仅日志留痕；运行日志不含具体模型名 | P0 |
+| K22 | /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 | 客户问题：相同请求下 Anthropic 协议（/anthropic/v1/messages）前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）——根因：该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态计费行（字符串/块数组两种 system 形态），前缀缓存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证 ≥90%）；开发修复：入引擎前条件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、其余内容原样保留；适用 GLM-5.3 | 测试要点（用户口径）：同轮等价请求逐轮交替发送两协议（同轮同问；前缀头部渠道标记行不同——用户指定：剥离计费行后两协议前缀仍从位置 0 分叉，互不命中对方缓存条目，各自建条目/各自命中，messages 冷轮为真冷），统计二者缓存命中率并逐轮比较——冷轮不参与比较（需热轮才能统计命中率），热轮任意一轮差值超过 3 个百分点（用户指定容差）即失败；每请求在 system 头部构造逐请求变化的计费行；循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1 组中英混合，整请求长度尽量超过 8k tokens；覆盖两条剥离代码路径（块数组断点挂 system 块——K3 口径；字符串断点挂 user 首块）；每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮不参与比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求，组间间隔 3 秒（用户指定）；硬断言：①每热轮两协议命中率差值 ≤3 个百分点；②每请求 HTTP 200 且响应正常；缺陷形态 messages ≈0% vs chat ≈94% → FAIL、修复后两协议每热轮均 ≈94% → PASS；热轮 cache_creation>0（剥离失效直接信号）与双低形态仅日志留痕；运行日志不含具体模型名 | P0 |
 | K23 | 孤儿 tool 消息应对齐官方放行并正常消费 | 客户问题（新工单，官方对齐口径）：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），平台返回 400（"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool calls'."——type: alaya code error、code: invalid text request——网关层白加的校验）；智谱官方源对同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」且模型在 reasoning 中实际引用 tool 数据（工具数据被正常消费）；新契约（客户指定）：预期结果同官方一致——此类消息序列不做校验、正常出结果；与 K14 关系：K14 为当时工单口径原始契约（保持不变——用户指令），二者输入同类预期相反，平台采纳官方对齐修复后 K14 将 FAIL、其保留/退役由用户决定；适用 GLM-5.3 | 按客户新工单原始请求体还原（messages=[user"查一下北京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文本无 tool_calls——孤儿条件）、tool tool_call_id="call_weather_001" content={"city":"北京","temp_c":18,"condition":"晴"}、user"根据工具返回的数据，用一句话告诉我天气。"]、max_tokens=200、非流式、无 tools/thinking；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始 400 拦截形态复现即 FAIL）、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空——官方形态为正常答句）；官方行为细节（输出/推理引用工具数据要素）软校验仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 
 ## 运行方式
@@ -1310,9 +1310,12 @@ data did not match any variant of untagged enum MessageContent"`。
 是 `x-anthropic-billing-header:` 行即去掉，其余内容原样保留。
 
 **测试要点**（用户口径）：
-- **相同请求双协议逐轮对比**：同一请求逐轮交替发送
-  /v1/chat/completions 与 /anthropic/v1/messages（同轮同问），
-  统计二者缓存命中率并逐轮比较
+- **同轮等价请求双协议逐轮对比**：同轮同问逐轮交替发送
+  /v1/chat/completions 与 /anthropic/v1/messages，前缀头部渠道标
+  记行不同（用户指定：剥离计费行后两协议前缀仍从位置 0 分叉——
+  互不命中对方缓存条目，各自建条目/各自命中，messages 冷轮为真
+  冷；标记差异仅数字符，对命中率影响可忽略），统计二者缓存命中
+  率并逐轮比较
 - **冷轮不参与比较**：第一次请求为冷轮，两协议均无缓存可命中
   （用户口径：需热轮才能统计命中率）；热轮（第 2 轮起）逐轮比较
 - **循环 5 次比对**（用户口径：每次循环的请求消息尽量不一样）：
@@ -1320,7 +1323,8 @@ data did not match any variant of untagged enum MessageContent"`。
   每轮唯一问题 ~330-550 tok，整请求长度尽量超过 8k tokens；组间
   前缀内容互不相同，组内批次号防跨运行污染
 - **每次循环每协议 1 冷轮 + 2 热轮**（用户口径），共 5 次循环 ×
-  2 协议 × 3 轮 = 30 请求
+  2 协议 × 3 轮 = 30 请求，组间间隔 3 秒（用户指定——降低组间背
+  靠背请求的调度/缓存抖动）
 - **计费行**：每请求在 system 头部构造逐请求变化的计费行
   （request_id + 时间戳）——值必须变化：静态值修复前前缀也相同、
   缺陷无法复现=假阴性
@@ -1355,9 +1359,15 @@ data did not match any variant of untagged enum MessageContent"`。
 - **容差 3 个百分点**（用户指定）："基本一致"的量化；缺陷形态差
   ≈90pp，判别度充足；修复后两协议共享同一前缀与粒度效应，差异远
   小于 3pp
-- **冷轮排除**（用户口径）：第一次请求两协议均无缓存可命中（一侧
-  建缓存、另一侧可能因引擎跨协议共享缓存而"冷轮即热"），不参与
-  差值比较
+- **冷轮排除**（用户口径）：第一次请求为冷轮——渠道标记行隔离后
+  两协议互不命中对方条目（真冷），不参与差值比较（需热轮才能统
+  计命中率）
+- **渠道标记行隔离**（用户指定）：引擎跨协议共享 KV 时，相同前缀
+  会使 messages 冷轮直接命中 chat 刚建的条目（"冷轮即热"）——前
+  缀头部渠道标记行（渠道 chat / 渠道 anthropic）使两协议前缀从
+  位置 0 分叉，各自建条目/各自命中；标记差异仅数字符，对命中率
+  影响可忽略；缺陷判别力不变（剥离失效时 messages 热轮仍全
+  miss）
 - **双 system 形态**：修复方案明确覆盖字符串/块数组两条剥离代码
   路径；字符串形态断点挂 user 首块（Anthropic 标准语义——断点
   前缀含 system）

@@ -349,8 +349,10 @@ K. 客户问题复现测试
   件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、
   其余内容原样保留。本用例按用户口径模拟客户请求形态：每请求在
   system 头部构造逐请求变化的计费行（值必须变化——静态值修复前
-  前缀也相同、缺陷无法复现=假阴性），相同请求逐轮交替发送两协议
-  （同轮同问），统计二者缓存命中率并逐轮比较。循环 5 次比对（用
+  前缀也相同、缺陷无法复现=假阴性），同轮同问逐轮交替发送两协议
+  （前缀头部渠道标记行不同——用户指定：剥离计费行后两协议前缀
+  仍从位置 0 分叉，互不命中对方缓存条目，各自建条目/各自命中），
+  统计二者缓存命中率并逐轮比较。循环 5 次比对（用
   户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1
   组中英混合，每组前缀 ~8400-12000 tok + 每轮唯一问题
   ~330-550 tok——整请求长度尽量超过 8k tokens；同时覆盖开发修
@@ -358,7 +360,8 @@ K. 客户问题复现测试
   径）与字符串形态（断点挂 user 首块，每轮唯一问题置于断点外）。
   每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮两协议均无缓存
   可命中，不参与比较——需热轮才能统计命中率；第 2-3 轮热轮逐轮
-  比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求。
+  比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求，组间间隔 3 秒
+  （用户指定）。
   命中率口径：chat=cached_tokens/prompt_tokens（该轮，K16 字段口
   径）；messages=cache_read/分母（分母按 input_tokens 口径自适应
   ——以同轮 chat prompt_tokens 为参照）。硬断言：①每热轮两协议
@@ -4965,7 +4968,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         self, api_client: ModelAPIClient, test_logger
     ):
         """K22 [P0]: 客户问题 - /v1/messages 缓存命中率应与
-        /v1/chat/completions 基本一致（五组不同消息冷热轮对比）
+        /v1/chat/completions 基本一致（循环 5 次比对）
 
         客户问题：相同请求下，Anthropic 协议（/anthropic/v1/messages，
         端点与鉴权头见开发示例：x-api-key + anthropic-version）的前
@@ -4977,11 +4980,15 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         已验证 ≥90%）。
         开发修复：入引擎前条件剥离——system（字符串或块数组）开头是
         x-anthropic-billing-header: 行即去掉，其余内容原样保留。
-        测试要点（用户口径）：相同请求分别发送 /v1/chat/completions
-        与 /anthropic/v1/messages 两协议，统计二者缓存命中率并逐轮
-        比较——第一次请求为冷轮（两协议均无缓存可命中，不参与比
-        较；用户口径：需热轮才能统计命中率），热轮（第 2 轮起）
-        任意一轮差值超过 3 个百分点（用户指定容差）即用例失败。
+        测试要点（用户口径）：同轮等价请求分别发送
+        /v1/chat/completions 与 /anthropic/v1/messages 两协议（同
+        轮同问；前缀头部渠道标记行不同——用户指定：剥离计费行后
+        两协议前缀仍从位置 0 分叉，互不命中对方缓存条目，各自建
+        条目/各自命中，messages 冷轮为真冷；标记差异仅数字符，
+        对命中率影响可忽略），统计二者缓存命中率并逐轮比较——
+        第一次请求为冷轮（两协议均无缓存可命中，不参与比较；用
+        户口径：需热轮才能统计命中率），热轮（第 2 轮起）任意一
+        轮差值超过 3 个百分点（用户指定容差）即用例失败。
         循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：
         2 组中文、2 组英文、1 组中英混合，每组前缀
         ~8400-12000 tok + 每轮唯一问题 ~330-550 tok——整请求长度
@@ -4990,7 +4997,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         点挂 user 首块——内容固定断点前缀逐轮恒定，每轮唯一问题
         置于断点之外）。每次循环每协议 1 冷轮 + 2 热轮（用户口
         径），逐轮交替发送两协议（同轮同问），共 5 次循环 × 2
-        协议 × 3 轮 = 30 请求。命中率口径：chat = cached_tokens/
+        协议 × 3 轮 = 30 请求，组间间隔 3 秒（用户指定）。命中率口径：chat = cached_tokens/
         prompt_tokens（该轮，K16 字段口径）；messages = cache_
         read/分母（分母按 input_tokens 口径自适应——以同轮 chat
         prompt_tokens 为参照，已含命中总量时取其自身，否则加
@@ -5223,7 +5230,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         "role": "system",
                         "content": (
                             f"[可缓存长前缀 {len(prefix_text)} 字符，"
-                            f"批次 {run_id} 第 {g} 组]"
+                            f"批次 {run_id} 第 {g} 组，渠道 chat]"
                         ),
                     },
                     {
@@ -5299,7 +5306,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         "content": (
                             f"[计费行 + 可缓存长前缀 "
                             f"{len(prefix_text)} 字符，批次 {run_id} "
-                            f"第 {g} 组]"
+                            f"第 {g} 组，渠道 anthropic]"
                         ),
                     },
                     {
@@ -5389,30 +5396,48 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         try:
             group_summaries: List[str] = []
             for g, group_cfg in enumerate(K22_GROUPS, 1):
+                # 组间间隔 3 秒（用户指定）——降低组间背靠背请求的
+                # 调度/缓存抖动
+                if g > 1:
+                    test_logger.info(
+                        f"[第{g}组] 组间间隔 3 秒（用户指定）"
+                    )
+                    time.sleep(3)
                 gname, form, lang, unit, target_chars, q_filler = (
                     group_cfg
                 )
-                prefix_text = (
-                    f"批次编号 {run_id} 第 {g} 组\n"
-                    + unit * (target_chars // len(unit) + 1)
+                # 渠道标记行（用户指定）：两协议前缀正文相同、头部
+                # 标记不同——剥离计费行后仍从位置 0 分叉，互不命中
+                # 对方缓存条目（跨协议共享 KV 时 messages 冷轮"即
+                # 热"的问题随之消除——各自建条目/各自命中）；标记
+                # 差异仅数字符，对命中率影响可忽略
+                prefix_body = unit * (target_chars // len(unit) + 1)
+                chat_prefix = (
+                    f"批次编号 {run_id} 第 {g} 组 渠道 chat\n"
+                    + prefix_body
+                )
+                msg_prefix = (
+                    f"批次编号 {run_id} 第 {g} 组 渠道 anthropic\n"
+                    + prefix_body
                 )
                 hot_compare: List[str] = []
                 for k in range(1, K22_ROUNDS + 1):
                     q = question_for(lang, k, q_filler)
-                    # 同轮交替发送两协议（同问——"相同请求"）
+                    # 同轮交替发送两协议（同问；前缀头部渠道标记不
+                    # 同——互不命中对方缓存条目）
                     chat_usage = chat_round(
-                        g, gname, k, prefix_text, q
+                        g, gname, k, chat_prefix, q
                     )
                     line = billing_line()
                     system_field, user_field = build_request(
-                        form, line, prefix_text, q
+                        form, line, msg_prefix, q
                     )
                     msg_usage = messages_round(
                         g,
                         gname,
                         form,
                         k,
-                        prefix_text,
+                        msg_prefix,
                         q,
                         system_field,
                         user_field,
