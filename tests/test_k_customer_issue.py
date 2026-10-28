@@ -352,7 +352,14 @@ K. 客户问题复现测试
   前缀也相同、缺陷无法复现=假阴性），同轮同问逐轮交替发送两协议
   （前缀头部渠道标记行不同——用户指定：剥离计费行后两协议前缀
   仍从位置 0 分叉，互不命中对方缓存条目，各自建条目/各自命中），
-  统计二者缓存命中率并逐轮比较。循环 5 次比对（用
+  统计二者缓存命中率并逐轮比较。热轮 messages 全量 miss（read=0
+  且 creation=0）时同轮重发一次鉴别（用户指定）：重发命中→WARN
+  留痕继续（判定偶发——疑似多实例路由/条目可见性问题，非剥离缺
+  陷）；仍 miss→该组不符合预期（剥离失效形态，判别力不变）。
+  组级判定（用户指定）：单组失败不中断后续组，5 组中至少 4 组
+  符合预期（该组全部热轮差值 ≤3 个百分点）即 PASS、不足 4 组
+  FAIL。循环 5 次比对
+  （用
   户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1
   组中英混合，每组前缀 ~8400-12000 tok + 每轮唯一问题
   ~330-550 tok——整请求长度尽量超过 8k tokens；同时覆盖开发修
@@ -4987,8 +4994,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         条目/各自命中，messages 冷轮为真冷；标记差异仅数字符，
         对命中率影响可忽略），统计二者缓存命中率并逐轮比较——
         第一次请求为冷轮（两协议均无缓存可命中，不参与比较；用
-        户口径：需热轮才能统计命中率），热轮（第 2 轮起）任意一
-        轮差值超过 3 个百分点（用户指定容差）即用例失败。
+        户口径：需热轮才能统计命中率），热轮（第 2 轮起）逐轮比
+        较差值（用户指定容差 3 个百分点）。组级判定（用户指
+        定）：单组失败不中断后续组（五组全部执行），每组判定=该
+        组全部热轮差值 ≤3 个百分点，5 组中至少 4 组符合预期即用
+        例 PASS、不足 4 组 FAIL。
         循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：
         2 组中文、2 组英文、1 组中英混合，每组前缀
         ~8400-12000 tok + 每轮唯一问题 ~330-550 tok——整请求长度
@@ -5003,15 +5013,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         prompt_tokens 为参照，已含命中总量时取其自身，否则加
         cache_read）。
         缺陷形态：计费行未剥离 → messages 前缀逐请求失配 → 热轮命
-        中率 ≈0% vs chat ≈94% → 差 ≈90pp > 3pp → FAIL；修复后两
-        协议每热轮均 ≈94% → 差 <3pp → PASS。热轮 cache_creation>0
+        中率 ≈0% vs chat ≈94% → 差 ≈90pp > 3pp → 五组全部不符合
+        预期 → FAIL；修复后两协议每热轮均 ≈94% → 差 <3pp → 五组
+        全符合 → PASS。热轮 cache_creation>0
         （前缀逐请求重建=剥离失效直接信号）与双低形态（两协议命中
         率均异常低——疑似全局缓存异常，chat 侧由 K15/K16 覆盖）
-        仅日志留痕。硬断言：①每热轮两协议命中率差值 ≤3 个百分点
-        （任意一轮超差即 FAIL，报文标注组/轮/两侧命中率与 usage
-        细节）；②每请求 HTTP 200 且响应正常（chat：choices；
-        messages：usage+content）。运行日志不含具体模型名。
-        （不进 smoke 集：新用例首跑观察期）
+        仅日志留痕。硬断言：①组级判定（用户指定）——单组失败不
+        中断后续组（五组全部执行），每组判定=该组全部热轮差值
+        ≤3 个百分点（messages 热轮全量 miss 时先同轮重发一次鉴
+        别），5 组中至少 4 组符合预期才 PASS（不足 4 组 FAIL，
+        报文汇总各组判定与失败组/轮两侧命中率与 usage 细节）；
+        ②每请求 HTTP 200 且响应正常（chat：choices；
+        messages：usage+content）。热轮全量 miss 重发加固（用户
+        指定）：messages 热轮 read=0 且 creation=0 时同轮重发
+        一次（新计费行、同前缀同问）——重发命中→WARN 留痕并按
+        重发结果继续比较（偶发 miss，疑似多实例路由/条目可见性
+        问题，非剥离缺陷）；重发仍全量 miss→FAIL（剥离失效形
+        态——剥离失效时重发同样 miss，判别力不变）。运行日志不
+        含具体模型名。（不进 smoke 集：新用例首跑观察期）
         """
         # K22: Anthropic 协议版本头（K3 口径：2023-06-01 长期 GA
         # 版本，兼容网关事实标准；若目标网关升级要求新版本改此常量）
@@ -5032,6 +5051,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         # K22: "基本一致"容差（3 个百分点，用户指定）
         K22_PARITY_TOLERANCE = 0.03
+
+        # K22: 组级判定阈值（用户指定）——5 组中至少 4 组该组全
+        # 部热轮差值 ≤容差才 PASS；单组失败不中断后续组
+        K22_MIN_PASS_GROUPS = 4
 
         # K22: input_tokens 口径判别阈值——同轮 chat prompt_tokens
         # 为参照，input_tokens 超过其 80% 即认定"已含命中总量"
@@ -5198,7 +5221,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "/v1/chat/completions 前缀缓存命中率对齐（循环 5 次比"
             "对，每次循环请求消息尽量不一样——2 组中文、2 组英文、"
             "1 组中英混合，整请求 >8k tokens；每次循环每协议 1 冷轮 "
-            "+ 2 热轮，同轮两协议同问，逐热轮差值 ≤3 个百分点）==="
+            "+ 2 热轮，同轮两协议同问，组级判定 5 组中至少 4 组热轮"
+            "差值 ≤3 个百分点）==="
         )
 
         # 全运行唯一批次号：置入各组前缀头部（K3 口径——避免命中
@@ -5285,10 +5309,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             system_field,
             user_field,
             line: str,
+            attempt: int = 1,
         ) -> Dict[str, Any]:
             """messages 协议单轮（开发示例口径：非流式单 JSON 响
-            应，x-api-key + anthropic-version 头）"""
+            应，x-api-key + anthropic-version 头；attempt>1 时为
+            全量 miss 后的同轮重发——label 标注重发序号）"""
             label = f"第{g}组·{gname}-{form}-第{k}轮"
+            if attempt > 1:
+                label += f"-重发{attempt}"
             payload = {
                 "model": api_client.model_name,
                 "max_tokens": K22_MAX_TOKENS,
@@ -5395,6 +5423,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         api_client.timeout = max(original_timeout, K22_MIN_REQUEST_TIMEOUT)
         try:
             group_summaries: List[str] = []
+            group_verdicts: List[bool] = []
+            group_fail_log: List[str] = []
             for g, group_cfg in enumerate(K22_GROUPS, 1):
                 # 组间间隔 3 秒（用户指定）——降低组间背靠背请求的
                 # 调度/缓存抖动
@@ -5421,6 +5451,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     + prefix_body
                 )
                 hot_compare: List[str] = []
+                group_ok = True
                 for k in range(1, K22_ROUNDS + 1):
                     q = question_for(lang, k, q_filler)
                     # 同轮交替发送两协议（同问；前缀头部渠道标记不
@@ -5470,6 +5501,61 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         "cache_creation_tokens",
                     )
                     input_tok = msg_usage.get("input_tokens") or 0
+                    # ---- 热轮全量 miss 重发加固（用户指定）：
+                    # read=0 且 creation=0 时同轮重发一次（新计费
+                    # 行、同前缀同问）——重发命中=偶发 miss（疑似
+                    # 多实例路由/条目可见性问题，WARN 留痕交开
+                    # 发）；重发仍 miss=剥离失效形态（FAIL——剥离
+                    # 失效时重发同样 miss，判别力不变）----
+                    did_retry = False
+                    if read == 0 and creation == 0:
+                        did_retry = True
+                        test_logger.warning(
+                            f"[第{g}组·{gname}] 第{k}热轮 messages "
+                            f"全量 miss（read=0, creation=0, "
+                            f"input_tokens={input_tok}）——同轮重"
+                            "发一次鉴别：重发命中=偶发 miss（疑似"
+                            "多实例路由/条目可见性问题）；仍 miss="
+                            "计费行剥离失效形态"
+                        )
+                        line = billing_line()
+                        system_field, user_field = build_request(
+                            form, line, msg_prefix, q
+                        )
+                        msg_usage = messages_round(
+                            g,
+                            gname,
+                            form,
+                            k,
+                            msg_prefix,
+                            q,
+                            system_field,
+                            user_field,
+                            line,
+                            attempt=2,
+                        )
+                        read = cache_usage_field(
+                            msg_usage,
+                            "cache_read_input_tokens",
+                            "cache_read_tokens",
+                        )
+                        creation = cache_usage_field(
+                            msg_usage,
+                            "cache_creation_input_tokens",
+                            "cache_creation_tokens",
+                        )
+                        input_tok = (
+                            msg_usage.get("input_tokens") or 0
+                        )
+                        if read or creation:
+                            test_logger.warning(
+                                f"[第{g}组·{gname}] 第{k}热轮重发命"
+                                f"中（read={read}, creation="
+                                f"{creation}）——首次 miss 判定为偶"
+                                "发（重发即中，非计费行剥离缺陷—"
+                                "—剥离失效时重发同样 miss），留痕"
+                                "交开发排查"
+                            )
                     # 分母口径自适应（同轮 chat prompt_tokens 为参
                     # 照）：input_tokens 已含命中总量（超过参照
                     # 80%）时直接作分母；否则（官方语义——仅计未命
@@ -5510,31 +5596,89 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     hot_compare.append(
                         f"第{k}轮 chat={chat_rate:.2%}/"
                         f"messages={msg_rate:.2%}/差值{gap:.2%}"
+                        + ("（首次 miss 重发后）" if did_retry else "")
+                        + (
+                            "（超差）"
+                            if gap > K22_PARITY_TOLERANCE
+                            else ""
+                        )
                     )
-                    assert gap <= K22_PARITY_TOLERANCE, (
-                        f"客户问题复现失败：第 {g} 组（{gname}，"
-                        f"{form} 形态）第 {k} 热轮两协议缓存命中率"
-                        f"差值 {gap:.2%} 超过容差 3 个百分点——"
-                        f"chat={chat_rate:.2%}（cached={cached}/"
-                        f"{pt}），messages={msg_rate:.2%}"
-                        f"（read={read}/{denom}，input_tokens="
-                        f"{input_tok}，creation={creation}）。缺陷"
-                        "形态：计费行留在 system 头部、逐请求变化"
-                        "致前缀从位置 0 失配，messages 命中率应 "
-                        "≈0%；修复后两协议每热轮均应 ≈94%"
-                    )
+                    # ---- 组级判定（用户指定）：单组失败不中断
+                    # 后续组——超差热轮仅记录该组不符合预期，五组
+                    # 全部执行完按 ≥4/5 组符合预期最终判定 ----
+                    if gap > K22_PARITY_TOLERANCE:
+                        group_ok = False
+                        fail_detail = (
+                            f"差值 {gap:.2%} 超过容差 3 个百分点"
+                            f"——chat={chat_rate:.2%}"
+                            f"（cached={cached}/{pt}），messages="
+                            f"{msg_rate:.2%}（read={read}/{denom}，"
+                            f"input_tokens={input_tok}，creation="
+                            f"{creation}）"
+                            + (
+                                "；已同轮重发鉴别：重发仍全量 "
+                                "miss——计费行剥离失效或条目持续"
+                                "不可见（多实例路由/可见性问题）"
+                                if did_retry
+                                else ""
+                            )
+                        )
+                        group_fail_log.append(
+                            f"第 {g} 组（{gname}，{form} 形态）"
+                            f"第 {k} 热轮 {fail_detail}"
+                        )
+                        test_logger.error(
+                            f"[第{g}组·{gname}] 第{k}热轮 "
+                            f"{fail_detail}——该组判定为不符合预期"
+                            "（不影响后续组，用户指定）"
+                        )
+                group_verdicts.append(group_ok)
                 group_summaries.append(
                     f"第{g}组·{gname}（{form}）: "
                     + "，".join(hot_compare)
+                    + (
+                        " → 组判定: 符合预期"
+                        if group_ok
+                        else " → 组判定: 不符合预期"
+                    )
                 )
                 test_logger.info(
                     f"[第{g}组·{gname}] 组内热轮比较完成: "
                     + "；".join(hot_compare)
+                    + (
+                        " → 组判定: 符合预期"
+                        if group_ok
+                        else " → 组判定: 不符合预期"
+                    )
+                )
+            # ---- 最终判定（用户指定）：5 组中至少 4 组符合预期 ----
+            ok_count = sum(1 for v in group_verdicts if v)
+            test_logger.info(
+                f"组级判定汇总: {ok_count}/{len(group_verdicts)} 组符"
+                f"合预期（阈值 ≥{K22_MIN_PASS_GROUPS} 组，用户指"
+                f"定）——{'；'.join(group_summaries)}"
+            )
+            assert ok_count >= K22_MIN_PASS_GROUPS, (
+                f"客户问题复现失败：{len(group_verdicts)} 组中仅 "
+                f"{ok_count} 组符合预期（阈值 ≥"
+                f"{K22_MIN_PASS_GROUPS} 组，用户指定）——失败明细："
+                + " || ".join(group_fail_log)
+                + "。缺陷形态：计费行留在 system 头部、逐请求变化"
+                "致前缀从位置 0 失配，messages 命中率应 ≈0%（该形"
+                "态下五组全部不符合预期）；修复后两协议每热轮均应 "
+                "≈94%（五组全符合预期）"
+            )
+            if ok_count < len(group_verdicts):
+                test_logger.warning(
+                    f"{len(group_verdicts) - ok_count} 组不符合预期"
+                    f"但未达失败阈值（≥{K22_MIN_PASS_GROUPS} 组）"
+                    "——留证交开发排查（多实例路由/条目可见性问题）"
                 )
             test_logger.info(
-                "客户问题复现通过: 循环 5 次比对（每次循环请求消息各"
-                "异，中英文兼备）——任意热轮两协议缓存命中率差值均 "
-                f"≤3 个百分点（用户指定容差）——{'；'.join(group_summaries)}"
+                "客户问题复现通过: 组级判定 "
+                f"{ok_count}/{len(group_verdicts)} 组符合预期（每次"
+                "循环请求消息各异，中英文兼备）——"
+                f"{'；'.join(group_summaries)}"
             )
         finally:
             api_client.timeout = original_timeout
