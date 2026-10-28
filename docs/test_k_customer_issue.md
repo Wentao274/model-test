@@ -8,13 +8,14 @@
 - **原样复现**：system/user 提示词、tools 定义、tool_choice、thinking、stream、
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
-- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7 为
+- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K23 为
   P0 必测（任何失败应阻断发布），K8/K9 按客户工单优先级为 P1。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
-- **参数豁免**：K 类用例加入 `RAW_SAMPLING_PARAM_TESTS` 豁免名单，全局
-  `--sampling-params` 覆盖对其不生效，始终按客户原始采样参数执行（例外：
-  K10 已按用户指令取消豁免，其采样参数由全局 SAMPLING_PARAMS 覆盖——
-  temperature 全局值优先，原始口径 0 为无覆盖时回退值；top_p/seed 注入）。
+- **参数豁免**：`RAW_SAMPLING_PARAM_TESTS` 豁免名单默认规则（用户口径）：
+  未明确指定加入豁免的用例一律不豁免——采样参数由全局 `--sampling-params`
+  覆盖（temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入）。
+  现仅 K5-K9 保留豁免：其测试逻辑依赖 temperature/top_p/seed（关思考
+  温度档契约等），全局覆盖会破坏契约验证，须始终按原始采样参数执行。
 - **环境注入（不硬编码）**：客户 curl 中的 **URL、API key、模型名不写入测试
   代码**——与其他测试类一致，由 Jenkinsfile 构建参数（`BASE_URL` / `API_KEY` /
   `MODEL`）透传至 pytest 的 `--base-url` / `--api-key` / `--model-name`，经
@@ -57,6 +58,8 @@
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
 | K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出预算 max_tokens 覆盖思考+正文，两轮思考档位（用户指定补 max 场景）——low 轮（1024）常规、max 轮（4096）最大思考负载，输出侧同步压窗口（总消耗 ≈961K/964K，两种 1M 口径均满足），单条 user 消息非流式提交（采样参数不豁免——用户指定：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入；跑必冷仅 low 轮——用户加固：low 轮（含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中文），前缀必不命中 KV 缓存，真 1M 冷 prefill；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许命中历史缓存加速），断言探针 200 且有 usage、每轮主请求 HTTP 200、choices/content 非空、每轮主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
 | K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
+| K22 | /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 | 客户问题：相同请求下 Anthropic 协议（/anthropic/v1/messages）前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）——根因：该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态计费行（字符串/块数组两种 system 形态），前缀缓存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证 ≥90%）；开发修复：入引擎前条件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、其余内容原样保留；适用 GLM-5.3 | 测试要点（用户口径）：相同请求逐轮交替发送两协议（同轮同问），统计二者缓存命中率并逐轮比较——冷轮不参与比较（需热轮才能统计命中率），热轮任意一轮差值超过 3 个百分点（用户指定容差）即失败；每请求在 system 头部构造逐请求变化的计费行；循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1 组中英混合，整请求长度尽量超过 8k tokens；覆盖两条剥离代码路径（块数组断点挂 system 块——K3 口径；字符串断点挂 user 首块）；每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮不参与比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求；硬断言：①每热轮两协议命中率差值 ≤3 个百分点；②每请求 HTTP 200 且响应正常；缺陷形态 messages ≈0% vs chat ≈94% → FAIL、修复后两协议每热轮均 ≈94% → PASS；热轮 cache_creation>0（剥离失效直接信号）与双低形态仅日志留痕；运行日志不含具体模型名 | P0 |
+| K23 | 孤儿 tool 消息应对齐官方放行并正常消费 | 客户问题（新工单，官方对齐口径）：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），平台返回 400（"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool calls'."——type: alaya code error、code: invalid text request——网关层白加的校验）；智谱官方源对同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」且模型在 reasoning 中实际引用 tool 数据（工具数据被正常消费）；新契约（客户指定）：预期结果同官方一致——此类消息序列不做校验、正常出结果；与 K14 关系：K14 为当时工单口径原始契约（保持不变——用户指令），二者输入同类预期相反，平台采纳官方对齐修复后 K14 将 FAIL、其保留/退役由用户决定；适用 GLM-5.3 | 按客户新工单原始请求体还原（messages=[user"查一下北京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文本无 tool_calls——孤儿条件）、tool tool_call_id="call_weather_001" content={"city":"北京","temp_c":18,"condition":"晴"}、user"根据工具返回的数据，用一句话告诉我天气。"]、max_tokens=200、非流式、无 tools/thinking；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始 400 拦截形态复现即 FAIL）、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空——官方形态为正常答句）；官方行为细节（输出/推理引用工具数据要素）软校验仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 
 ## 运行方式
 
@@ -1292,3 +1295,155 @@ data did not match any variant of untagged enum MessageContent"`。
   印到日志——失败时同样可见，便于诊断
 - usage 仅日志
 - marker：`KimiK3`（K 套件按模型分组标记）
+
+### test_cross_protocol_prefix_cache_parity (K22)
+
+**背景**：客户问题：相同请求下，Anthropic 协议
+（/anthropic/v1/messages）的前缀缓存命中率始终低于
+/v1/chat/completions（"缓存始终上不去"）。根因：该链路 system
+头部携带 `x-anthropic-billing-header: <逐请求动态值>` 计费行
+（字符串/块数组两种 system 形态均涉及），而前缀缓存要求从位置 0
+连续匹配——头部逐请求变化导致整个前缀永不命中；chat 协议无此行、
+前缀稳定，命中率正常（K15/K16 已验证 ≥90%）。
+
+**修复**（开发）：入引擎前条件剥离——system（字符串或块数组）开头
+是 `x-anthropic-billing-header:` 行即去掉，其余内容原样保留。
+
+**测试要点**（用户口径）：
+- **相同请求双协议逐轮对比**：同一请求逐轮交替发送
+  /v1/chat/completions 与 /anthropic/v1/messages（同轮同问），
+  统计二者缓存命中率并逐轮比较
+- **冷轮不参与比较**：第一次请求为冷轮，两协议均无缓存可命中
+  （用户口径：需热轮才能统计命中率）；热轮（第 2 轮起）逐轮比较
+- **循环 5 次比对**（用户口径：每次循环的请求消息尽量不一样）：
+  2 组中文、2 组英文、1 组中英混合；每组前缀 ~8400-12000 tok +
+  每轮唯一问题 ~330-550 tok，整请求长度尽量超过 8k tokens；组间
+  前缀内容互不相同，组内批次号防跨运行污染
+- **每次循环每协议 1 冷轮 + 2 热轮**（用户口径），共 5 次循环 ×
+  2 协议 × 3 轮 = 30 请求
+- **计费行**：每请求在 system 头部构造逐请求变化的计费行
+  （request_id + 时间戳）——值必须变化：静态值修复前前缀也相同、
+  缺陷无法复现=假阴性
+- **双 system 形态**：覆盖开发修复的两条剥离代码路径——块数组
+  形态断点挂 system 块（K3 口径）、字符串形态断点挂 user 首块
+  （内容固定断点前缀逐轮恒定，每轮唯一问题置于断点外）
+- messages 请求按开发示例口径：非流式、x-api-key +
+  anthropic-version: 2023-06-01 头
+- 命中率口径：chat = cached_tokens/prompt_tokens（该轮，K16 字段
+  口径）；messages = cache_read/分母（分母按 input_tokens 口径
+  自适应——以同轮 chat prompt_tokens 为参照判别官方语义/总量
+  语义）
+
+**断言**（硬）：
+1. 每热轮两协议缓存命中率差值 ≤3 个百分点（用户指定容差）——
+   任意一轮超差即 FAIL，报文标注组/轮/两侧命中率与 usage 细节
+2. 每请求 HTTP 200 且响应正常（chat：choices；messages：
+   usage+content）
+
+**判定矩阵**：
+- 修复前（计费行未剥离）：messages 热轮 ≈0% vs chat ≈94% → 差
+  ≈90pp > 3pp → FAIL
+- 修复后：两协议每热轮均 ≈94% → 差 <3pp → PASS
+
+**设计决策记录**：
+- **P0**（客户报障场景）
+- **测试自带计费行**（用户口径）：不区分计费行来自客户请求还是
+  平台注入——测试尽量模拟带有 x-anthropic-billing-header 开头的
+  请求，以验证开发修复确实正常处理了这样开头的请求消息
+- **计费行值逐请求变化**：静态值修复前前缀也相同、缺陷无法复现
+  （假阴性）——动态值才是缺陷的触发条件
+- **容差 3 个百分点**（用户指定）："基本一致"的量化；缺陷形态差
+  ≈90pp，判别度充足；修复后两协议共享同一前缀与粒度效应，差异远
+  小于 3pp
+- **冷轮排除**（用户口径）：第一次请求两协议均无缓存可命中（一侧
+  建缓存、另一侧可能因引擎跨协议共享缓存而"冷轮即热"），不参与
+  差值比较
+- **双 system 形态**：修复方案明确覆盖字符串/块数组两条剥离代码
+  路径；字符串形态断点挂 user 首块（Anthropic 标准语义——断点
+  前缀含 system）
+- **采样参数不豁免**（默认口径——未明确指定加入豁免名单）：手工
+  payload 不携带采样字段，缓存命中与采样无关
+- **打印口径**（用户指令）：运行日志不出现具体模型名——前缀/问题
+  均按字符数概要打印
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 热轮 cache_creation>0（前缀逐请求重建）= 剥离失效的直接信号，
+  仅日志留痕（差值断言已覆盖该形态）
+- 双低形态（两协议命中率均异常低——疑似全局缓存异常，chat 侧由
+  K15/K16 覆盖）仅日志留痕——本用例按用户口径仅判定协议间差值
+- usage 全量日志留痕（含 input_tokens/cache_read/cache_creation）
+- marker：`GLM53`（K 套件按模型分组标记）
+
+### test_orphan_tool_message_accepted (K23)
+
+**背景**：客户问题（新工单，官方对齐口径）：messages 中 tool 角色
+消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未
+定义任何 tools），平台返回 400
+（`"Invalid parameter: messages with role 'tool' must be a
+response to a preceeding message with 'tool calls'."`——type:
+alaya code error、code: invalid text request——客户定位为网关层
+白加的校验）；而智谱官方源对同一请求 HTTP 200 正常应答
+「北京今天天气晴朗，气温18℃」，且模型在 reasoning 中实际引用了
+tool 消息里的数据（工具数据被模型正常消费）。
+
+**新契约**（客户指定）：预期结果同官方一致——此类消息序列不做
+校验、正常出结果。
+
+**与 K14 的关系**：K14（test_orphan_tool_message_rejected）为当
+时工单口径的原始契约（网关校验拒绝 400），按用户指令保持不变；
+本用例记录新客户需求（官方对齐契约：接受并正常消费）。二者输入
+同类、预期相反——平台采纳官方对齐修复后 K14 将 FAIL，其保留/退
+役由用户决定（本用例不改动 K14）。
+
+**请求**（客户新工单原始请求体原样还原）：
+- messages：
+  1. `{"role": "user", "content": "查一下北京天气"}`
+  2. `{"role": "assistant", "content": "好的，我来为您查询北京天
+     气数据。"}`（纯文本、无 tool_calls——孤儿条件）
+  3. `{"role": "tool", "tool_call_id": "call_weather_001",
+     "content": "{\"city\": \"北京\", \"temp_c\": 18,
+     \"condition\": \"晴\"}"}`
+  4. `{"role": "user", "content": "根据工具返回的数据，用一句话告
+     诉我天气。"}`
+- `max_tokens=200`（工单原始值；官方同参数下正常答句）；非流式；
+  无 tools/thinking
+- 采样参数不豁免（默认口径——未明确指定加入豁免名单）：由全局
+  `--sampling-params` 覆盖（temperature 无覆盖时回退 0.7、
+  top_p/seed 显式指定时注入）
+- 单次请求（确定性行为，无需连发）
+
+**断言**（硬）：
+1. HTTP 200（核心——原始 400 拦截形态复现即 FAIL，报文引用原始
+   报错文案）
+2. 响应合法 JSON 且 choices 非空
+3. message 有效输出（content 或 tool_calls 非空——官方形态为正
+   常答句，工具调用响应亦为成功形态）
+
+**判定矩阵**：
+- 修复前（网关白加校验拦截）：400 → FAIL（断言 1，报文标注缺陷
+  形态精确复现）
+- 修复后（官方对齐）：200 + 有效输出 → PASS
+
+**设计决策记录**：
+- **P0**（客户报障场景）
+- **K14 保持不变**（用户指令）：K14 为当时工单口径的原始契约，
+  不因新需求改动；二者预期相反，平台采纳官方对齐修复后 K14 将
+  FAIL——其保留/退役由用户决定
+- **工单原始请求体原样重放**：assistant 纯文本消息 + tool 消息
+  （无 tool_calls 关联）+ 未定义 tools——孤儿条件最小充分；模型
+  名由环境注入
+- **max_tokens=200 保持工单值**：官方同参数下正常答句；若平台出
+  现 finish=length 空正文（思考耗尽预算），与 400 拦截形态区分
+  并在报文提示评估预算口径——不自行改预算偏离工单
+- **官方行为细节软校验**：输出/推理引用工具数据要素（北京/18/
+  晴）= 工具数据被模型正常消费的信号——生成措辞自由，仅日志，
+  不作硬断言
+- **采样参数不豁免**（默认口径——未明确指定加入豁免名单）
+- **打印口径**：模型真实响应（状态码/响应体全文）断言前打印；
+  运行日志不含具体模型名（请求侧）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- finish/usage 仅日志留痕
+- marker：`GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）

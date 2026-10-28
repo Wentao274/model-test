@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K21
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K23
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -339,6 +339,63 @@ K. 客户问题复现测试
   模型自我介绍，日志仅记字符数概要，原文见本 docstring 与用例
   常量。
   （不进 smoke 集：新用例首跑观察期）
+- K22: /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 [P0]
+  客户问题：相同请求下，Anthropic 协议（/anthropic/v1/messages）
+  的前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）。根因：
+  该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态
+  计费行（字符串/块数组两种 system 形态），而前缀缓存要求从位置
+  0 连续匹配——头部逐请求变化导致整个前缀永不命中；chat 协议无
+  此行、前缀稳定（K15/K16 已验证 ≥90%）。开发修复：入引擎前条
+  件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、
+  其余内容原样保留。本用例按用户口径模拟客户请求形态：每请求在
+  system 头部构造逐请求变化的计费行（值必须变化——静态值修复前
+  前缀也相同、缺陷无法复现=假阴性），相同请求逐轮交替发送两协议
+  （同轮同问），统计二者缓存命中率并逐轮比较。循环 5 次比对（用
+  户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1
+  组中英混合，每组前缀 ~8400-12000 tok + 每轮唯一问题
+  ~330-550 tok——整请求长度尽量超过 8k tokens；同时覆盖开发修
+  复的两条剥离代码路径——块数组形态（断点挂 system 块，K3 口
+  径）与字符串形态（断点挂 user 首块，每轮唯一问题置于断点外）。
+  每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮两协议均无缓存
+  可命中，不参与比较——需热轮才能统计命中率；第 2-3 轮热轮逐轮
+  比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求。
+  命中率口径：chat=cached_tokens/prompt_tokens（该轮，K16 字段口
+  径）；messages=cache_read/分母（分母按 input_tokens 口径自适应
+  ——以同轮 chat prompt_tokens 为参照）。硬断言：①每热轮两协议
+  命中率差值 ≤3 个百分点（用户指定容差，任意一轮超差即 FAIL——
+  缺陷形态 messages ≈0% vs chat ≈94%，差 ≈90pp）；②每请求
+  HTTP 200 且响应正常（chat：choices；messages：usage+content）。
+  热轮 cache_creation>0（前缀逐请求重建=剥离失效直接信号）与双
+  低形态仅日志留痕。运行日志不含具体模型名。
+  （不进 smoke 集：新用例首跑观察期）
+- K23: 孤儿 tool 消息应对齐官方放行并正常消费 [P0]
+  客户问题（新工单，官方对齐口径）：messages 中 tool 角色消息前
+  无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定
+  义任何 tools），平台返回 400（"Invalid parameter: messages
+  with role 'tool' must be a response to a preceeding message
+  with 'tool calls'."——type: alaya code error、code:
+  invalid text request——网关层白加的校验）；而智谱官方源对同
+  一请求 HTTP 200 正常应答，且模型在 reasoning 中实际引用了
+  tool 消息里的数据（工具数据被模型正常消费）。新契约（客户指
+  定）：预期结果同官方一致——此类消息序列不做校验、正常出结果。
+  与 K14 的关系：K14 为当时工单口径的原始契约（网关校验拒绝
+  400，保持不变——用户指令）；本用例记录新客户需求（官方对齐契
+  约）——二者输入同类、预期相反，平台采纳官方对齐修复后 K14 将
+  FAIL，其保留/退役由用户决定（本用例不改动 K14）。本用例按客
+  户新工单原始请求体还原（messages=[user"查一下北京天气"、
+  assistant"好的，我来为您查询北京天气数据。"（纯文本无
+  tool_calls——孤儿条件）、tool tool_call_id="call_weather_001"
+  content={"city":"北京","temp_c":18,"condition":"晴"}、
+  user"根据工具返回的数据，用一句话告诉我天气。"]、
+  max_tokens=200、非流式、无 tools/thinking）。硬断言：①HTTP 200
+  （核心——原始 400 拦截形态复现即 FAIL）；②响应合法 JSON 且
+  choices 非空；③message 有效输出（content 或 tool_calls 非空）。
+  官方行为细节（输出/推理引用工具数据要素）软校验仅日志；
+  finish/usage 仅日志。采样参数不豁免（默认口径——未明确指定加入
+  豁免名单）：由全局 SAMPLING_PARAMS 覆盖——temperature 无覆盖时
+  回退 0.7、top_p/seed 显式指定时注入（K10/K18/K20 口径）。模型
+  真实响应（状态码/响应体全文）断言前打印。（不进 smoke 集：新
+  用例首跑观察期）
 """
 
 import base64
@@ -4899,4 +4956,779 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"无 content 字段）被正常接受（HTTP 200）并返回有效输出"
             f"（{output_kind}）——原始 400 json_parse_error 报错形态"
             "未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_cross_protocol_prefix_cache_parity(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K22 [P0]: 客户问题 - /v1/messages 缓存命中率应与
+        /v1/chat/completions 基本一致（五组不同消息冷热轮对比）
+
+        客户问题：相同请求下，Anthropic 协议（/anthropic/v1/messages，
+        端点与鉴权头见开发示例：x-api-key + anthropic-version）的前
+        缓存命中率始终低于 /v1/chat/completions（"缓存始终上不去"）。
+        根因：该链路 system 头部携带 x-anthropic-billing-header:
+        <逐请求动态值> 计费行（字符串/块数组两种 system 形态均涉及），
+        而前缀缓存要求从位置 0 连续匹配——头部逐请求变化导致整个前
+        缀永不命中；chat 协议无此行、前缀稳定，命中率正常（K15/K16
+        已验证 ≥90%）。
+        开发修复：入引擎前条件剥离——system（字符串或块数组）开头是
+        x-anthropic-billing-header: 行即去掉，其余内容原样保留。
+        测试要点（用户口径）：相同请求分别发送 /v1/chat/completions
+        与 /anthropic/v1/messages 两协议，统计二者缓存命中率并逐轮
+        比较——第一次请求为冷轮（两协议均无缓存可命中，不参与比
+        较；用户口径：需热轮才能统计命中率），热轮（第 2 轮起）
+        任意一轮差值超过 3 个百分点（用户指定容差）即用例失败。
+        循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：
+        2 组中文、2 组英文、1 组中英混合，每组前缀
+        ~8400-12000 tok + 每轮唯一问题 ~330-550 tok——整请求长度
+        尽量超过 8k tokens；同时覆盖开发修复的两条剥离代码路径：
+        块数组形态（断点挂 system 块，K3 口径）与字符串形态（断
+        点挂 user 首块——内容固定断点前缀逐轮恒定，每轮唯一问题
+        置于断点之外）。每次循环每协议 1 冷轮 + 2 热轮（用户口
+        径），逐轮交替发送两协议（同轮同问），共 5 次循环 × 2
+        协议 × 3 轮 = 30 请求。命中率口径：chat = cached_tokens/
+        prompt_tokens（该轮，K16 字段口径）；messages = cache_
+        read/分母（分母按 input_tokens 口径自适应——以同轮 chat
+        prompt_tokens 为参照，已含命中总量时取其自身，否则加
+        cache_read）。
+        缺陷形态：计费行未剥离 → messages 前缀逐请求失配 → 热轮命
+        中率 ≈0% vs chat ≈94% → 差 ≈90pp > 3pp → FAIL；修复后两
+        协议每热轮均 ≈94% → 差 <3pp → PASS。热轮 cache_creation>0
+        （前缀逐请求重建=剥离失效直接信号）与双低形态（两协议命中
+        率均异常低——疑似全局缓存异常，chat 侧由 K15/K16 覆盖）
+        仅日志留痕。硬断言：①每热轮两协议命中率差值 ≤3 个百分点
+        （任意一轮超差即 FAIL，报文标注组/轮/两侧命中率与 usage
+        细节）；②每请求 HTTP 200 且响应正常（chat：choices；
+        messages：usage+content）。运行日志不含具体模型名。
+        （不进 smoke 集：新用例首跑观察期）
+        """
+        # K22: Anthropic 协议版本头（K3 口径：2023-06-01 长期 GA
+        # 版本，兼容网关事实标准；若目标网关升级要求新版本改此常量）
+        K22_ANTHROPIC_VERSION = "2023-06-01"
+
+        # K22: 计费行前缀——开发修复的剥离触发特征（system 开头为
+        # 该行即剥离，值与剥离无关）
+        K22_BILLING_LINE_PREFIX = "x-anthropic-billing-header:"
+
+        # K22: 输出 token 上限——缓存断言只关心 input 侧 usage
+        # （K3 口径）
+        K22_MAX_TOKENS = 512
+
+        # K22: 每次循环每协议轮次：1 冷轮（不参与比较）+ 2 热轮
+        # （逐轮比较）——用户口径：每次每协议一冷轮 + 两热轮
+        K22_ROUNDS = 3
+        K22_COLD_ROUNDS = 1
+
+        # K22: "基本一致"容差（3 个百分点，用户指定）
+        K22_PARITY_TOLERANCE = 0.03
+
+        # K22: input_tokens 口径判别阈值——同轮 chat prompt_tokens
+        # 为参照，input_tokens 超过其 80% 即认定"已含命中总量"
+        K22_INPUT_TOTAL_SEMANTICS_RATIO = 0.8
+
+        # K22: 8-10k tok prefill 耗时显著但远小于 K3 的 11 万——
+        # 超时下限适度（K3 超时保护模式）
+        K22_MIN_REQUEST_TIMEOUT = 600
+
+        # K22: 字符串形态 user 首块（cache_control 断点挂此块——内
+        # 容固定，断点前缀=system+本块逐轮恒定；每轮唯一问题在第二
+        # 块、断点之外）
+        K22_STRING_FORM_ACK_BLOCK = "请基于上述材料回答。"
+
+        # K22: 五组不同请求消息——循环 5 次比对，每次循环的请求消
+        # 息尽量不一样（用户口径；中英文兼备、长度尽量超过 8k
+        # tokens）。每组=（组名, system 形态,
+        # 语言, 前缀填充单元, 前缀目标字符数, 问题填充文本）；中文
+        # ~1.55 字符/token、英文 ~4 字符/token 折算，前缀约
+        # 8400-12000 tok，加每轮唯一问题后整请求 >8k tokens；组间
+        # 前缀内容互不相同（不同主题措辞），组内批次号防跨运行污
+        # 染；形态分配覆盖开发修复的两条剥离代码路径（块数组断点
+        # 挂 system 块——K3 口径；字符串断点挂 user 首块）
+        K22_GROUPS = [
+            (
+                "中文-客服知识库",
+                "块数组",
+                "中文",
+                (
+                    "本知识库收录产品规格说明、接口调用指南、计费"
+                    "策略细则与常见问题处理流程，供客服助手检索引用。"
+                ),
+                13000,
+                (
+                    "补充材料：客户在部署与验收阶段需核对接口说明、"
+                    "计费策略与规格参数，涉及多部门协作、流程审批与"
+                    "回归验证节点，请结合知识库内容作答。"
+                )
+                * 11,
+            ),
+            (
+                "英文-知识库",
+                "字符串",
+                "英文",
+                (
+                    "This knowledge base covers product "
+                    "specifications, interface guidelines, billing "
+                    "policies, frequently asked questions, and standard "
+                    "resolution procedures for customer service "
+                    "assistants."
+                ),
+                40000,
+                (
+                    "Supplementary material: customers must verify "
+                    "interface descriptions, billing policies, and "
+                    "specification parameters during deployment and "
+                    "acceptance, involving multi-team collaboration, "
+                    "approval workflows, and regression checkpoints."
+                )
+                * 10,
+            ),
+            (
+                "中文-运维手册",
+                "块数组",
+                "中文",
+                (
+                    "本运维手册涵盖部署架构说明、容量规划建议、告"
+                    "警分级处理、备份恢复步骤与故障排查流程，供值班"
+                    "工程师日常查阅。"
+                ),
+                13000,
+                (
+                    "补充材料：运维值守需核对容量水位、告警级别与备"
+                    "份状态，涉及值班交接、升级审批与演练复盘节点，"
+                    "请结合手册内容作答。"
+                )
+                * 10,
+            ),
+            (
+                "英文-技术文档",
+                "字符串",
+                "英文",
+                (
+                    "This technical documentation describes system "
+                    "architecture, capacity planning, alert "
+                    "management, disaster recovery procedures, and "
+                    "troubleshooting workflows for operations "
+                    "engineers."
+                ),
+                40000,
+                (
+                    "Supplementary material: on-call engineers must "
+                    "verify capacity levels, alert severities, and "
+                    "backup status, covering shift handover, "
+                    "escalation approvals, and drill retrospectives "
+                    "based on this documentation."
+                )
+                * 10,
+            ),
+            (
+                "中英混合-双语知识库",
+                "块数组",
+                "中英混合",
+                (
+                    "本知识库同时收录中文与英文条目：产品规格、接"
+                    "口说明与计费策略。The same repository also "
+                    "includes English entries for deployment guides, "
+                    "alert handling, and backup procedures."
+                ),
+                24000,
+                (
+                    "补充材料：双语检索需同时核对中文条目与 "
+                    "English entries，涉及术语对照、流程审批与回归"
+                    "验证节点，请结合知识库内容作答。"
+                )
+                * 10,
+            ),
+        ]
+
+        def billing_line() -> str:
+            """构造逐请求唯一计费行（值逐请求变化——静态值修复前
+            前缀也相同、缺陷无法复现=假阴性）"""
+            return (
+                f"{K22_BILLING_LINE_PREFIX} "
+                f'{{"request_id": "{uuid.uuid4().hex}", '
+                f'"ts": {int(time.time() * 1000)}}}'
+            )
+
+        def question_for(lang: str, k: int, filler: str) -> str:
+            """每轮唯一问题（轮次号在开头分叉——保证前缀在问题开
+            头处分叉；同轮两协议同文——"相同请求"）"""
+            if lang == "英文":
+                return (
+                    f"Question (Round {k}): Please summarize the "
+                    "applicable scope, precautions, and handling "
+                    "procedures based on the material above." + filler
+                )
+            return (
+                f"检索问题（第 {k} 轮）：请依据上述材料归纳适用范"
+                "围、注意事项与处理流程，并给出要点摘要。" + filler
+            )
+
+        def cache_usage_field(usage: Dict[str, Any], *names: str) -> int:
+            """从 usage 中取缓存计数值，兼容协议字段名与网关内部
+            字段名两种拼写（K3 口径）"""
+            for name in names:
+                value = usage.get(name)
+                if isinstance(value, (int, float)) and value > 0:
+                    return int(value)
+            return 0
+
+        def cached_of(usage: Dict[str, Any]):
+            """取 chat 协议缓存命中 tokens（prompt_tokens_details.
+            cached_tokens 优先，兼容 usage.cached_tokens 拼写——
+            K16 口径）"""
+            details = usage.get("prompt_tokens_details") or {}
+            value = details.get("cached_tokens")
+            if value is None:
+                value = usage.get("cached_tokens")
+            return value
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - /v1/messages 与 "
+            "/v1/chat/completions 前缀缓存命中率对齐（循环 5 次比"
+            "对，每次循环请求消息尽量不一样——2 组中文、2 组英文、"
+            "1 组中英混合，整请求 >8k tokens；每次循环每协议 1 冷轮 "
+            "+ 2 热轮，同轮两协议同问，逐热轮差值 ≤3 个百分点）==="
+        )
+
+        # 全运行唯一批次号：置入各组前缀头部（K3 口径——避免命中
+        # 历史运行遗留缓存）
+        run_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
+
+        chat_url = f"{api_client.base_url}/v1/chat/completions"
+        messages_url = f"{api_client.base_url}/anthropic/v1/messages"
+
+        def chat_round(
+            g: int, gname: str, k: int, prefix_text: str, q: str
+        ) -> Dict[str, Any]:
+            """chat 协议单轮（K16 口径：非流式手工 payload，自动
+            前缀缓存）"""
+            label = f"第{g}组·{gname}-chat-第{k}轮"
+            payload = {
+                "model": api_client.model_name,
+                "messages": [
+                    {"role": "system", "content": prefix_text},
+                    {"role": "user", "content": q},
+                ],
+                "max_tokens": 16,
+                "stream": False,
+            }
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"[可缓存长前缀 {len(prefix_text)} 字符，"
+                            f"批次 {run_id} 第 {g} 组]"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"[{len(q)} 字符] {q[:30]}…",
+                    },
+                ],
+                {
+                    "max_tokens": 16,
+                    "stream": False,
+                    "round": label,
+                },
+            )
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    chat_url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"[{label}] 请求发送异常（{chat_url}）: {e}"
+                )
+            assert response.status_code == 200, (
+                f"[{label}] 请求失败 HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(f"[{label}] 响应不是合法 JSON: {e}")
+            choices = result.get("choices") or []
+            assert choices, (
+                f"[{label}] 响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            usage = result.get("usage") or {}
+            test_logger.info(
+                f"[{label}]: HTTP 200, "
+                f"elapsed={time.time() - started:.1f}s, "
+                f"pt={usage.get('prompt_tokens')}, "
+                f"cached={cached_of(usage)}"
+            )
+            return usage
+
+        def messages_round(
+            g: int,
+            gname: str,
+            form: str,
+            k: int,
+            prefix_text: str,
+            q: str,
+            system_field,
+            user_field,
+            line: str,
+        ) -> Dict[str, Any]:
+            """messages 协议单轮（开发示例口径：非流式单 JSON 响
+            应，x-api-key + anthropic-version 头）"""
+            label = f"第{g}组·{gname}-{form}-第{k}轮"
+            payload = {
+                "model": api_client.model_name,
+                "max_tokens": K22_MAX_TOKENS,
+                "system": system_field,
+                "messages": [{"role": "user", "content": user_field}],
+            }
+            headers = {"anthropic-version": K22_ANTHROPIC_VERSION}
+            if api_client.api_key:
+                headers["x-api-key"] = api_client.api_key
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"[计费行 + 可缓存长前缀 "
+                            f"{len(prefix_text)} 字符，批次 {run_id} "
+                            f"第 {g} 组]"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"[{len(q)} 字符] {q[:30]}…",
+                    },
+                ],
+                {
+                    "protocol": "anthropic (/anthropic/v1/messages)",
+                    "anthropic-version": K22_ANTHROPIC_VERSION,
+                    "max_tokens": K22_MAX_TOKENS,
+                    "billing_line": line,
+                    "cache_control": "ephemeral（块数组挂 system 块/"
+                    "字符串挂 user 首块）",
+                    "round": label,
+                },
+            )
+            started = time.time()
+            try:
+                response = api_client.session.post(
+                    messages_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=api_client.timeout,
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"[{label}] 请求发送异常（{messages_url}）: {e}"
+                )
+            assert response.status_code == 200, (
+                f"[{label}] 请求失败 HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(f"[{label}] 响应不是合法 JSON: {e}")
+            content_blocks = result.get("content") or []
+            assert content_blocks, (
+                f"[{label}] 响应缺少 content: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            usage = result.get("usage") or {}
+            assert usage, (
+                f"[{label}] 响应缺少 usage: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            test_logger.info(
+                f"[{label}]: HTTP 200, "
+                f"elapsed={time.time() - started:.1f}s, usage: "
+                f"{json.dumps(usage, ensure_ascii=False)}"
+            )
+            return usage
+
+        def build_request(
+            form: str, line: str, prefix_text: str, q: str
+        ):
+            """按 system 形态构造 messages 协议请求字段（块数组：
+            断点挂 system 块；字符串：断点挂 user 首块——内容固定
+            断点前缀逐轮恒定，每轮唯一问题置于断点外）"""
+            if form == "块数组":
+                return (
+                    [
+                        {
+                            "type": "text",
+                            "text": f"{line}\n{prefix_text}",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    q,
+                )
+            return (
+                f"{line}\n{prefix_text}",
+                [
+                    {
+                        "type": "text",
+                        "text": K22_STRING_FORM_ACK_BLOCK,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {"type": "text", "text": q},
+                ],
+            )
+
+        # 8-10k tok prefill 耗时显著——超时下限保护（K3 模式）
+        original_timeout = api_client.timeout
+        api_client.timeout = max(original_timeout, K22_MIN_REQUEST_TIMEOUT)
+        try:
+            group_summaries: List[str] = []
+            for g, group_cfg in enumerate(K22_GROUPS, 1):
+                gname, form, lang, unit, target_chars, q_filler = (
+                    group_cfg
+                )
+                prefix_text = (
+                    f"批次编号 {run_id} 第 {g} 组\n"
+                    + unit * (target_chars // len(unit) + 1)
+                )
+                hot_compare: List[str] = []
+                for k in range(1, K22_ROUNDS + 1):
+                    q = question_for(lang, k, q_filler)
+                    # 同轮交替发送两协议（同问——"相同请求"）
+                    chat_usage = chat_round(
+                        g, gname, k, prefix_text, q
+                    )
+                    line = billing_line()
+                    system_field, user_field = build_request(
+                        form, line, prefix_text, q
+                    )
+                    msg_usage = messages_round(
+                        g,
+                        gname,
+                        form,
+                        k,
+                        prefix_text,
+                        q,
+                        system_field,
+                        user_field,
+                        line,
+                    )
+                    if k <= K22_COLD_ROUNDS:
+                        # 冷轮：两协议均无缓存可命中，不参与比较（用
+                        # 户口径：需热轮才能统计命中率）——仅做长度
+                        # sanity 留痕
+                        pt_cold = chat_usage.get("prompt_tokens") or 0
+                        if pt_cold and pt_cold < 8000:
+                            test_logger.warning(
+                                f"[第{g}组·{gname}] 冷轮请求长度 "
+                                f"{pt_cold} tokens 不足 8k——请加"
+                                "大该组前缀目标字符数"
+                            )
+                        continue
+                    # ---- 热轮：逐轮比较两协议命中率（用户口径） ----
+                    pt = chat_usage.get("prompt_tokens") or 0
+                    cached = cached_of(chat_usage) or 0
+                    chat_rate = cached / pt if pt else 0.0
+                    read = cache_usage_field(
+                        msg_usage,
+                        "cache_read_input_tokens",
+                        "cache_read_tokens",
+                    )
+                    creation = cache_usage_field(
+                        msg_usage,
+                        "cache_creation_input_tokens",
+                        "cache_creation_tokens",
+                    )
+                    input_tok = msg_usage.get("input_tokens") or 0
+                    # 分母口径自适应（同轮 chat prompt_tokens 为参
+                    # 照）：input_tokens 已含命中总量（超过参照
+                    # 80%）时直接作分母；否则（官方语义——仅计未命
+                    # 中输入）加 read
+                    if (
+                        pt
+                        and input_tok
+                        > pt * K22_INPUT_TOTAL_SEMANTICS_RATIO
+                    ):
+                        denom = input_tok
+                    else:
+                        denom = input_tok + read
+                    msg_rate = read / denom if denom else 0.0
+                    gap = abs(chat_rate - msg_rate)
+                    test_logger.info(
+                        f"[第{g}组·{gname}] 第{k}轮（热轮）: chat="
+                        f"{chat_rate:.2%}（cached={cached}/{pt}），"
+                        f"messages={msg_rate:.2%}（read={read}/"
+                        f"{denom}，input_tokens={input_tok}，"
+                        f"creation={creation}），差值={gap:.2%}"
+                        f"（容差 3 个百分点）"
+                    )
+                    if creation:
+                        test_logger.warning(
+                            f"[第{g}组·{gname}] 第{k}热轮 "
+                            f"cache_creation={creation}——热轮仍在"
+                            "重建缓存，前缀逐请求变化（剥离失效直"
+                            "接信号）"
+                        )
+                    if chat_rate < 0.3 and msg_rate < 0.3:
+                        test_logger.warning(
+                            f"[第{g}组·{gname}] 第{k}热轮两协议命"
+                            f"中率均异常低（chat={chat_rate:.2%}，"
+                            f"messages={msg_rate:.2%}）——疑似全"
+                            "局缓存异常（chat 侧由 K15/K16 覆盖），"
+                            "本用例按用户口径仅判定协议间差值"
+                        )
+                    hot_compare.append(
+                        f"第{k}轮 chat={chat_rate:.2%}/"
+                        f"messages={msg_rate:.2%}/差值{gap:.2%}"
+                    )
+                    assert gap <= K22_PARITY_TOLERANCE, (
+                        f"客户问题复现失败：第 {g} 组（{gname}，"
+                        f"{form} 形态）第 {k} 热轮两协议缓存命中率"
+                        f"差值 {gap:.2%} 超过容差 3 个百分点——"
+                        f"chat={chat_rate:.2%}（cached={cached}/"
+                        f"{pt}），messages={msg_rate:.2%}"
+                        f"（read={read}/{denom}，input_tokens="
+                        f"{input_tok}，creation={creation}）。缺陷"
+                        "形态：计费行留在 system 头部、逐请求变化"
+                        "致前缀从位置 0 失配，messages 命中率应 "
+                        "≈0%；修复后两协议每热轮均应 ≈94%"
+                    )
+                group_summaries.append(
+                    f"第{g}组·{gname}（{form}）: "
+                    + "，".join(hot_compare)
+                )
+                test_logger.info(
+                    f"[第{g}组·{gname}] 组内热轮比较完成: "
+                    + "；".join(hot_compare)
+                )
+            test_logger.info(
+                "客户问题复现通过: 循环 5 次比对（每次循环请求消息各"
+                "异，中英文兼备）——任意热轮两协议缓存命中率差值均 "
+                f"≤3 个百分点（用户指定容差）——{'；'.join(group_summaries)}"
+            )
+        finally:
+            api_client.timeout = original_timeout
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_orphan_tool_message_accepted(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K23 [P0]: 客户问题 - 孤儿 tool 消息应对齐官方放行并正常消费
+
+        客户问题（新工单，官方对齐口径）：messages 中 tool 角色消息前
+        无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定
+        义任何 tools），平台返回 400（"Invalid parameter: messages
+        with role 'tool' must be a response to a preceeding message
+        with 'tool calls'."——type: alaya code error、code:
+        invalid text request——网关层白加的校验）；而智谱官方源对
+        同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」，
+        且模型在 reasoning 中实际引用了 tool 消息里的数据（工具数
+        据被模型正常消费）。
+        新契约（客户指定）：预期结果同官方一致——此类消息序列不做
+        校验、正常出结果。
+        与 K14 的关系：K14（test_orphan_tool_message_rejected）为
+        当时工单口径的原始契约（网关校验拒绝 400），按用户指令保
+        持不变；本用例记录新客户需求（官方对齐契约：接受并正常消
+        费）。二者输入同类、预期相反——平台采纳官方对齐修复后
+        K14 将 FAIL，其保留/退役由用户决定（本用例不改动 K14）。
+        本用例按客户新工单原始请求体还原（messages=[user"查一下北
+        京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文
+        本、无 tool_calls——孤儿条件）、tool tool_call_id=
+        "call_weather_001" content={"city":"北京","temp_c":18,
+        "condition":"晴"}、user"根据工具返回的数据，用一句话告诉我
+        天气。"]、max_tokens=200、非流式、无 tools/thinking）。
+        硬断言：
+        1. HTTP 200（核心——原始 400 拦截形态复现即 FAIL）
+        2. 响应合法 JSON 且 choices 非空
+        3. message 有效输出（content 或 tool_calls 非空——官方形
+           态为正常答句，工具调用响应亦为成功形态）
+        官方行为细节（输出/推理引用工具数据要素）为软校验仅日志；
+        finish/usage 仅日志。采样参数不豁免（默认口径——未明确指定
+        加入豁免名单）：由全局 SAMPLING_PARAMS 覆盖——temperature
+        无覆盖时回退 0.7、top_p/seed 显式指定时注入（K10/K18/K20
+        口径）。模型真实响应（状态码/响应体全文）断言前打印（失败
+        时同样可见）。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K23: 客户新工单原始请求体口径（勿改——孤儿 tool 消息的最
+        # 小充分条件：assistant 纯文本消息后直接跟 tool 消息，无
+        # tool_calls 关联，且请求不定义任何 tools）
+        K23_MESSAGES = [
+            {"role": "user", "content": "查一下北京天气"},
+            {
+                "role": "assistant",
+                "content": "好的，我来为您查询北京天气数据。",
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_weather_001",
+                "content": (
+                    "{\"city\": \"北京\", \"temp_c\": 18, "
+                    "\"condition\": \"晴\"}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": "根据工具返回的数据，用一句话告诉我天气。",
+            },
+        ]
+        # K23: 工单原始输出上限（官方同参数下正常答句）
+        K23_MAX_TOKENS = 200
+        # K23: 原始 400 报错关键文案（缺陷形态判别/报文引用）
+        K23_ORPHAN_ERROR_TEXT = (
+            "messages with role 'tool' must be a response to a "
+            "preceeding message with 'tool calls'"
+        )
+        # K23: 官方答句应含的天气要素（软校验——工具数据被模型消费
+        # 的信号；仅日志，不作硬断言——生成措辞自由）
+        K23_TOOL_DATA_HINTS = ("北京", "18", "晴")
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 孤儿 tool 消息官方对齐（前无 "
+            "assistant tool_calls 且未定义 tools——官方 200 正常消"
+            "费工具数据，平台 400 白加校验为缺陷形态；期望 200+有效"
+            "输出）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS
+        # （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
+        # top_p/seed 显式指定时注入（K10/K18/K20 口径）
+        sampling_extra: Dict[str, Any] = {}
+        if api_client.top_p is not None:
+            sampling_extra["top_p"] = api_client.top_p
+        if api_client.seed is not None:
+            try:
+                sampling_extra["seed"] = int(api_client.seed)
+            except (TypeError, ValueError):
+                sampling_extra["seed"] = api_client.seed
+
+        # 手工构造 payload 直发（含 tool 角色消息，chat_completion
+        # 封装不支持；工单原始请求体为非流式——不传 stream，采样按
+        # 全局覆盖注入）
+        payload = {
+            "model": api_client.model_name,
+            "messages": K23_MESSAGES,
+            "max_tokens": K23_MAX_TOKENS,
+            "temperature": api_client._effective_temperature(0.7),
+            **sampling_extra,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            K23_MESSAGES,
+            {
+                "max_tokens": K23_MAX_TOKENS,
+                "tools": "(未定义)",
+                "thinking": "(不传，工单原始请求体口径)",
+                "stream": "(不传——默认非流式)",
+                "temperature": api_client._effective_temperature(0.7),
+                "top_p": sampling_extra.get("top_p", "(未注入)"),
+                "seed": sampling_extra.get("seed", "(未注入)"),
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+
+        # 模型真实响应断言前打印（状态码/响应体全文——失败时同样可
+        # 见，便于诊断）
+        test_logger.info(
+            f"真实响应: HTTP {response.status_code}, elapsed="
+            f"{elapsed:.1f}s, body={response.text[:800]!r}"
+        )
+
+        # 断言1（核心）：官方对齐——应放行并正常响应（原始 400 拦截
+        # 形态复现即 FAIL）
+        defect_note = (
+            "缺陷形态：网关层白加校验返回 400 "
+            f"\"{K23_ORPHAN_ERROR_TEXT}\"（type: alaya code error、"
+            "code: invalid text request）；官方源同一请求 200 正常"
+            "应答「北京今天天气晴朗，气温18℃」，且模型在 reasoning "
+            "中实际引用了 tool 消息里的数据"
+        )
+        if response.status_code == 400 and "role 'tool'" in response.text:
+            defect_note = (
+                "缺陷形态精确复现（网关白加校验拦截——原始 400 报错"
+                f"形态）。{defect_note}"
+            )
+        assert response.status_code == 200, (
+            f"客户问题复现失败：孤儿 tool 消息应按官方口径放行并正"
+            f"常响应，实际 HTTP {response.status_code}——"
+            f"{response.text[:400]!r}。{defect_note}"
+        )
+
+        # 断言2：响应合法 JSON 且 choices 非空
+        try:
+            body = response.json()
+        except ValueError as e:
+            pytest.fail(
+                f"客户问题复现失败：响应应为合法 JSON，解析异常: {e}"
+                f"——{response.text[:400]!r}"
+            )
+        choices = body.get("choices") or []
+        assert choices, (
+            f"客户问题复现失败：choices 为空——{response.text[:400]!r}"
+        )
+
+        # 断言3：message 有效输出（官方形态为正常答句）
+        message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls") or []
+        finish = choices[0].get("finish_reason")
+        budget_note = (
+            "（finish=length：max_tokens=200 预算被思考耗尽的空正文"
+            "形态——与 400 拦截形态区分，需评估官方对齐下的预算口"
+            "径）"
+            if finish == "length" and not (content or tool_calls)
+            else ""
+        )
+        assert content or tool_calls, (
+            f"客户问题复现失败：message 无有效输出（content 与 "
+            f"tool_calls 均空，finish={finish}）——官方同参数下正常"
+            f"应答{budget_note}——{response.text[:400]!r}"
+        )
+
+        # 官方行为细节软校验（仅日志）：输出/推理引用工具数据要素
+        # （北京/18/晴）= 工具数据被模型正常消费的信号
+        reasoning = (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+            or ""
+        )
+        consumed = [
+            h
+            for h in K23_TOOL_DATA_HINTS
+            if h in content or h in reasoning
+        ]
+        if consumed:
+            test_logger.info(
+                f"官方行为细节（软校验通过）: 输出/推理引用了工具数"
+                f"据要素（{'、'.join(consumed)}）——工具数据被模型"
+                "正常消费（官方对齐形态）"
+            )
+        else:
+            test_logger.info(
+                "官方行为细节（软校验未命中）: 输出/推理未引用工具数"
+                "据要素（生成措辞自由，不作硬断言）"
+            )
+        test_logger.info(f"finish={finish}, usage={body.get('usage')}")
+
+        test_logger.info(
+            "客户问题复现通过: 孤儿 tool 消息按官方口径放行——HTTP "
+            "200 且 message 有效输出（400 白加校验拦截形态未复现，"
+            "与官方源行为对齐）"
         )

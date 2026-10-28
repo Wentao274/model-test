@@ -964,6 +964,86 @@ TEST_CATEGORIES = {
                 "system_message_embedded_tools_accepted",
                 "P0",
             ),
+            (
+                "K22",
+                "/v1/messages 缓存命中率应与 /v1/chat/completions "
+                "基本一致",
+                "客户问题：相同请求下，Anthropic 协议（/anthropic/"
+                "v1/messages）前缀缓存命中率始终低于 /v1/chat/"
+                "completions（\"缓存始终上不去\"）——根因：该链路 "
+                "system 头部携带 x-anthropic-billing-header: 逐请求"
+                "动态计费行（字符串/块数组两种 system 形态），前缀缓"
+                "存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀"
+                "永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证"
+                " ≥90%）。开发修复：入引擎前条件剥离——system 开头是"
+                " x-anthropic-billing-header: 行即去掉，其余内容原"
+                "样保留。测试要点（用户口径）：相同请求分别发送两协"
+                "议，统计二者缓存命中率并逐轮比较——第一次请求为冷"
+                "轮（两协议均无缓存可命中，不参与比较；需热轮才能统"
+                "计命中率），热轮任意一轮差值超过 3 个百分点（用户"
+                "指定容差）即失败。循环 5 次比对（用户口径：每次循"
+                "环的请求消息尽量不一样）：2 组中文、2 组英文、1 组"
+                "中英混合，每组前缀 ~8400-12000 tok + 每轮唯一问题"
+                " ~330-550 tok，整请求长度尽量超过 8k tokens；覆盖"
+                "两条剥离代码路径——块数组形态（断点挂 system 块，"
+                "K3 口径）与字符串形态（断点挂 user 首块，每轮唯一"
+                "问题置于断点外）。每次循环每协议 1 冷轮 + 2 热轮"
+                "（用户口径；冷轮不参与比较），逐轮交替发送两协议"
+                "（同轮同问），共 5 次循环 × 2 协议 × 3 轮 = 30 请"
+                "求；命中率口径：chat=cached_tokens/"
+                "prompt_tokens（该轮，K16 字段口径）；messages="
+                "cache_read/分母（分母按 input_tokens 口径自适应——"
+                "以同轮 chat prompt_tokens 为参照）。硬断言：①每热"
+                "轮两协议命中率差值 ≤3 个百分点（任意一轮超差即 "
+                "FAIL——缺陷形态 messages ≈0% vs chat ≈94%，差 "
+                "≈90pp）；②每请求 HTTP 200 且响应正常（chat："
+                "choices；messages：usage+content）。热轮 cache_"
+                "creation>0（前缀逐请求重建=剥离失效直接信号）与双"
+                "低形态仅日志留痕。运行日志不含具体模型名；适用 "
+                "GLM-5.3；采样参数不豁免（默认口径——未明确指定加"
+                "入豁免名单）",
+                "cross_protocol_prefix_cache_parity",
+                "P0",
+            ),
+            (
+                "K23",
+                "孤儿 tool 消息应对齐官方放行并正常消费",
+                "客户问题（新工单，官方对齐口径）：messages 中 tool "
+                "角色消息前无带 tool_calls 的 assistant 消息（孤儿 "
+                "tool 消息，且请求未定义任何 tools），平台返回 400 "
+                "（\"Invalid parameter: messages with role 'tool' "
+                "must be a response to a preceeding message with "
+                "'tool calls'.\"——type: alaya code error、code: "
+                "invalid text request——网关层白加的校验）；而智谱"
+                "官方源对同一请求 HTTP 200 正常应答「北京今天天气"
+                "晴朗，气温18℃」，且模型在 reasoning 中实际引用了 "
+                "tool 消息里的数据（工具数据被模型正常消费）。新契"
+                "约（客户指定）：预期结果同官方一致——此类消息序列"
+                "不做校验、正常出结果。与 K14 的关系：K14 为当时工"
+                "单口径的原始契约（网关校验拒绝 400，保持不变——"
+                "用户指令），本用例记录新客户需求（官方对齐契约）"
+                "——二者输入同类、预期相反，平台采纳官方对齐修复后 "
+                "K14 将 FAIL，其保留/退役由用户决定（本用例不改动 "
+                "K14）。按客户新工单原始请求体还原（messages=[user "
+                "查北京天气、assistant 纯文本（无 tool_calls——孤"
+                "儿条件）、tool tool_call_id=call_weather_001 "
+                "content={city:北京,temp_c:18,condition:晴}、user "
+                "要求据工具数据一句话作答]、max_tokens=200、非流"
+                "式、无 tools/thinking），单次请求（确定性行为，无"
+                "需连发），断言 HTTP 200（核心——原始 400 拦截形态"
+                "复现即 FAIL，报文引用原始报错文案）、响应合法 JSON "
+                "且 choices 非空、message 有效输出（content 或 "
+                "tool_calls 非空——官方形态为正常答句）；官方行为"
+                "细节（输出/推理引用工具数据要素——北京/18/晴）软校"
+                "验仅日志；finish/usage 仅日志；采样参数不豁免（默"
+                "认口径——未明确指定加入豁免名单）：由全局 "
+                "SAMPLING_PARAMS 覆盖——temperature 无覆盖时回退 "
+                "0.7、top_p/seed 显式指定时注入；模型真实响应（状"
+                "态码/响应体全文）断言前打印；适用 GLM-5.3；运行日"
+                "志不含具体模型名",
+                "orphan_tool_message_accepted",
+                "P0",
+            ),
         ],
     },
 }
