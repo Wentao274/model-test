@@ -1058,6 +1058,33 @@ TEST_CATEGORIES = {
                 "orphan_tool_message_accepted",
                 "P0",
             ),
+            (
+                "K24",
+                "双请求正常响应（思考耗尽预算 low 强度回退）",
+                "客户问题（新工单）：客户的两个请求（中文同音词与言部"
+                "汉字写作题、英文数学题），temperature=0.0、"
+                "max_completion_tokens=32768（工单原始字段名，非 "
+                "max_tokens）、非流式，期望均正常响应并返回正文。风"
+                "险形态（用户指定）：默认 max 思考强度下思考可能耗"
+                "光预算——正文空、finish=length。回退契约（用户指"
+                "定）：第 1 轮按工单原始请求体直发（不带 "
+                "reasoning_effort）；有正常正文即通过；耗光的请求"
+                "以 reasoning_effort=low（GLM 顶层思考强度参数，"
+                "K20 口径）重发，断言相同；第 2 轮只重测耗光的"
+                "（已通过不重测）。采样参数豁免（用户指定）：两请求"
+                "体均显式 temperature=0.0——工单原始请求体为唯一"
+                "口径，通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖，"
+                "top_p/seed 不注入。硬断言（每轮每请求）：①HTTP "
+                "200；②合法 JSON 且 choices 非空；③message 有效输"
+                "出（content 或 tool_calls 非空）；第 1 轮耗光形"
+                "态转 low 回退不直接 FAIL，正文空且 finish≠length "
+                "直接 FAIL，low 回退仍无正文即 FAIL（双强度均未产"
+                "出——留证交开发）；finish/usage 仅日志；模型真实"
+                "响应（状态码/响应体全文）断言前打印；适用 "
+                "GLM-5.3；运行日志不含具体模型名",
+                "dual_request_response_with_effort_fallback",
+                "P0",
+            ),
         ],
     },
 }

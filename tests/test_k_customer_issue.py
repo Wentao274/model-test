@@ -406,6 +406,23 @@ K. 客户问题复现测试
   回退 0.7、top_p/seed 显式指定时注入（K10/K18/K20 口径）。模型
   真实响应（状态码/响应体全文）断言前打印。（不进 smoke 集：新
   用例首跑观察期）
+- K24: 双请求正常响应（思考耗尽预算 low 强度回退） [P0]
+  客户问题（新工单）：客户两个请求（中文同音词与言部汉字写作题、
+  英文数学题）——temperature=0.0、max_completion_tokens=32768
+  （工单原始字段名）、非流式，期望均正常响应并返回正文。风险形
+  态（用户指定）：默认 max 思考强度下思考可能耗光预算——正文空、
+  finish=length。回退契约（用户指定）：第 1 轮按工单原始请求体
+  直发（不带 reasoning_effort）；有正常正文即通过；耗光的请求
+  以 reasoning_effort=low（GLM 顶层参数，K20 口径）重发，断言相
+  同；第 2 轮只重测耗光的（已通过不重测）。采样参数豁免（用户指
+  定）：两请求体均显式 temperature=0.0——工单体为唯一口径，通
+  过 RAW_SAMPLING_PARAM_TESTS 豁免全局 SAMPLING_PARAMS 覆盖。硬
+  断言（每轮每请求）：①HTTP 200；②合法 JSON 且 choices 非空；
+  ③message 有效输出（content 或 tool_calls 非空）；第 1 轮耗光
+  形态转 low 回退不直接 FAIL，low 回退仍无正文即 FAIL（双强度
+  均未产出——留证交开发）。finish/usage 仅日志；模型真实响应断
+  言前打印；运行日志不含具体模型名。（不进 smoke 集：新用例首跑
+  观察期）
 """
 
 import base64
@@ -5901,3 +5918,262 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "200 且 message 有效输出（400 白加校验拦截形态未复现，"
             "与官方源行为对齐）"
         )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_dual_request_response_with_effort_fallback(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K24 [P0]: 客户问题 - 双请求正常响应（思考耗尽预算 low 强度回退）
+
+        客户问题（新工单）：客户的两个请求——中文写作题（文段中找
+        同音词与[言部]汉字并写 800 字左右荷塘月色文章，关键词月光/
+        这/意义限用）与英文数学题（三个正实数 k 使 f(x)=((x-18)
+        (x-72)(x-98)(x-k))/x 在正实数上恰于两点取最小，求 k 之和）
+        ——两请求体均为 glm-5.3、temperature=0.0、
+        max_completion_tokens=32768、非流式，期望均正常响应并返回
+        正文。
+        风险形态（用户指定）：默认（max）思考强度下，思考内容可能
+        耗光 max_completion_tokens 预算——正文为空、finish=length。
+        回退契约（用户指定）：第 1 轮按工单原始请求体直发（不带
+        reasoning_effort——默认强度即 max）；有正常正文即该请求
+        通过并退出；思考耗光的请求以 reasoning_effort="low"（GLM
+        顶层思考强度参数，K20 口径）重发，断言相同；第 2 轮只重测
+        第 1 轮耗光的请求（已通过的不重测）。
+        采样参数豁免（用户指定）：两个请求体均显式指定
+        temperature=0.0——工单原始请求体为唯一口径，全局
+        SAMPLING_PARAMS 覆盖不得生效（通过 RAW_SAMPLING_PARAM_TESTS
+        豁免），top_p/seed 亦不注入。
+        硬断言（每轮每请求）：①HTTP 200；②响应合法 JSON 且
+        choices 非空；③message 有效输出（content 或 tool_calls 非
+        空）。第 1 轮正文空且 finish=length 为耗光形态按契约转
+        low 回退（不直接 FAIL）；正文空且 finish≠length 直接
+        FAIL；low 回退轮仍无正文即 FAIL（双强度均未产出有效输出
+        ——报文留证交开发）。finish/usage 仅日志。模型真实响应
+        （状态码/响应体全文）断言前打印（失败时同样可见）。运行
+        日志不含具体模型名。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K24: 工单请求之一——中文写作题（文段与要求按工单原文还
+        # 原：要求条目间换行、关键词以双引号包裹，均为工单原文形
+        # 态）
+        K24_CONTENT_ZH = (
+            "请您选出以下内容中的同音词以及特定部首的字，并用这些"
+            "词和字写一篇，描写荷塘月色的文章。【在晨曦初升的"
+            "时刻，水面如镜，倒映着熠熠生辉的霞光，远处的山屿若隐"
+            "若现。水鸟掠过，羽翼轻拂，仿佛在湖心写下意义深远的诗"
+            "句。湖畔柳丝轻摆，仿佛在对这喧嚣尘世提出温和的异议。"
+            "它用自己的方式诠释着时光——不是激烈的抗争，而是如意"
+            "译般的转化，将内心的不安化作诗意的舞蹈，在风中低语着"
+            "属于自然的哲学。微风拂过，令人思忖，悄然唤醒沉睡已久"
+            "的情愫。远处雄峰屹立，山峦叠嶂，岚气舒卷，山色漫衍,如"
+            "同岁月的画卷。每一寸光影都在诉说着生命的意义，而每一"
+            "朵花的开放，都有它独特的意义。阳光透过云层，照亮了无"
+            "数微小的欢愉。大地静默，万物各自用自己的方式诠释着时"
+            "光的温柔，怡然生长，静静守候。万物的心志与自然的情感"
+            "交融，在这静谧的清晨,人们心怀喜悦开启新的一天。】要求"
+            "如下：1.从文段中找出读音相同的二字词语，发音包括声调"
+            "完全相同，在你的文章中需要用到至少4个文段中这样的同"
+            "音词。\n2.从文段中找出部首是[言部]的汉字，并在你的文"
+            "章中至少用到7个。\n3.你的文章字数需要在800字左右，左"
+            "右意味着允许上下浮动10%。\n"
+            '4.关键词"月光","这","意义"在你的文章中使用不能超过'
+            "2次。请你直接给出文章。"
+        )
+        # K24: 工单请求之二——英文数学题
+        K24_CONTENT_MATH = (
+            "There are exactly three positive real numbers k such "
+            "that the function\n\n"
+            "f(x) = ((x - 18)(x - 72)(x - 98)(x - k)) / x\n\n"
+            "defined over the positive real numbers achieves its "
+            "minimum value at exactly two positive real numbers "
+            "x.\n\n"
+            "Find the sum of these three values of k."
+        )
+        # K24: 工单两个请求（标签 + 原始 messages——均为 user 单轮）
+        K24_REQUESTS = [
+            (
+                "请求一（中文：同音词与言部汉字写作）",
+                [{"role": "user", "content": K24_CONTENT_ZH}],
+            ),
+            (
+                "请求二（英文：数学题）",
+                [{"role": "user", "content": K24_CONTENT_MATH}],
+            ),
+        ]
+        # K24: 工单原始公共参数——max_completion_tokens 为工单原
+        # 始字段名（非 max_tokens，勿改）；temperature 显式 0.0
+        # （豁免全局覆盖——工单体为唯一口径）
+        K24_MAX_COMPLETION_TOKENS = 32768
+        K24_TEMPERATURE = 0.0
+        # K24: 思考耗尽预算的回退强度——GLM 顶层 reasoning_effort
+        # 参数取 low（K20 口径）
+        K24_EFFORT_LOW = "low"
+        # K24: max 思考 + 32768 大预算耗光耗时显著（非流式整包返
+        # 回）——单请求超时下限（配置已 >= 该值时为 no-op）
+        K24_MIN_REQUEST_TIMEOUT = 1800
+
+        def send_and_judge(
+            label: str,
+            messages: List[Dict[str, Any]],
+            effort_label: str,
+            effort_value: Any,
+            allow_exhausted: bool,
+        ) -> Dict[str, Any]:
+            """K24 单次请求发送与判定：工单口径 payload 直发，返
+            回 {"passed": bool, "exhausted": bool}——硬失败直接
+            断言/pytest.fail；第 1 轮耗光形态（allow_exhausted=
+            True 时）标记回退由调用方重发"""
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": messages,
+                "stream": False,
+                "max_completion_tokens": K24_MAX_COMPLETION_TOKENS,
+                "temperature": K24_TEMPERATURE,
+            }
+            if effort_value is not None:
+                payload["reasoning_effort"] = effort_value
+            TestLogger.log_request(
+                test_logger,
+                messages,
+                {
+                    "max_completion_tokens": K24_MAX_COMPLETION_TOKENS,
+                    "temperature": "0.0（工单原始——豁免全局覆盖）",
+                    "stream": False,
+                    "reasoning_effort": effort_label,
+                },
+            )
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"{label} 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+            # 模型真实响应断言前打印（状态码/响应体全文——失败时
+            # 同样可见，便于诊断）
+            test_logger.info(
+                f"{label} 真实响应: HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s, body={response.text[:800]!r}"
+            )
+            assert response.status_code == 200, (
+                f"客户问题复现失败：{label} 应正常响应（HTTP 200），"
+                f"实际 HTTP {response.status_code}——"
+                f"{response.text[:400]!r}"
+            )
+            try:
+                body = response.json()
+            except ValueError as e:
+                pytest.fail(
+                    f"客户问题复现失败：{label} 响应应为合法 JSON，"
+                    f"解析异常: {e}——{response.text[:400]!r}"
+                )
+            choices = body.get("choices") or []
+            assert choices, (
+                f"客户问题复现失败：{label} choices 为空——"
+                f"{response.text[:400]!r}"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls") or []
+            finish = choices[0].get("finish_reason")
+            test_logger.info(
+                f"{label} finish={finish}, usage={body.get('usage')}"
+            )
+            if content or tool_calls:
+                test_logger.info(
+                    f"{label} 正文有效（content {len(content)} 字符"
+                    "）——该请求通过"
+                )
+                return {"passed": True, "exhausted": False}
+            if allow_exhausted:
+                # 第 1 轮：仅思考耗光形态（正文空+finish=length）可
+                # 转回退；其他空响应为异常形态直接 FAIL
+                assert finish == "length", (
+                    f"客户问题复现失败：{label} 无有效输出且非思考"
+                    f"耗光形态（content 与 tool_calls 均空，"
+                    f"finish={finish}）——{response.text[:400]!r}"
+                )
+                test_logger.info(
+                    f"{label} 思考耗光预算（正文空 + finish="
+                    "length，默认 max 思考强度）——按用户指定契约转"
+                    " reasoning_effort=low 回退重发"
+                )
+                return {"passed": False, "exhausted": True}
+            pytest.fail(
+                f"客户问题复现失败：{label}（low 强度回退轮）仍无"
+                f"有效输出（content 与 tool_calls 均空，finish="
+                f"{finish}）——默认 max 与 low 双强度均未产出有效"
+                f"输出，报文留证交开发——{response.text[:400]!r}"
+            )
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 双请求正常响应（默认 max 思考"
+            "强度有正文即过；思考耗光预算按 reasoning_effort=low "
+            "回退重发且仅测耗光请求——用户指定契约；temperature=0.0"
+            " 工单口径豁免全局采样覆盖）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 采样参数豁免（用户指定）：两个请求体均显式 temperature=
+        # 0.0——工单原始请求体为唯一口径，通过 RAW_SAMPLING_PARAM_
+        # TESTS 豁免全局 SAMPLING_PARAMS 覆盖，top_p/seed 亦不注
+        # 入——payload 直用工单原值
+
+        # 超时保护：max 思考 + 32768 预算耗光耗时显著——单请求超
+        # 时下限（配置已 >= 该值时为 no-op）
+        original_timeout = api_client.timeout
+        api_client.timeout = max(
+            original_timeout, K24_MIN_REQUEST_TIMEOUT
+        )
+        try:
+            # ---- 第 1 轮：默认 max 思考强度（工单原始请求体，不带
+            # reasoning_effort）----
+            outcomes: Dict[int, str] = {}
+            exhausted_specs: List[Any] = []
+            for idx, (label, messages) in enumerate(K24_REQUESTS, 1):
+                result = send_and_judge(
+                    f"{label}（第 1 轮：默认 max 思考强度）",
+                    messages,
+                    effort_label=(
+                        "（不传——默认 max 思考强度，工单原始请求体）"
+                    ),
+                    effort_value=None,
+                    allow_exhausted=True,
+                )
+                if result["passed"]:
+                    outcomes[idx] = "默认 max 强度通过"
+                else:
+                    exhausted_specs.append((idx, label, messages))
+
+            # ---- 第 2 轮：思考耗光的请求按 low 强度回退重发（仅第
+            # 1 轮耗光的——已通过的不重测，用户指定）----
+            if not exhausted_specs:
+                test_logger.info(
+                    "两个请求在默认 max 思考强度下均返回正常正文"
+                    "——无需 low 回退轮"
+                )
+            for idx, label, messages in exhausted_specs:
+                send_and_judge(
+                    f"{label}（第 2 轮：low 强度回退）",
+                    messages,
+                    effort_label=(
+                        "low（思考耗光回退——GLM 顶层 "
+                        "reasoning_effort，K20 口径）"
+                    ),
+                    effort_value=K24_EFFORT_LOW,
+                    allow_exhausted=False,
+                )
+                outcomes[idx] = "low 强度回退通过"
+
+            test_logger.info(
+                "客户问题复现通过: 两个请求均正常响应并返回正文——"
+                + "；".join(
+                    f"请求{idx}（{outcomes[idx]}）"
+                    for idx in sorted(outcomes)
+                )
+            )
+        finally:
+            api_client.timeout = original_timeout

@@ -75,6 +75,7 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约温度——非该值 400，思考长度对比的请求可执行前提）
     "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度——非该值 400，工具调用判定的请求可执行前提）
     "test_required_chitchat_official_behavior",  # K9: 客户问题复现（同 K8——官方行为对照级别）
+    "test_dual_request_response_with_effort_fallback",  # K24: 客户问题复现（两请求体均显式指定 temperature=0.0——工单原始请求体为唯一口径，用户指定豁免；全局覆盖不得生效）
     # K1/K2/K4/K11-K17/K19 已移除（用户规则：测试逻辑与 temperature/top_p/seed 无关即不豁免）：
     # K1=Pydantic Schema 工具调用、K2=重复请求稳定性、K4=frequency_penalty<0 钳制（fp 不在
     # temperature/top_p/seed 之列）、K11=response_format 三模式、K12=reasoning_effort 档位、

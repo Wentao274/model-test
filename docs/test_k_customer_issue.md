@@ -8,14 +8,16 @@
 - **原样复现**：system/user 提示词、tools 定义、tool_choice、thinking、stream、
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
-- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K23 为
+- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K24 为
   P0 必测（任何失败应阻断发布），K8/K9 按客户工单优先级为 P1。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免**：`RAW_SAMPLING_PARAM_TESTS` 豁免名单默认规则（用户口径）：
   未明确指定加入豁免的用例一律不豁免——采样参数由全局 `--sampling-params`
   覆盖（temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入）。
-  现仅 K5-K9 保留豁免：其测试逻辑依赖 temperature/top_p/seed（关思考
-  温度档契约等），全局覆盖会破坏契约验证，须始终按原始采样参数执行。
+  现仅 K5-K9、K24 保留豁免：K5-K9 测试逻辑依赖 temperature/top_p/seed
+  （关思考温度档契约等），全局覆盖会破坏契约验证；K24 工单原始请求体
+  显式指定 temperature=0.0（工单体为唯一口径，用户指定豁免）——均须
+  始终按原始采样参数执行。
 - **环境注入（不硬编码）**：客户 curl 中的 **URL、API key、模型名不写入测试
   代码**——与其他测试类一致，由 Jenkinsfile 构建参数（`BASE_URL` / `API_KEY` /
   `MODEL`）透传至 pytest 的 `--base-url` / `--api-key` / `--model-name`，经
@@ -60,6 +62,7 @@
 | K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
 | K22 | /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 | 客户问题：相同请求下 Anthropic 协议（/anthropic/v1/messages）前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）——根因：该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态计费行（字符串/块数组两种 system 形态），前缀缓存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证 ≥90%）；开发修复：入引擎前条件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、其余内容原样保留；适用 GLM-5.3 | 测试要点（用户口径）：同轮等价请求逐轮交替发送两协议（同轮同问；前缀头部渠道标记行不同——用户指定：剥离计费行后两协议前缀仍从位置 0 分叉，互不命中对方缓存条目，各自建条目/各自命中，messages 冷轮为真冷），统计二者缓存命中率并逐轮比较——冷轮不参与比较（需热轮才能统计命中率），组级判定（用户指定）：单组失败不中断后续组，5 组中至少 4 组该组全部热轮差值 ≤3 个百分点（用户指定容差）即 PASS、不足 4 组 FAIL；热轮 messages 全量 miss（read=0 且 creation=0）时同轮重发一次鉴别（用户指定）：重发命中→WARN 留痕继续（偶发——疑似多实例路由/条目可见性问题）；仍 miss→该组不符合预期（剥离失效形态，判别力不变）；每请求在 system 头部构造逐请求变化的计费行；循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1 组中英混合，整请求长度尽量超过 8k tokens；覆盖两条剥离代码路径（块数组断点挂 system 块——K3 口径；字符串断点挂 user 首块）；每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮不参与比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求，组间间隔 3 秒（用户指定）；硬断言：①组级判定（用户指定）——单组失败不中断后续组，5 组中至少 4 组该组全部热轮差值 ≤3 个百分点即 PASS、不足 4 组 FAIL；②每请求 HTTP 200 且响应正常；缺陷形态 messages ≈0% vs chat ≈94%（五组全不符合→FAIL）、修复后两协议每热轮均 ≈94%（五组全符合→PASS）；热轮 cache_creation>0（剥离失效直接信号）与双低形态仅日志留痕；运行日志不含具体模型名 | P0 |
 | K23 | 孤儿 tool 消息应对齐官方放行并正常消费 | 客户问题（新工单，官方对齐口径）：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），平台返回 400（"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool calls'."——type: alaya code error、code: invalid text request——网关层白加的校验）；智谱官方源对同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」且模型在 reasoning 中实际引用 tool 数据（工具数据被正常消费）；新契约（客户指定）：预期结果同官方一致——此类消息序列不做校验、正常出结果；与 K14 关系：K14 为当时工单口径原始契约（保持不变——用户指令），二者输入同类预期相反，平台采纳官方对齐修复后 K14 将 FAIL、其保留/退役由用户决定；适用 GLM-5.3 | 按客户新工单原始请求体还原（messages=[user"查一下北京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文本无 tool_calls——孤儿条件）、tool tool_call_id="call_weather_001" content={"city":"北京","temp_c":18,"condition":"晴"}、user"根据工具返回的数据，用一句话告诉我天气。"]、max_tokens=200、非流式、无 tools/thinking；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始 400 拦截形态复现即 FAIL）、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空——官方形态为正常答句）；官方行为细节（输出/推理引用工具数据要素）软校验仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
+| K24 | 双请求正常响应（思考耗尽预算 low 强度回退） | 客户问题（新工单）：客户两个请求（中文同音词与言部汉字写作题、英文数学题），temperature=0.0、max_completion_tokens=32768（工单原始字段名）、非流式，期望均正常响应并返回正文；风险形态（用户指定）：默认 max 思考强度下思考可能耗光预算（正文空+finish=length）；适用 GLM-5.3 | 按工单原始请求体还原两请求直发（采样参数豁免——用户指定：两请求体均显式 temperature=0.0，工单体为唯一口径，通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖，top_p/seed 不注入）；第 1 轮默认 max 思考强度（不带 reasoning_effort），有正常正文即通过，断言 HTTP 200、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空）；耗光形态（正文空+finish=length）按用户指定契约转 reasoning_effort=low（GLM 顶层思考强度参数，K20 口径）重发且仅重测耗光请求（已通过不重测），断言相同；正文空且 finish≠length 直接 FAIL；low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；finish/usage 仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 
 ## 运行方式
 
@@ -1476,6 +1479,74 @@ tool 消息里的数据（工具数据被模型正常消费）。
 - **采样参数不豁免**（默认口径——未明确指定加入豁免名单）
 - **打印口径**：模型真实响应（状态码/响应体全文）断言前打印；
   运行日志不含具体模型名（请求侧）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- finish/usage 仅日志留痕
+- marker：`GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
+
+### test_dual_request_response_with_effort_fallback (K24)
+
+**背景**：客户问题（新工单）：客户的两个请求（中文"同音词+言部汉
+字"写作题、英文数学题），期望均能正常响应并返回正文。两个请求体
+均为 glm-5.3、temperature=0.0、max_completion_tokens=32768（工单
+原始字段名，非 max_tokens）、非流式。
+
+**风险形态**（用户指定）：默认（max）思考强度下，思考内容可能耗
+光 max_completion_tokens 预算——正文为空、finish=length。
+
+**回退契约**（用户指定）：
+- 第 1 轮按工单原始请求体直发（不带 reasoning_effort——默认强
+  度即 max）；有正常正文即该请求通过并退出
+- 思考耗光预算（正文空+finish=length）的请求以
+  reasoning_effort="low"（GLM 顶层思考强度参数，K20 口径）重发，
+  断言相同
+- 第 2 轮只重测第 1 轮耗光的请求（已通过的不重测——用户指定）
+
+**请求**（工单原始请求体原样还原）：
+- 请求一：user 单轮中文写作题——文段中找读音相同的二字词语
+  （≥4 个入文）、[言部]汉字（≥7 个入文）、800 字上下浮动 10%、
+  关键词"月光""这""意义"各限用 ≤2 次（文段与要求按工单原文，
+  要求条目间换行、关键词双引号包裹均为工单原文形态）
+- 请求二：user 单轮英文数学题——三个正实数 k 使
+  f(x)=((x-18)(x-72)(x-98)(x-k))/x 在正实数上恰于两点取最小，
+  求 k 之和
+- 公共：temperature=0.0（显式）、max_completion_tokens=32768、
+  stream=false
+
+**采样参数豁免**（用户指定）：两个请求体均显式指定 temperature=
+0.0——工单原始请求体为唯一口径，通过 `RAW_SAMPLING_PARAM_TESTS`
+豁免全局 `--sampling-params` 覆盖，top_p/seed 亦不注入。
+
+**断言**（硬，每轮每请求）：
+1. HTTP 200
+2. 响应合法 JSON 且 choices 非空
+3. message 有效输出（content 或 tool_calls 非空）
+
+**判定矩阵**：
+- 默认 max 强度两请求均有正文 → 无需回退轮 → PASS
+- 一通过一耗光 → 回退轮仅测耗光者，low 有正文 → PASS
+- low 回退仍无正文（双强度均未产出）→ FAIL（报文留证交开发）
+- 正文空且 finish≠length（非耗光形态的异常空响应）→ FAIL
+
+**设计决策记录**：
+- **P0**（客户报障场景）
+- **max_completion_tokens 保持工单字段名**（非 max_tokens）：工
+  单原始请求体为唯一口径，原样重放
+- **默认强度 = 不传 reasoning_effort**（工单体即如此——默认强度
+  按 max 计，用户口径）；low 回退用 GLM 顶层 reasoning_effort
+  （K20 口径）
+- **只重测耗光请求**（用户指定）：已通过的不重测，减少长耗时请
+  求重复
+- **耗光形态转回退而非直接 FAIL**（用户指定）：耗光是强度×预
+  算的组合结果而非响应异常，回退轮保底客户"正常出结果"的诉
+  求；双强度均无产出才 FAIL 留证交开发
+- **采样参数豁免**（用户指定：工单体显式 temperature=0.0——唯
+  一口径，全局覆盖不得改写请求体）
+- **打印口径**：模型真实响应（状态码/响应体全文）断言前打印；
+  运行日志不含具体模型名（请求侧）
+- **超时保护**：max 思考 + 32768 预算耗光耗时显著——单请求超时
+  下限 1800s（配置已 ≥ 该值时 no-op）
 - **不进 smoke 集**：新用例首跑观察期
 
 **注意事项**：
