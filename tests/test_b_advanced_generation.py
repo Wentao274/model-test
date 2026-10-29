@@ -299,8 +299,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         except json.JSONDecodeError as e:
             prefix = f"[{context}] " if context else ""
             pytest.fail(
-                f"{prefix}Tool call arguments is not valid JSON: "
-                f"{arguments_raw}, error: {e}"
+                f"{prefix}Tool call arguments is not valid JSON "
+                f"(raw arguments logged in test log), error: {e}"
             )
 
     @staticmethod
@@ -390,7 +390,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             "Final answer content should not be empty"
         )
         assert any(kw in content for kw in ["56088", "56088.0", "56,088"]), (
-            f"Thinking mode should produce correct answer 56088, got: {content[:500]}"
+            "Thinking mode should produce correct answer 56088"
         )
 
         test_logger.info(f"思考模式验证通过 (使用策略: {strategy})")
@@ -473,7 +473,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             "Non-thinking mode should still produce a content response"
         )
         assert any(kw in content for kw in ["56088", "56088.0", "56,088"]), (
-            f"Non-thinking mode should produce correct answer 56088, got: {content[:500]}"
+            "Non-thinking mode should produce correct answer 56088"
         )
 
     @pytest.mark.b_advanced
@@ -549,8 +549,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             "Thinking mode response should have final answer"
         )
         assert any(kw in content1 for kw in ["56088", "56088.0", "56,088"]), (
-            f"Thinking mode should produce correct answer 56088, "
-            f"got: {content1[:500]}"
+            "Thinking mode should produce correct answer 56088"
         )
 
         test_logger.info("第2轮: 关闭thinking模式（自动回退）")
@@ -607,7 +606,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             "Non-thinking response should have content"
         )
         assert any(kw in content2 for kw in ["56088", "56088.0", "56,088"]), (
-            f"Non-thinking mode should produce correct answer, got: {content2[:500]}"
+            "Non-thinking mode should produce correct answer"
         )
 
         test_logger.info(
@@ -900,7 +899,9 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         arguments_raw = tool_calls[0].get("function", {}).get("arguments", "{}")
         args = self._parse_tool_args(arguments_raw, "B4")
 
-        assert "city" in args, f"Should have 'city' parameter, got args: {args}"
+        assert "city" in args, (
+            "Should have 'city' parameter (args logged in test log)"
+        )
         assert args["city"].strip() != "", "City parameter should not be empty"
         test_logger.info(f"Tool call: {tool_name}({args})")
 
@@ -971,7 +972,8 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             args = self._parse_tool_args(arguments_raw, f"测试{idx}")
 
             assert isinstance(args, dict) and len(args) > 0, (
-                f"[测试{idx}] Tool arguments should be non-empty dict, got: {args}"
+                f"[测试{idx}] Tool arguments should be non-empty dict "
+                f"(args logged in test log)"
             )
 
             self._assert_tool_finish_reason(response, f"测试{idx}")
@@ -1306,7 +1308,10 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
                     try:
                         json_data = extract_json_from_text(reasoning)
                     except ValueError as e:
-                        json_error = f"JSON not found in content or reasoning. Content: {content[:500]}"
+                        json_error = (
+                            "JSON not found in content or reasoning "
+                            "(content logged in test log)"
+                        )
 
         if json_data is None:
             pytest.fail(json_error or "No valid JSON found in response")

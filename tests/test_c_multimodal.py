@@ -198,7 +198,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         content = self.get_message_content(response)
         content_lower = content.lower()
         assert any(kw in content_lower for kw in ["红", "red", "红色"]), (
-            f"Model should identify the image color as red, got: {content[:500]}"
+            "Model should identify the image color as red"
         )
         test_logger.info(f"合成图理解响应: {content[:2000]}...")
 
@@ -285,7 +285,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         assert any(
             kw in content_lower
             for kw in ["区别", "不同", "差异", "differ", "comparison", "对比", "相比"]
-        ), f"Response should describe differences between images, got: {content[:500]}"
+        ), "Response should describe differences between images"
 
         test_logger.info("多图对比测试完成")
 
@@ -353,7 +353,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         # 拒绝回复常含"无法看到图片的颜色"等措辞，泛化词会导致误判通过。
         assert any(
             kw in content_lower for kw in ["蓝", "blue", "灰", "gray", "grey", "青"]
-        ), f"Model should identify the image color, got: {content[:500]}"
+        ), "Model should identify the image color"
 
         test_logger.info("4K图片测试完成")
 
@@ -389,7 +389,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         has_test = "123" in content or "test 123" in content_lower
         has_hello = "hello" in content_lower and "world" in content_lower
         assert has_test or has_hello, (
-            f"OCR should recognize 'Test 123' or 'Hello World', got: {content[:500]}"
+            "OCR should recognize 'Test 123' or 'Hello World'"
         )
 
     @pytest.mark.c_multimodal
@@ -535,7 +535,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         )
         has_code_struct = "def " in content_lower and "import" in content_lower
         assert has_code_block or has_flask_specific or has_code_struct, (
-            f"Response should contain code-related content, got: {content[:500]}"
+            "Response should contain code-related content"
         )
 
         test_logger.info(f"识别的Flask代码:\n{content}")
@@ -582,7 +582,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
             for kw in ["login", "input", "button", "password", "submit"]
         )
         assert has_code and has_ui, (
-            f"Response should contain code with UI elements, got: {content[:500]}"
+            "Response should contain code with UI elements"
         )
 
         test_logger.info(f"生成的登录代码:\n{content}")
@@ -735,14 +735,16 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
                 )
             except json.JSONDecodeError:
                 pytest.fail(
-                    f"Tool '{tool_name}' arguments is not valid JSON: {arguments_raw}"
+                    f"Tool '{tool_name}' arguments is not valid JSON "
+                    f"(raw arguments logged in test log)"
                 )
 
             assert isinstance(args, dict), (
                 f"Tool '{tool_name}' arguments should be dict"
             )
             assert len(args) > 0, (
-                f"Tool '{tool_name}' arguments should be non-empty, got: {args}"
+                f"Tool '{tool_name}' arguments should be non-empty "
+                f"(args logged in test log)"
             )
             called_tool_names.append(tool_name)
 
@@ -798,7 +800,7 @@ class TestMultimodal(BaseTest, MultimodalTestMixin):
         # 仅接受表示具体颜色"蓝"的关键词，不接受"颜色"/"color"等泛化词——
         # 拒绝回复常含"无法看到图片的颜色"等措辞，泛化词会导致误判通过。
         assert any(kw in content_lower for kw in ["蓝", "blue"]), (
-            f"Model should identify the {format} image color as blue, got: {content[:500]}"
+            f"Model should identify the {format} image color as blue"
         )
 
         test_logger.info(f"Format {format} test passed")

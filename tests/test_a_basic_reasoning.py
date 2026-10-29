@@ -456,15 +456,13 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
                 f"temp=0 输出相似度偏低({similarity:.4f}<0.8)，"
                 f"模型为思考/推理模型，推理链路在 temp=0 下存在固有非确定性，"
                 f"降级为软告警。"
-                f"\n[1]{content0[:500]}\n[2]{content0_repeat[:500]}"
             )
             test_logger.warning(msg)
             record_warning(msg)
         else:
             assert similarity >= 0.8, (
                 f"temp=0 outputs should be highly similar "
-                f"(similarity={similarity:.4f}), "
-                f"got:\n[1]{content0[:500]}\n[2]{content0_repeat[:500]}"
+                f"(similarity={similarity:.4f})"
             )
 
         # temp=1.0 多样性第二次输出
@@ -818,7 +816,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
 
         assert re.search(expected_chars, content) is not None, (
             f"Response for {lang} should contain expected character patterns "
-            f"({expected_chars}), got: {content[:200]}"
+            f"({expected_chars})"
         )
 
     @pytest.mark.a_basic
@@ -885,7 +883,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         matched = [kw for kw in expected_keywords if kw.lower() in content_lower]
         assert len(matched) >= 2, (
             f"Response for {test_type} should contain at least 2 of "
-            f"{expected_keywords}, matched: {matched}, got: {content[:500]}"
+            f"{expected_keywords}, matched: {matched}"
         )
 
         test_logger.info(

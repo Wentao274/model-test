@@ -401,7 +401,7 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 assert False, (
                     f"[{scenario_name}] Response is garbled/noisy — model failed to "
                     f"properly process the long context. Cannot validate needle recall "
-                    f"from incoherent output. Got: {content[:500]}"
+                    f"from incoherent output."
                 )
 
             content_lower = content.lower()
@@ -425,13 +425,12 @@ class TestLongContext(BaseTest, StreamingTestMixin):
                 f"[{scenario_name}] Model must contain all core needle info "
                 f"({', '.join(desc for _, desc in needle_core_assertions)}). "
                 f"Matches: {core_hits}/{len(needle_core_assertions)}. "
-                f"Needle: '{needle}'. Got: {content[:500]}"
+                f"Needle: '{needle}'"
             )
             assert secondary_hits >= 1, (
                 f"[{scenario_name}] Model must reference at least 1 secondary "
                 f"needle detail ({', '.join(desc for _, desc in needle_secondary)}). "
-                f"Matches: {secondary_hits}/{len(needle_secondary)}. "
-                f"Got: {content[:500]}"
+                f"Matches: {secondary_hits}/{len(needle_secondary)}."
             )
 
             test_logger.info(

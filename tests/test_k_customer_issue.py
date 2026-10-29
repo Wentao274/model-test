@@ -766,13 +766,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         try:
             args = json.loads(args_raw) if args_raw.strip() else {}
         except json.JSONDecodeError as e:
+            test_logger.error(
+                f"工具调用 arguments 非法 JSON，原始 arguments: "
+                f"{args_raw[:2000]!r}"
+            )
             pytest.fail(
-                f"Tool call arguments is not valid JSON: {args_raw[:500]}, error: {e}"
+                f"Tool call arguments is not valid JSON: error: {e}"
+                f"（原始 arguments 已记录于测试日志）"
             )
 
         # schema 必填项校验：required = ["core_work_type"]
+        if "core_work_type" not in args:
+            test_logger.error(
+                f"工具调用 arguments 缺少必填项 core_work_type，完整 "
+                f"arguments: {json.dumps(args, ensure_ascii=False)[:2000]}"
+            )
         assert "core_work_type" in args, (
-            f"Tool arguments missing required field 'core_work_type': {args}"
+            "Tool arguments missing required field 'core_work_type' "
+            "(args logged in test log)"
         )
         core_work_type = args["core_work_type"]
         assert (
@@ -1307,15 +1318,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次真实响应体: "
+                    f"{response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"第 {index}/{len(K4_USER_PROMPTS)} 次响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
 
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"第 {index}/{len(K4_USER_PROMPTS)} 次真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
                 f"第 {index}/{len(K4_USER_PROMPTS)} 次响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"{list(result.keys())}"
             )
             choice = choices[0]
             message = choice.get("message") or {}
@@ -1484,15 +1504,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次真实响应体: "
+                    f"{response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"第 {index}/{len(K5_USER_PROMPTS)} 次响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
 
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
                 f"第 {index}/{len(K5_USER_PROMPTS)} 次响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"{list(result.keys())}"
             )
             choice = choices[0]
             message = choice.get("message") or {}
@@ -1522,11 +1551,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     break
 
             # 核心断言 1：官方实测——disabled 后无思考内容
+            if reasoning_text.strip():
+                test_logger.error(
+                    f"第 {index}/{len(K5_USER_PROMPTS)} 次思考内容"
+                    f"（reasoning_content 全文）: {reasoning_text[:2000]!r}"
+                )
             assert not reasoning_text.strip(), (
                 f"第 {index}/{len(K5_USER_PROMPTS)} 次客户问题复现失败："
                 f"thinking.type=disabled 后仍返回思考内容（官方实测应无 "
                 f"reasoning_content），思考内容长度 {len(reasoning_text)}，"
-                f"预览: {reasoning_text[:60]}，消息: {prompt[:30]}"
+                f"消息: {prompt[:30]}"
             )
 
             # 核心断言 2：官方实测——reasoning_tokens 为空（0/缺失）
@@ -1723,14 +1757,22 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 try:
                     result = response.json()
                 except (json.JSONDecodeError, ValueError) as e:
+                    test_logger.error(
+                        f"场景[{label}] 真实响应体: "
+                        f"{response.text[:2000]!r}"
+                    )
                     pytest.fail(
                         f"场景[{label}] 响应不是合法 JSON: {e}. "
-                        f"响应体: {response.text[:300]}"
+                        f"响应体已记录于测试日志"
                     )
                 choices = result.get("choices") or []
+                if not choices:
+                    test_logger.error(
+                        f"场景[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert choices, (
-                    f"场景[{label}] 响应缺少 choices: "
-                    f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                    f"场景[{label}] 响应缺少 choices: {list(result.keys())}"
                 )
                 content = (
                     (choices[0].get("message") or {}).get("content") or ""
@@ -1738,9 +1780,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 # 合法组合应正常生成正文（enabled 场景可能含
                 # reasoning_content，属正常思考输出，不在本用例断言范围
                 # ——关思考本身由 K5 验证）
+                if not content:
+                    test_logger.error(
+                        f"场景[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert content, (
                     f"场景[{label}] 客户问题复现失败：合法组合应正常返回正文，"
-                    f"实际正文为空: {json.dumps(result, ensure_ascii=False)[:300]}"
+                    f"实际正文为空"
                 )
                 TestLogger.log_response(
                     test_logger, result, f"K6-响应（{label}）"
@@ -1753,10 +1800,15 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             else:
                 # 非法组合：官方契约应 400 拒绝并报对应文案
                 expected_msg = scenario["error_substring"]
+                if response.status_code != 400:
+                    test_logger.error(
+                        f"场景[{label}] 真实响应体: "
+                        f"{response.text[:2000]!r}"
+                    )
                 assert response.status_code == 400, (
                     f"场景[{label}] 客户问题复现失败：官方契约应 400 拒绝"
                     f"（错误信息含 '{expected_msg}'），实际 HTTP "
-                    f"{response.status_code}: {response.text[:300]}"
+                    f"{response.status_code}（响应体已记录于测试日志）"
                 )
                 # 错误文案校验：忽略大小写的子串匹配（对错误体的 JSON 结构
                 # 不敏感——官方文案可能嵌在 error.message 等不同位置）
@@ -1908,20 +1960,28 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"第[{index}]次（reasoning_effort={effort}）真实响应体: "
+                    f"{response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"第[{index}]次（reasoning_effort={effort}）响应不是"
-                    f"合法 JSON: {e}. 响应体: {response.text[:300]}"
+                    f"合法 JSON: {e}. 响应体已记录于测试日志"
                 )
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"第[{index}]次（reasoning_effort={effort}）真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
                 f"第[{index}]次（reasoning_effort={effort}）响应缺少 "
-                f"choices: {json.dumps(result, ensure_ascii=False)[:500]}"
+                f"choices: {list(result.keys())}"
             )
             message = choices[0].get("message") or {}
             content = (message.get("content") or "").strip()
             assert content, (
-                f"第[{index}]次（reasoning_effort={effort}）正文为空: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"第[{index}]次（reasoning_effort={effort}）正文为空"
             )
             finish_reason = (choices[0].get("finish_reason") or "").lower()
             assert finish_reason in K7_NATURAL_FINISH_REASONS, (
@@ -2007,11 +2067,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     f"发送异常（{url}）: {e}"
                 )
 
+            if response.status_code != 400:
+                test_logger.error(
+                    f"第[{index}]次（嵌套 thinking.effort=medium）"
+                    f"真实响应体: {response.text[:2000]!r}"
+                )
             assert response.status_code == 400, (
                 f"第[{index}]次（嵌套 thinking.effort=medium）预期 400 "
                 f"拒绝（废弃的 K2.x thinking 配置下 medium 为非法"
-                f"档位），实际 HTTP {response.status_code}: "
-                f"{response.text[:300]}"
+                f"档位），实际 HTTP {response.status_code}"
+                f"（响应体已记录于测试日志）"
             )
             test_logger.info(
                 f"第[{index}]次（嵌套 thinking.effort=medium）按预期"
@@ -2241,14 +2306,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"[{label}] 真实响应体: {response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
-                f"[{label}] 响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 choices: {list(result.keys())}"
             )
             message = choices[0].get("message") or {}
             content = message.get("content") or ""
@@ -2257,10 +2329,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             usage = result.get("usage") or {}
 
             # usage 为预算断言数据源，缺失即失败
+            if not usage:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert usage, (
                 f"[{label}] 客户问题复现失败：响应缺少 usage——预算"
-                f"断言无从进行: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"断言无从进行: {list(result.keys())}"
             )
             ct = usage.get("completion_tokens")
             assert isinstance(ct, int), (
@@ -2284,12 +2360,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
             # 断言1：required 必须发起工具调用（缺陷形态：tool_calls
             # 键缺失、正文仅 "OK"、ct 恒吃满预算、finish=length）
+            if not tool_calls:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert tool_calls, (
                 f"[{label}] 客户问题复现失败：required 下未发起工具"
                 f"调用——tool_calls 键缺失（finish={finish}、ct={ct}/"
                 f"{max_tokens}；缺陷形态：finish=length、completion_"
-                f"tokens 恒吃满 max_tokens、正文仅 OK）: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"tokens 恒吃满 max_tokens、正文仅 OK）"
             )
             first = tool_calls[0] or {}
             fn = first.get("function") or {}
@@ -2299,28 +2379,41 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             ), (
                 f"[{label}] 客户问题复现失败：工具调用形状异常（应 "
                 f"function/get_weather，实际 "
-                f"{json.dumps(first, ensure_ascii=False)[:200]}）"
+                f"type={first.get('type')}, name={fn.get('name')}）"
             )
             try:
                 fn_args = json.loads(fn.get("arguments") or "")
             except (json.JSONDecodeError, ValueError, TypeError) as e:
+                test_logger.error(
+                    f"[{label}] 工具调用 arguments: "
+                    f"{(fn.get('arguments') or '')[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 客户问题复现失败：工具调用 arguments "
-                    f"不是合法 JSON: {e}（{fn.get('arguments')!r}）"
+                    f"不是合法 JSON: {e}（已记录于测试日志）"
+                )
+            if not isinstance(fn_args, dict):
+                test_logger.error(
+                    f"[{label}] 工具调用 arguments: "
+                    f"{(fn.get('arguments') or '')[:2000]!r}"
                 )
             assert isinstance(fn_args, dict), (
                 f"[{label}] 客户问题复现失败：工具调用 arguments 应为"
-                f" JSON 对象: {fn.get('arguments')!r}"
+                f" JSON 对象"
             )
 
             # 断言2：finish 必须为 tool_calls（length 即 token 预算
             # 被消耗殆尽的缺陷形态——关/开思考均不允许，断言不分模式）
+            if finish != "tool_calls":
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert finish == "tool_calls", (
                 f"[{label}] 客户问题复现失败：finish_reason 应为 "
                 f"tool_calls（required 必须调用工具），实际 {finish}"
                 f"（ct={ct}/{max_tokens}、rt={rt}——token 被消耗殆尽"
-                f"的缺陷形态）: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"的缺陷形态）"
             )
 
             # 断言3：预算不被吃满（缺陷形态：ct 恒==max_tokens）
@@ -2471,14 +2564,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"[{label}] 真实响应体: {response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
-                f"[{label}] 响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 choices: {list(result.keys())}"
             )
             message = choices[0].get("message") or {}
             content = message.get("content") or ""
@@ -2487,10 +2587,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             usage = result.get("usage") or {}
 
             # usage 为预算断言数据源，缺失即失败
+            if not usage:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert usage, (
                 f"[{label}] 客户问题复现失败：响应缺少 usage——预算"
-                f"断言无从进行: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"断言无从进行: {list(result.keys())}"
             )
             ct = usage.get("completion_tokens")
             assert isinstance(ct, int), (
@@ -2515,13 +2619,17 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             # 断言1：required 必须强制发起工具调用（官方行为：闲聊也
             # 强制返回 get_weather，city 瞎猜不限定；Alaya 缺陷形态：
             # tool_calls=None、finish=length、reasoning 吃满预算）
+            if not tool_calls:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert tool_calls, (
                 f"[{label}] 客户问题复现失败：required 下闲聊未强制"
                 f"发起工具调用——tool_calls 键缺失（finish={finish}、"
                 f"ct={ct}/{max_tokens}；官方行为为 finish=tool_calls"
                 f" 强制返回 get_weather，Alaya 缺陷形态为 finish="
-                f"length、reasoning 吃满预算、tool_calls=None）: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"length、reasoning 吃满预算、tool_calls=None）"
             )
             first = tool_calls[0] or {}
             fn = first.get("function") or {}
@@ -2531,26 +2639,39 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             ), (
                 f"[{label}] 客户问题复现失败：工具调用形状异常（应 "
                 f"function/get_weather，实际 "
-                f"{json.dumps(first, ensure_ascii=False)[:200]}）"
+                f"type={first.get('type')}, name={fn.get('name')}）"
             )
             try:
                 fn_args = json.loads(fn.get("arguments") or "")
             except (json.JSONDecodeError, ValueError, TypeError) as e:
+                test_logger.error(
+                    f"[{label}] 工具调用 arguments: "
+                    f"{(fn.get('arguments') or '')[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 客户问题复现失败：工具调用 arguments "
-                    f"不是合法 JSON: {e}（{fn.get('arguments')!r}）"
+                    f"不是合法 JSON: {e}（已记录于测试日志）"
+                )
+            if not isinstance(fn_args, dict):
+                test_logger.error(
+                    f"[{label}] 工具调用 arguments: "
+                    f"{(fn.get('arguments') or '')[:2000]!r}"
                 )
             assert isinstance(fn_args, dict), (
                 f"[{label}] 客户问题复现失败：工具调用 arguments 应为"
-                f" JSON 对象: {fn.get('arguments')!r}"
+                f" JSON 对象"
             )
 
             # 断言2：finish 必须为 tool_calls（官方行为；而非 length）
+            if finish != "tool_calls":
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert finish == "tool_calls", (
                 f"[{label}] 客户问题复现失败：finish_reason 应为 "
                 f"tool_calls（required 必须调用工具），实际 {finish}"
-                f"（ct={ct}/{max_tokens}、rt={rt}）: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"（ct={ct}/{max_tokens}、rt={rt}）"
             )
 
             # 断言3：预算不被吃满（Alaya 缺陷形态：ct 恒吃满预算）
@@ -2762,14 +2883,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"[{label}] 真实响应体: {response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
-                f"[{label}] 响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 choices: {list(result.keys())}"
             )
             message = choices[0].get("message") or {}
             content = message.get("content") or ""
@@ -2795,62 +2923,95 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 ), (
                     f"[{label}] 客户问题复现失败：工具调用形状异常（应 "
                     f"type=function 且带 name，实际 "
-                    f"{json.dumps(first, ensure_ascii=False)[:200]}）"
+                    f"type={first.get('type')}, name={fn.get('name')}）"
                 )
                 try:
                     fn_args = json.loads(fn.get("arguments") or "")
                 except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    test_logger.error(
+                        f"[{label}] 工具调用 arguments: "
+                        f"{(fn.get('arguments') or '')[:2000]!r}"
+                    )
                     pytest.fail(
                         f"[{label}] 客户问题复现失败：工具调用 arguments "
-                        f"不是合法 JSON: {e}（{fn.get('arguments')!r}）"
+                        f"不是合法 JSON: {e}（已记录于测试日志）"
+                    )
+                if not isinstance(fn_args, dict):
+                    test_logger.error(
+                        f"[{label}] 工具调用 arguments: "
+                        f"{(fn.get('arguments') or '')[:2000]!r}"
                     )
                 assert isinstance(fn_args, dict), (
                     f"[{label}] 客户问题复现失败：工具调用 arguments 应为"
-                    f" JSON 对象: {fn.get('arguments')!r}"
+                    f" JSON 对象"
                 )
                 return fn.get("name")
 
             if expect == "no_call":
                 # 断言（none）：禁止调用工具，正文正常回复
+                if tool_calls:
+                    test_logger.error(
+                        f"[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert not tool_calls, (
                     f"[{label}] 客户问题复现失败：tool_choice=none 下仍"
-                    f"发起工具调用（none 语义未生效）: "
-                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                    f"发起工具调用（none 语义未生效）"
                 )
+                if not content:
+                    test_logger.error(
+                        f"[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert content, (
                     f"[{label}] 客户问题复现失败：tool_choice=none 下"
-                    f"正文为空（应正常文本回复）: "
-                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                    f"正文为空（应正常文本回复）"
                 )
+                if finish != "stop":
+                    test_logger.error(
+                        f"[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert finish == "stop", (
                     f"[{label}] 客户问题复现失败：tool_choice=none 下"
-                    f"finish_reason 应为 stop，实际 {finish}: "
-                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                    f"finish_reason 应为 stop，实际 {finish}"
                 )
             else:
                 # 断言（auto/required/named）：必须发起工具调用
+                if not tool_calls:
+                    test_logger.error(
+                        f"[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert tool_calls, (
                     f"[{label}] 客户问题复现失败：该模式下未发起工具"
                     f"调用（模式不被支持/语义未生效，finish="
-                    f"{finish}）: "
-                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                    f"{finish}）"
                 )
                 called = check_call_shape(tool_calls)
+                if finish != "tool_calls":
+                    test_logger.error(
+                        f"[{label}] 真实响应体: "
+                        f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                    )
                 assert finish == "tool_calls", (
                     f"[{label}] 客户问题复现失败：finish_reason 应为 "
-                    f"tool_calls，实际 {finish}: "
-                    f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                    f"tool_calls，实际 {finish}"
                 )
                 if expect == "call_named":
                     # 断言（named）：必须调用指定工具（与提示词意图
                     # 不同向，named 未生效时模型按意图调 get_weather
                     # 即在此被检出）
                     named_name = tool_choice["function"]["name"]
+                    if called != named_name:
+                        test_logger.error(
+                            f"[{label}] 真实响应体: "
+                            f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                        )
                     assert called == named_name, (
                         f"[{label}] 客户问题复现失败：named 指定 "
                         f"{named_name} 但实际调用 {called}（named 强"
-                        f"制语义未生效，按提示词意图选择了工具）: "
-                        f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                        f"制语义未生效，按提示词意图选择了工具）"
                     )
 
         for label, tool_choice, prompt, expect in K10_ROUNDS:
@@ -2988,14 +3149,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"[{label}] 真实响应体: {response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
-                f"[{label}] 响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 choices: {list(result.keys())}"
             )
             message = choices[0].get("message") or {}
             content = message.get("content") or ""
@@ -3013,13 +3181,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
             # 断言1：正文非空且自然结束（三种模式通用）
             assert content, (
-                f"[{label}] 客户问题复现失败：正文为空: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"[{label}] 客户问题复现失败：正文为空"
             )
             assert finish == "stop", (
                 f"[{label}] 客户问题复现失败：finish_reason 应为 "
-                f"stop，实际 {finish}: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"stop，实际 {finish}"
             )
 
             # 断言2：模式语义（json_object/json_schema 输出结构化
@@ -3030,20 +3196,18 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 except (json.JSONDecodeError, ValueError) as e:
                     pytest.fail(
                         f"[{label}] 客户问题复现失败：正文不是合法 "
-                        f"JSON（结构化输出语义未生效，{e}）: "
-                        f"{content[:200]!r}"
+                        f"JSON（结构化输出语义未生效，{e}）"
                     )
                 assert isinstance(parsed, dict), (
                     f"[{label}] 客户问题复现失败：正文应为 JSON 对象"
-                    f"（dict），实际 {type(parsed).__name__}: "
-                    f"{content[:200]!r}"
+                    f"（dict），实际 {type(parsed).__name__}"
                 )
                 if expect == "json_schema":
                     keys = set(parsed.keys())
                     assert keys == {"city", "temperature"}, (
                         f"[{label}] 客户问题复现失败：json_schema 正文"
                         f"键集合应为 {{city, temperature}}，实际 "
-                        f"{sorted(keys)}: {content[:200]!r}"
+                        f"{sorted(keys)}"
                     )
                     city = parsed.get("city")
                     temperature = parsed.get("temperature")
@@ -3200,14 +3364,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             try:
                 result = response.json()
             except (json.JSONDecodeError, ValueError) as e:
+                test_logger.error(
+                    f"[{label}] 真实响应体: {response.text[:2000]!r}"
+                )
                 pytest.fail(
                     f"[{label}] 响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
-                f"[{label}] 响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 choices: {list(result.keys())}"
             )
             message = choices[0].get("message") or {}
             content = message.get("content") or ""
@@ -3233,13 +3404,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
             # 断言1：正文非空且自然结束
             assert content, (
-                f"[{label}] 客户问题复现失败：正文为空: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"[{label}] 客户问题复现失败：正文为空"
             )
             assert finish == "stop", (
                 f"[{label}] 客户问题复现失败：finish_reason 应为 "
-                f"stop，实际 {finish}: "
-                f"{json.dumps(result, ensure_ascii=False)[:300]}"
+                f"stop，实际 {finish}"
             )
 
         for label, placement, effort in K12_ROUNDS:
@@ -3398,20 +3567,19 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 断言1：stop 序列触发（非 length/其他）
         assert finish == "stop", (
             f"客户问题复现失败：stop 序列应触发 finish_reason=stop，"
-            f"实际 {finish}（content={content!r}）"
+            f"实际 {finish}"
         )
 
         # 断言2（核心）：合并正文严格等于期望——多余前缀（如 ">"）、
         # 停止词泄漏、未截断均在此检出
         assert content == K13_EXPECTED, (
             f"客户问题复现失败：被截断正文应为 {K13_EXPECTED!r}，"
-            f"实际 {content!r}（多余前缀/停止词泄漏/未截断）"
+            f"实际不符（多余前缀/停止词泄漏/未截断）"
         )
 
         # 断言3：正文不含停止词（stop 语义遵循）
         assert "橘子" not in content, (
-            f"客户问题复现失败：正文不应包含停止词 '橘子'，"
-            f"实际 {content!r}"
+            f"客户问题复现失败：正文不应包含停止词 '橘子'"
         )
 
         test_logger.info(
@@ -3542,8 +3710,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"客户问题复现失败：孤儿 tool 消息（tool 消息前无 "
                 f"assistant tool_calls，且请求未定义 tools）应 HTTP "
                 f"400 拒绝，实际 200 放行并生成（SSE 取证 "
-                f"events={events}, reasoning/正文预览: "
-                f"{preview[:120]!r}）"
+                f"events={events}，reasoning/正文预览已记录于测试日志）"
             )
 
         # 断言（核心）：协议非法请求必须被 400 拒绝
@@ -4069,8 +4236,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 处触发，正文不应出现（收到正文即换行符未生效）
         assert content == "", (
             f"客户问题复现失败：stop=[\"\\n\"] 应在推理阶段的第一个"
-            f"换行处触发停止、正文不应生成，实际收到正文 "
-            f"{content[:120]!r}（长度 {len(content)}）——换行符未生效"
+            f"换行处触发停止、正文不应生成，实际收到正文"
+            f"（长度 {len(content)}）——换行符未生效"
             f"（推理继续并输出了正文；reasoning_len={len(reasoning)}, "
             f"finish={finish}）"
         )
@@ -4078,15 +4245,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 断言2：stop 触发（非 length/其他）
         assert finish == "stop", (
             f"客户问题复现失败：换行停止符应触发 finish_reason=stop，"
-            f"实际 {finish}（content={content!r}, "
-            f"reasoning_len={len(reasoning)}）"
+            f"实际 {finish}（reasoning_len={len(reasoning)}）"
         )
 
         # 断言3：合并 reasoning 不含换行（停止符前截断、不泄漏）
         assert "\n" not in reasoning, (
             f"客户问题复现失败：stop=[\"\\n\"] 下输出应在第一个换行"
             f"前截断，合并 reasoning 中出现换行（{len(reasoning)} "
-            f"字符，前 120 字符 {reasoning[:120]!r}）——推理中的换行"
+            f"字符）——推理中的换行"
             f"未触发停止（停止符泄漏/未作用于推理）"
         )
 
@@ -4342,17 +4508,15 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except (json.JSONDecodeError, ValueError) as e:
                 pytest.fail(
                     f"第一个请求响应不是合法 JSON: {e}. "
-                    f"响应体: {response1.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices1 = result1.get("choices") or []
             assert choices1, (
-                f"第一个请求响应缺少 choices: "
-                f"{json.dumps(result1, ensure_ascii=False)[:500]}"
+                f"第一个请求响应缺少 choices: {list(result1.keys())}"
             )
             message1 = choices1[0].get("message")
             assert isinstance(message1, dict), (
-                f"第一个请求响应 message 结构缺失: "
-                f"{json.dumps(result1, ensure_ascii=False)[:500]}"
+                f"第一个请求响应 message 结构缺失: {list(result1.keys())}"
             )
             content1 = message1.get("content") or ""
             finish1 = choices1[0].get("finish_reason")
@@ -4363,12 +4527,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             # 代码块围栏/前后杂文——提取最外层 {...}）
             assert content1.strip(), (
                 f"第一个请求正文为空（finish={finish1}），无法输出 "
-                f"JSON 到临时文件: {response1.text[:400]}"
+                f"JSON 到临时文件"
             )
             json_start = content1.find("{")
             json_end = content1.rfind("}")
             assert json_start != -1 and json_end > json_start, (
-                f"第一个请求正文中未找到 JSON 对象: {content1[:400]!r}"
+                "第一个请求正文中未找到 JSON 对象"
             )
             try:
                 skill_data = json.loads(
@@ -4377,7 +4541,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except json.JSONDecodeError as e:
                 pytest.fail(
                     f"第一个请求输出的 JSON 对象解析失败: {e}. "
-                    f"正文: {content1[:400]!r}"
+                    f"正文已记录于测试日志"
                 )
             # 第一步落盘：输出 JSON 到测试脚本同级目录下的临时文件
             #（测试代为执行"输出 JSON 到 *.json 文件"的工具语义）
@@ -4404,9 +4568,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     f"工具读取临时 JSON 文件失败（{temp_file}）: {e}"
                 )
             # 断言2：临时 JSON 文件回读成功且与第一个请求输出一致
+            if file_data != skill_data:
+                test_logger.error(
+                    f"临时 JSON 文件回读内容与第一个请求输出不一致，"
+                    f"file_text: {file_text[:2000]!r}"
+                )
             assert file_data == skill_data, (
-                f"临时 JSON 文件回读内容与第一个请求输出不一致: "
-                f"{file_text[:400]!r}"
+                "临时 JSON 文件回读内容与第一个请求输出不一致"
+                "（文件内容已记录于测试日志）"
             )
             test_logger.info(
                 f"第二步完成: 工具已读取第一个请求输出的临时 JSON "
@@ -4486,18 +4655,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except (json.JSONDecodeError, ValueError) as e:
                 pytest.fail(
                     f"第二个请求响应不是合法 JSON: {e}. "
-                    f"响应体: {response.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             # 断言4：choices 存在（上下文被接受且正常生成）
             choices = result.get("choices") or []
             assert choices, (
-                f"第二个请求响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"第二个请求响应缺少 choices: {list(result.keys())}"
             )
             message = choices[0].get("message")
             assert isinstance(message, dict), (
-                f"第二个请求响应 message 结构缺失: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"第二个请求响应 message 结构缺失: {list(result.keys())}"
             )
 
             content = message.get("content") or ""
@@ -4577,17 +4744,15 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except (json.JSONDecodeError, ValueError) as e:
                 pytest.fail(
                     f"第三个请求响应不是合法 JSON: {e}. "
-                    f"响应体: {response3.text[:300]}"
+                    f"响应体已记录于测试日志"
                 )
             choices3 = result3.get("choices") or []
             assert choices3, (
-                f"第三个请求响应缺少 choices: "
-                f"{json.dumps(result3, ensure_ascii=False)[:500]}"
+                f"第三个请求响应缺少 choices: {list(result3.keys())}"
             )
             message3 = choices3[0].get("message")
             assert isinstance(message3, dict), (
-                f"第三个请求响应 message 结构缺失: "
-                f"{json.dumps(result3, ensure_ascii=False)[:500]}"
+                f"第三个请求响应 message 结构缺失: {list(result3.keys())}"
             )
             TestLogger.log_response(
                 test_logger, result3, "K18-第三个请求响应"
@@ -4598,9 +4763,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             # 文本回答无法覆盖"空 function"根因）
             assert tool_calls3, (
                 f"第三个请求模型未发起工具调用（finish="
-                f"{choices3[0].get('finish_reason')}），无法验证根因"
-                f"断言（模型不得返回空 function）: "
-                f"{(message3.get('content') or '')[:300]!r}"
+                f"{choices3[0].get('finish_reason')}），无法验证根因断言"
+                f"（模型不得返回空 function，响应体已记录于测试日志）"
             )
             # 断言5b（根因）：每条工具调用结构完整——name 非空、
             # id 非空、arguments 为合法 JSON 对象（对应开发根因结
@@ -4616,14 +4780,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     f"模型返回空 function：tool_calls[{i}].function."
                     f"name 为空（{name!r}）——客户问题根因（空占位调"
                     f"用致客户端回填 missing_tool_call_id 后被协议拒"
-                    f"绝），模型不得返回空 function: "
-                    f"{json.dumps(tc, ensure_ascii=False)[:300]}"
+                    f"绝），模型不得返回空 function"
                 )
                 assert isinstance(tc_id, str) and tc_id.strip(), (
                     f"模型返回空 function：tool_calls[{i}].id 为空"
                     f"（{tc_id!r}）——客户端将以 missing_tool_call_id"
-                    f" 回填，后续请求被协议校验拒绝: "
-                    f"{json.dumps(tc, ensure_ascii=False)[:300]}"
+                    f" 回填，后续请求被协议校验拒绝"
                 )
                 args_obj = raw_args
                 if isinstance(raw_args, str):
@@ -4633,13 +4795,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         pytest.fail(
                             f"模型返回畸形 arguments：tool_calls[{i}]"
                             f".function.arguments 非合法 JSON（{e}）"
-                            f"——工单同款模型输出缺陷（缺 \"{{\"）: "
-                            f"{raw_args[:300]!r}"
+                            f"——工单同款模型输出缺陷（缺 \"{{\"）"
+                            f"（原始 arguments 已记录于测试日志）"
                         )
                 assert isinstance(args_obj, dict), (
                     f"模型返回畸形 arguments：tool_calls[{i}].function"
                     f".arguments 应为 JSON 对象，实际 "
-                    f"{type(args_obj).__name__}: {str(raw_args)[:300]!r}"
+                    f"{type(args_obj).__name__}（原始 arguments 已记录于测试日志）"
                 )
             test_logger.info(
                 f"根因断言通过: 模型返回 {len(tool_calls3)} 条结构完"
@@ -4797,11 +4959,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
 
         # 断言1（核心之一）：响应失败——超限应被拒绝
+        if response.status_code == 200:
+            test_logger.error(
+                f"超限放行时的真实响应体: {response.text[:2000]!r}"
+            )
         assert response.status_code != 200, (
             f"客户问题复现失败：单次请求携带 {K19_IMAGE_COUNT} 张图"
             f"（超过 serving 限额 {K19_IMAGE_LIMIT}）应被拒绝，实际"
-            f" HTTP 200 放行（限额未生效）: "
-            f"{response.text[:400]}"
+            f" HTTP 200 放行（限额未生效，响应体已记录于测试日志）"
         )
 
         # 断言2（核心之二）：恰当的失败信息——含 "at most 16 image"
@@ -5000,15 +5165,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         try:
             probe_body = probe_resp.json()
         except ValueError as e:
+            test_logger.error(
+                f"探针响应体非合法 JSON，真实响应体: "
+                f"{probe_resp.text[:2000]!r}"
+            )
             pytest.fail(
-                f"探针响应体非 JSON（{e}）: {probe_resp.text[:400]}"
+                f"探针响应体非 JSON（{e}）（真实响应体已记录于测试日志）"
             )
         probe_prompt_tokens = (probe_body.get("usage") or {}).get(
             "prompt_tokens"
         )
+        if not probe_prompt_tokens:
+            test_logger.error(
+                f"探针响应缺少 usage.prompt_tokens，真实响应体: "
+                f"{probe_resp.text[:2000]!r}"
+            )
         assert probe_prompt_tokens, (
             "探针响应缺少 usage.prompt_tokens，无法精确计量 1M 目标"
-            f"规模: {probe_resp.text[:400]}"
+            "规模（真实响应体已记录于测试日志）"
         )
         tokens_per_unit = probe_prompt_tokens / K20_PROBE_UNITS
         test_logger.info(
@@ -5115,19 +5289,18 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 body = response.json()
             except ValueError as e:
                 pytest.fail(
-                    f"第 {round_index} 轮响应体非 JSON（{e}）: "
-                    f"{response.text[:400]}"
+                    f"第 {round_index} 轮响应体非 JSON（{e}）"
                 )
             choices = body.get("choices") or []
             assert choices, (
-                f"第 {round_index} 轮 choices 为空: {response.text[:400]}"
+                f"第 {round_index} 轮 choices 为空（响应体已记录于测试日志）"
             )
             message = (choices[0] or {}).get("message") or {}
             content_out = (message.get("content") or "").strip()
             assert content_out, (
                 f"客户问题复现失败（第 {round_index} 轮 "
                 f"reasoning_effort={effort}）：1M 量级输入已接受"
-                f"（HTTP 200）但响应正文为空: {response.text[:400]}"
+                f"（HTTP 200）但响应正文为空（响应体已记录于测试日志）"
             )
 
             # usage 仅日志；prompt_tokens 附加规模 sanity 断言——必须
@@ -5360,11 +5533,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             result = response.json()
         except (json.JSONDecodeError, ValueError) as e:
             pytest.fail(
-                f"响应不是合法 JSON: {e}. 响应体: {response.text[:400]}"
+                f"响应不是合法 JSON: {e}. 响应体已记录于测试日志"
             )
         choices = result.get("choices") or []
         assert choices, (
-            f"响应缺少 choices: {json.dumps(result, ensure_ascii=False)[:500]}"
+            f"响应缺少 choices: {list(result.keys())}"
         )
 
         # 断言3：有效输出——content 非空或 tool_calls 非空（宽容解析
@@ -5374,7 +5547,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         tool_calls_out = message.get("tool_calls") or []
         assert content_out or tool_calls_out, (
             f"客户问题复现失败：请求已接受（HTTP 200）但响应无有效输"
-            f"出（content 与 tool_calls 均为空）: {response.text[:400]}"
+            f"出（content 与 tool_calls 均为空，响应体已记录于测试日志）"
         )
         output_kind = "content 非空" if content_out else "tool_calls 非空"
 
@@ -5708,9 +5881,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except (json.JSONDecodeError, ValueError) as e:
                 pytest.fail(f"[{label}] 响应不是合法 JSON: {e}")
             choices = result.get("choices") or []
+            if not choices:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert choices, (
-                f"[{label}] 响应缺少 choices: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 choices: {list(result.keys())}"
             )
             usage = result.get("usage") or {}
             test_logger.info(
@@ -5795,14 +5972,22 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except (json.JSONDecodeError, ValueError) as e:
                 pytest.fail(f"[{label}] 响应不是合法 JSON: {e}")
             content_blocks = result.get("content") or []
+            if not content_blocks:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert content_blocks, (
-                f"[{label}] 响应缺少 content: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 content: {list(result.keys())}"
             )
             usage = result.get("usage") or {}
+            if not usage:
+                test_logger.error(
+                    f"[{label}] 真实响应体: "
+                    f"{json.dumps(result, ensure_ascii=False)[:2000]}"
+                )
             assert usage, (
-                f"[{label}] 响应缺少 usage: "
-                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+                f"[{label}] 响应缺少 usage: {list(result.keys())}"
             )
             test_logger.info(
                 f"[{label}]: HTTP 200, "
@@ -6268,11 +6453,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         except ValueError as e:
             pytest.fail(
                 f"客户问题复现失败：响应应为合法 JSON，解析异常: {e}"
-                f"——{response.text[:400]!r}"
+                f"（响应体已记录于测试日志）"
             )
         choices = body.get("choices") or []
         assert choices, (
-            f"客户问题复现失败：choices 为空——{response.text[:400]!r}"
+            f"客户问题复现失败：choices 为空——响应体已记录于测试日志"
         )
 
         # 断言3：message 有效输出（官方形态为正常答句）
@@ -6290,7 +6475,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         assert content or tool_calls, (
             f"客户问题复现失败：message 无有效输出（content 与 "
             f"tool_calls 均空，finish={finish}）——官方同参数下正常"
-            f"应答{budget_note}——{response.text[:400]!r}"
+            f"应答{budget_note}（响应体已记录于测试日志）"
         )
 
         # 官方行为细节软校验（仅日志）：输出/推理引用工具数据要素
@@ -6472,12 +6657,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             except ValueError as e:
                 pytest.fail(
                     f"客户问题复现失败：{label} 响应应为合法 JSON，"
-                    f"解析异常: {e}——{response.text[:400]!r}"
+                    f"解析异常: {e}（响应体已记录于测试日志）"
                 )
             choices = body.get("choices") or []
             assert choices, (
                 f"客户问题复现失败：{label} choices 为空——"
-                f"{response.text[:400]!r}"
+                f"响应体已记录于测试日志"
             )
             message = choices[0].get("message") or {}
             content = message.get("content") or ""
@@ -6498,7 +6683,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 assert finish == "length", (
                     f"客户问题复现失败：{label} 无有效输出且非思考"
                     f"耗光形态（content 与 tool_calls 均空，"
-                    f"finish={finish}）——{response.text[:400]!r}"
+                    f"finish={finish}；响应体已记录于测试日志）"
                 )
                 test_logger.info(
                     f"{label} 思考耗光预算（正文空 + finish="
@@ -6510,7 +6695,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"客户问题复现失败：{label}（low 强度回退轮）仍无"
                 f"有效输出（content 与 tool_calls 均空，finish="
                 f"{finish}）——默认 max 与 low 双强度均未产出有效"
-                f"输出，报文留证交开发——{response.text[:400]!r}"
+                f"输出，报文已留存于测试日志供开发排查"
             )
 
         test_logger.info(
@@ -6800,10 +6985,15 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             ), f"{label} finish_reason 非法: {collected['finish']!r}"
             if require_json:
                 parsed_json = as_json(collected["content"])
+                if parsed_json is None:
+                    test_logger.error(
+                        f"{label} 响应正文非合法 JSON，正文: "
+                        f"{collected['content'][:2000]!r}"
+                    )
                 assert parsed_json is not None, (
                     f"{label} 响应正文非合法 JSON——第 1/2 次响应须"
                     f"作为下一请求输入回填（JSON 链条断裂，场景无法构"
-                    f"造）: {collected['content'][:400]!r}"
+                    f"造）（正文已记录于测试日志）"
                 )
                 test_logger.info(
                     f"{label} 响应为合法 JSON: "

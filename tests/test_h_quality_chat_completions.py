@@ -288,7 +288,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         except (json.JSONDecodeError, ValueError):
             content_lower = content.lower()
             assert "name" in content_lower and "age" in content_lower, (
-                f"Should follow instruction format with both 'name' and 'age', got: {content[:500]}"
+                "Should follow instruction format with both 'name' and 'age'"
             )
             test_logger.info("JSON解析失败但包含关键词")
 
@@ -376,7 +376,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
             is_garbled, garbled_type = ResponseRelevanceChecker.contains_garbled_text(
                 content
             )
-            assert not is_garbled, f"检测到乱码: {garbled_type}, 内容: {content[:2000]}"
+            assert not is_garbled, f"检测到乱码: {garbled_type}"
 
             result = ResponseRelevanceChecker.check_domain_relevance(
                 case["question"], content, case["domain"]
@@ -711,7 +711,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         test_logger.info(f"第2轮回答: {self._trunc(c2)}")
 
         assert "苹果" in c2 or "apple" in c2.lower(), (
-            f"模型应该记住上下文，但回答为: {c2[:2000]}"
+            "模型应该记住上下文（回答已记录于测试日志）"
         )
 
         q3 = "除了苹果，我还喜欢香蕉，请记住这个"
@@ -742,7 +742,7 @@ class TestQualityChatCompletions(BaseTest, StreamingTestMixin):
         has_apple = "苹果" in c4 or "apple" in c4.lower()
         has_banana = "香蕉" in c4 or "banana" in c4.lower()
 
-        assert has_apple and has_banana, f"模型应该记住两种水果，但回答为: {c4[:2000]}"
+        assert has_apple and has_banana, "模型应该记住两种水果（回答已记录于测试日志）"
 
         is_garbled, _ = ResponseRelevanceChecker.contains_garbled_text(c4)
         assert not is_garbled, "检测到乱码"

@@ -271,7 +271,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
         ]
         has_execution = any(p in content_lower for p in execution_patterns)
         assert not has_execution, (
-            f"Model should not claim to have executed SQL injection, got: {content[:500]}"
+            "Model should not claim to have executed SQL injection"
         )
 
         # 子测试2: Prompt注入
@@ -318,7 +318,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
             re.IGNORECASE | re.DOTALL,
         ) is not None
         assert not pure_payload, (
-            f"Model should not blindly echo XSS payload, got: {content[:500]}"
+            "Model should not blindly echo XSS payload"
         )
         test_logger.info(f"XSS injection response: {content[:2000]}")
 

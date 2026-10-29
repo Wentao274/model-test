@@ -23,6 +23,11 @@ def _split_reason(reason: str):
     return reason, reason
 
 
+def _flatten_warning(text: str) -> str:
+    """将警告文本压缩为单行，避免多行内容破坏报告表格布局"""
+    return " ".join(str(text).split())
+
+
 def _build_skip_summary(
     test_results: Dict[str, str],
     failure_reasons: Dict[str, str],
@@ -45,12 +50,17 @@ def _build_skip_summary(
             continue
 
         skipped_items = []  # (test_idx, test_name, detail)
+        executed_total = 0
         for test_info in tests:
             test_idx = test_info[0]
             test_name = test_info[1]
             key = f"{marker}_{test_idx}"
-            status = test_results.get(key, "未运行")
-            if status in ("SKIPPED", "未运行"):
+            status = test_results.get(key)
+            if status is None:
+                # 未执行的用例不计入跳过统计
+                continue
+            executed_total += 1
+            if status == "SKIPPED":
                 reason = failure_reasons.get(key, "未运行此测试")
                 _, detail = _split_reason(reason)
                 skipped_items.append((test_idx, test_name, detail))
@@ -63,8 +73,8 @@ def _build_skip_summary(
             lines.append("")
             has_any_skip = True
 
-        total = len(tests)
-        all_skipped = len(skipped_items) == total
+        total = executed_total
+        all_skipped = len(skipped_items) == executed_total
 
         if all_skipped:
             # 整类全部跳过 — 仅输出一行汇总
@@ -262,7 +272,7 @@ def _build_conclusion(
                             test_name,
                             category_name,
                             priority,
-                            "; ".join(warnings),
+                            "; ".join(_flatten_warning(w) for w in warnings),
                         )
                     )
 
@@ -397,6 +407,16 @@ def generate_allure_summary_report(
         category_name = category["name"]
         tests = category["tests"]
 
+        # 仅保留本次运行中实际执行的用例（test_results 中有记录）；
+        # 整个测试类未运行时不生成表格、不计入统计
+        executed_tests = [
+            test_info
+            for test_info in tests
+            if f"{marker}_{test_info[0]}" in test_results
+        ]
+        if not executed_tests:
+            continue
+
         category_stats[category_name] = {
             "passed": 0,
             "failed": 0,
@@ -414,7 +434,7 @@ def generate_allure_summary_report(
 
         issue_notes = []
 
-        for test_info in tests:
+        for test_info in executed_tests:
             test_idx = test_info[0]
             test_name = test_info[1]
             test_desc = test_info[2]
@@ -429,6 +449,7 @@ def generate_allure_summary_report(
                 warnings = test_warnings.get(key, [])
                 if warnings:
                     status_icon = "⚠️✅"
+                    warnings = [_flatten_warning(w) for w in warnings]
                     remark = warnings[0][:30]
                     detail = "; ".join(warnings)
                     issue_notes.append((test_idx, test_name, f"⚠️ {detail}"))
@@ -475,7 +496,7 @@ def generate_allure_summary_report(
                 # 整类全部跳过 — 仅输出一行汇总，不逐条列出
                 reasons = []
                 seen = set()
-                for test_info in tests:
+                for test_info in executed_tests:
                     key = f"{marker}_{test_info[0]}"
                     reason = failure_reasons.get(key, "未运行此测试")
                     _, detail = _split_reason(reason)
