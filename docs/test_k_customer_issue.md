@@ -56,7 +56,7 @@
 | K15 | 细粒度前缀匹配短输入缓存阈值 | 客户问题：短文本缓存命中率不达标，根因推理引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640 tok 量级），客户输入低于该块长（如 625 tok）完全不缓存；平台修复为细粒度前缀匹配（sglang prefix-match-unit=64）；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两个测试点（OpenAI 协议非流式、不发送采样参数，cached_tokens 取 usage.prompt_tokens_details.cached_tokens 兼容 usage.cached_tokens）：1) 输入 64<N<640 相同请求连发两次，断言第 2 次 cached_tokens>0；2) 输入 N<64 相同请求连发两次，断言 cached_tokens==0；以服务端 prompt_tokens 校验规模前提 | P0 |
 | K16 | 固定前缀/多轮上下文缓存命中率达标 | 客户问题：修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文 87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断（8192→12×640=7680，损失 512），细粒度匹配（64）后应 ≈94.2%≥90%；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两模式（OpenAI 协议非流式、不发送采样参数，规模由原始信息推算：~12800 字符共享前缀 ≈8192 tok + ~780 字符/轮唯一问题 ≈501 tok）：1) 固定前缀 10 轮独立请求；2) 多轮上下文单会话逐轮追加（回复极短）；均排除第 1 轮预热实测 9 轮，断言各模式 Σcached/Σprompt_tokens ≥90%，任一 <90% 即 FAIL | P0 |
 | K17 | stop 停止符（换行符）在推理阶段生效 | 客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用于推理输出——推理里的第一个换行即触发停止，正文不会生成；反之若换行未触发停止、继续输出正文，则换行符未生效；适用 GLM-5.3 | 按场景构造流式请求（stream=true、stop=["\n"]、thinking={type:enabled}（K1 口径）、max_tokens=512 防御性预算、不发送采样参数），断言 SSE 有事件、合并正文为空（核心）、finish_reason==stop、合并 reasoning 不含换行（停止符不泄漏） | P0 |
-| K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按客户 agent 两步流程还原（用户指定测试逻辑）：第一个请求让模型输出技能周报数据 JSON 并落盘测试脚本同级目录下临时文件（第一步"输出 JSON 到 *.json 文件"）；第二个请求调用工具读取该临时 JSON 文件，将工单原始 assistant 返回数据（user→assistant(空占位+bash 调用+reasoning 双字段)→user 追问携带文件内容，带 bash 工具定义，非流式）回填为输入上下文；测试完成后删除临时 JSON 文件（finally 兜底，断言失败同样清理）；断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对象、临时文件回读一致、第二个请求 HTTP 200（核心）、choices 存在、message 结构存在；采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖 | P0 |
+| K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；后续问题（开发文档）：修复后新问题 tool_call_id 悬空引用（must reference an unanswered tool call）——根因为模型返回空 function（id=null），客户端以 missing_tool_call_id 回填后被协议拒绝，根上解决为模型不返回空 function；适用 GLM-5.3 | 按客户 agent 两步流程还原（用户指定测试逻辑）：第一个请求让模型输出技能周报数据 JSON 并落盘测试脚本同级目录下临时文件（第一步"输出 JSON 到 *.json 文件"）；第二个请求调用工具读取该临时 JSON 文件，将工单原始 assistant 返回数据（user→assistant(空占位+bash 调用+reasoning 双字段)→user 追问携带文件内容，带 bash 工具定义，非流式）回填为输入上下文；第三个请求（根因断言）复刻工单首个 user 回合（带 bash 工具定义）断言模型工具调用结构完整；测试完成后删除临时 JSON 文件（finally 兜底，断言失败同样清理）；断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对象、临时文件回读一致、第二个请求 HTTP 200（核心）、choices 存在、message 结构存在、第三个请求模型发起工具调用且每条调用 name/id 非空、arguments 为合法 JSON 对象（根因断言：模型不得返回空 function）；采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖 | P0 |
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
 | K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出预算 max_tokens 覆盖思考+正文，两轮思考档位（用户指定补 max 场景）——low 轮（1024）常规、max 轮（4096）最大思考负载，输出侧同步压窗口（总消耗 ≈961K/964K，两种 1M 口径均满足），单条 user 消息非流式提交（采样参数不豁免——用户指定：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入；跑必冷仅 low 轮——用户加固：low 轮（含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中文），前缀必不命中 KV 缓存，真 1M 冷 prefill；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许命中历史缓存加速），断言探针 200 且有 usage、每轮主请求 HTTP 200、choices/content 非空、每轮主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
 | K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
@@ -1021,11 +1021,32 @@ JSON 到 *.json 文件"——其 name/id 在返回数据中丢失；bash 调
 4. 兼容 assistant 历史里重复的 reasoning_content /
    reasoning_context，保留最后一个值。
 
-**请求构造**（按客户 agent 两步流程还原——用户指定测试逻辑，
-OpenAI 协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
+后续问题（开发文档：glm5.3 返回 messages[141].tool_call_id
+must reference an unanswered tool call 问题——SMG 1.13.0 修复
+上线后引出）：不再报 missing field `name`，但出现新问题——
+`messages[141].tool_call_id must reference an unanswered tool
+call in the preceding assistant message`。完整根因链（开发确
+认）：
+1. 模型返回了一个空的 function（id=null）——根本原因；
+2. 客户端工具执行后回填错误结果：真实调用因 arguments 缺 `{`
+   无法执行（`[Tool call could not be executed because its
+   arguments were invalid.]`，以其真实 id 回填）；空 function
+   因 id=null，客户端构造 ToolMessage 校验失败
+   （ValidationError: tool_call_id Input should be valid
+   string, input_value=None），遂以
+   `tool_call_id="missing_tool_call_id"` 回填错误说明；
+3. 再次请求时该悬空 tool_call_id 不指向任何未应答调用，被协
+   议校验拒绝（messages[141] 报错）。
+根上解决（开发建议）：模型不要返回空的 function——不同客户端
+工具处理结果的方式不同。
+
+**请求构造**（按客户 agent 两步流程还原+根因断言请求，OpenAI
+协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
 - **第一个请求**（第一步"输出 JSON 到 *.json 文件"）：user 单轮
-  要求直接输出技能周报数据 JSON 对象（3-5 条记录；不带工具定
-  义——直接输出 JSON 才可确定性落盘）；max_tokens=2048（留足
+  要求直接输出技能周报数据 JSON 对象（3-5 条示例记录，明确无需
+  真实数据——防御模型因"无工作区数据"拒绝虚构而输出 error
+  JSON；不带工具定义——直接输出 JSON 才可确定性落盘）；
+  max_tokens=2048（留足
   思考预算余量，防御正文被思考耗光）；测试代为执行"输出 JSON
   到 *.json 文件"——从正文提取最外层 `{...}`（容忍 markdown
   代码块围栏/前后杂文）、json.loads 校验后写入测试脚本同级目录
@@ -1042,7 +1063,13 @@ OpenAI 协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
   上限 3000 字符）；tools：bash 工具定义（agent 场景——模型输
   出调用了 bash，请求必然定义了该工具）；max_tokens=512（工单
   口径）
-- 采样参数不豁免（用户指令）——两个请求一致，由全局
+- **第三个请求**（根因断言）：复刻工单首个 user 回合——user
+  单轮 "请分析工作区数据并生成技能周报图表。"（与第二个请求
+  历史第 0 条同一消息，常量 K18_CHART_PROMPT 单一来源复用），
+  带 bash 工具定义，max_tokens=2048（同第一个请求防御口径——
+  留足思考预算余量）；工单中模型在该回合输出了空占位调用与畸
+  形 bash arguments（根因行为），本请求断言本次输出结构完整
+- 采样参数不豁免（用户指令）——三个请求一致，由全局
   SAMPLING_PARAMS（Jenkinsfile，经 `--sampling-params` 注入）
   覆盖：temperature 全局值优先（无覆盖时回退 0.7），top_p/seed
   未显式指定时注入
@@ -1057,6 +1084,11 @@ OpenAI 协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
    求的输入上下文，报错复现即 FAIL）
 4. 第二个请求 choices 存在且非空 + message 结构存在（响应可正
    常生成）
+5. 第三个请求 HTTP 200 且模型发起工具调用（生成图表必须执行
+   绘图脚本——工单场景中模型对该消息即发起 bash 调用；纯文本
+   回答无法覆盖根因），每条调用 name 非空、id 非空、arguments
+   为合法 JSON 对象（根因断言：模型不得返回空 function；同时
+   覆盖工单同款畸形 arguments 缺 `{` 的模型输出缺陷）
 
 **判定矩阵**：
 - 第一个请求未输出合法 JSON 对象（正文空/无 `{...}`/解析失败）
@@ -1068,6 +1100,13 @@ OpenAI 协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
   错误）→ FAIL（工单缺陷复现——空占位调用未被容忍）
 - 200 但无 choices / 无 message 结构 → FAIL（上下文被接受但未
   正常生成）
+- 第三个请求模型未发起工具调用 → FAIL（无法验证根因断言——
+  工单场景中该回合必然发起工具调用）
+- 第三个请求任一工具调用 name 为空 / id 为空 → FAIL（根因复
+  现：模型返回空 function——客户端将以 missing_tool_call_id
+  回填，后续请求被协议校验拒绝）
+- 第三个请求任一工具调用 arguments 非合法 JSON 对象 → FAIL
+  （工单同款畸形 arguments 模型输出缺陷复现）
 
 **设计决策记录**：
 - **P0**（按客户工单，AGDC2-28）
@@ -1093,6 +1132,24 @@ OpenAI 协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
   兜底删除（断言失败同样清理）
 - **第一个请求不带工具定义**：直接输出 JSON 才可确定性落盘
   （带工具定义时模型可能改为发起工具调用，正文无 JSON 可写盘）
+- **第一个请求明确生成示例记录**：测试无真实工作区数据，首跑
+  曾因模型"无数据拒绝虚构"输出 error:no_workspace_data——
+  提示词明确无需真实数据，保证第一步确定性产出数据记录
+- **第三个请求复刻工单首个 user 回合**：根因行为（空占位调用
+  +畸形 bash arguments）发生在模型对该消息的响应中——同一消
+  息复现条件最贴近；与第二个请求历史第 0 条共用常量
+  K18_CHART_PROMPT（单一来源）
+- **tool_calls 非空硬断言**：生成图表必须执行绘图脚本，工单场
+  景中模型对该消息即发起 bash 调用——纯文本回答时根因断言
+  无从谈起（vacuous pass），故硬断言；行为假设失败时 FAIL 信
+  息明确
+- **arguments 合法 JSON 对象断言**：覆盖工单同款畸形
+  arguments（缺 `{`）模型输出缺陷——根因文档仅点名空
+  function，但畸形 arguments 同样源自模型输出，一并纳入结构
+  完整性断言
+- **不断言 missing_tool_call_id 悬空引用被放行**：该形态为客
+  户端产物（协议上 tool 结果必须引用未应答调用，拒绝是正确行
+  为），根因修复在模型侧——不做服务端放行断言
 - **多轮最小还原**：第二个请求 user→assistant(工单输出)→user
   追问——工单核心是"输出回填为上下文"，不额外自造 tool 响应
   消息；工具读取到的文件内容经 user 追问带入（role=tool 消息

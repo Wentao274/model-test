@@ -872,9 +872,17 @@ TEST_CATEGORIES = {
                 "象、临时文件回读一致、第二个请求 HTTP 200+choices"
                 "+message——上次输出 JSON 必须可作为下次输入上下"
                 "文，报错复现即 FAIL；不断言 arguments 被补 \"{\" 与"
-                "占位被移除。适用 GLM-5.3；采样参数不豁免——由全局 "
-                "SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 "
-                "0.7、top_p/seed 注入），两个请求一致",
+                "占位被移除。后续问题（开发文档）：修复上线后新问题 "
+                "tool_call_id 悬空引用（must reference an unanswered "
+                "tool call）——根因为模型返回空 function（id=null），"
+                "客户端以 missing_tool_call_id 回填错误结果后被协议"
+                "校验拒绝；根上解决为模型不返回空 function。第三个请"
+                "求（根因断言）复刻工单首个 user 回合（带 bash 工具"
+                "定义），断言模型发起工具调用且每条调用 name/id 非"
+                "空、arguments 为合法 JSON 对象。适用 GLM-5.3；采样"
+                "参数不豁免——由全局 SAMPLING_PARAMS 覆盖"
+                "（temperature 无覆盖时回退 0.7、top_p/seed 注入），"
+                "三个请求一致",
                 "output_json_as_input_context",
                 "P0",
             ),

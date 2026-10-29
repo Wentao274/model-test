@@ -1,3 +1,43 @@
+def selectedMarkerList() {
+    def markerEntries = [
+        ['MARKER_A_BASIC', 'a_basic'],
+        ['MARKER_B_ADVANCED', 'b_advanced'],
+        ['MARKER_C_MULTIMODAL', 'c_multimodal'],
+        ['MARKER_D_LONG_CONTEXT', 'd_long_context'],
+        ['MARKER_E_PERFORMANCE', 'e_performance'],
+        ['MARKER_F_STABILITY', 'f_stability'],
+        ['MARKER_G_API', 'g_api'],
+        ['MARKER_H_QUALITY_CHAT_COMPLETIONS', 'h_quality_chat_completions'],
+        ['MARKER_I_QUALITY_COMPLETIONS', 'i_quality_completions'],
+        ['MARKER_J_CLEAR_THINKING', 'j_clear_thinking'],
+        ['MARKER_K_CUSTOMER_ISSUE', 'k_customer_issue'],
+        ['MARKER_GLM52', 'GLM52'],
+        ['MARKER_GLM53', 'GLM53'],
+        ['MARKER_KIMIK3', 'KimiK3'],
+        ['MARKER_GLM53FLASH', 'GLM53FLASH'],
+        ['MARKER_P0', 'p0'],
+        ['MARKER_P1', 'p1'],
+        ['MARKER_P2', 'p2'],
+        ['MARKER_SLOW', 'slow'],
+        ['MARKER_SMOKE', 'smoke']
+    ]
+    def selected = []
+    for (entry in markerEntries) {
+        if (params[entry[0]]) {
+            selected.add(entry[1])
+        }
+    }
+    return selected
+}
+
+def markerDisplayText() {
+    def selected = selectedMarkerList()
+    if (params.MARKER_ALL || selected.isEmpty()) {
+        return 'all (全部测试)'
+    }
+    return selected.join(', ')
+}
+
 pipeline {
     agent {
         label 'master'
@@ -14,7 +54,27 @@ pipeline {
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
         string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": 1.0, "top_p": 0.95, "seed": ""}', description: '全局采样参数(JSON)。字段默认: temperature=1.0, top_p=0.95, seed=空(不发送)；字段设为null表示不覆盖该参数；整体留空表示全部不覆盖(框架原有行为)。参数行为用例(A6/A7/A10/F3/H2)始终按自身参数执行')
-        choice(name: 'MARKER', choices: ['all', 'a_basic', 'b_advanced', 'c_multimodal', 'd_long_context', 'e_performance', 'f_stability', 'g_api', 'h_quality_chat_completions', 'i_quality_completions', 'j_clear_thinking', 'k_customer_issue', 'GLM52', 'GLM53', 'KimiK3', 'GLM53FLASH', 'p0', 'p1', 'p2', 'slow', 'smoke'], description: '测试标记，选择要执行的测试标记类型（当SPECIFIC_TEST不为none时此项被忽略；GLM52/GLM53/KimiK3/GLM53FLASH 为K套件按模型分组的标记）')
+        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略）')
+        booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
+        booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
+        booleanParam(name: 'MARKER_C_MULTIMODAL', defaultValue: false, description: 'C类测试 - 多模态能力')
+        booleanParam(name: 'MARKER_D_LONG_CONTEXT', defaultValue: false, description: 'D类测试 - 长上下文处理')
+        booleanParam(name: 'MARKER_E_PERFORMANCE', defaultValue: false, description: 'E类测试 - 性能指标')
+        booleanParam(name: 'MARKER_F_STABILITY', defaultValue: false, description: 'F类测试 - 稳定性与边界')
+        booleanParam(name: 'MARKER_G_API', defaultValue: false, description: 'G类测试 - API兼容性')
+        booleanParam(name: 'MARKER_H_QUALITY_CHAT_COMPLETIONS', defaultValue: false, description: 'H类测试 - Chat Completions API质量评估')
+        booleanParam(name: 'MARKER_I_QUALITY_COMPLETIONS', defaultValue: false, description: 'I类测试 - Completions API质量评估')
+        booleanParam(name: 'MARKER_J_CLEAR_THINKING', defaultValue: false, description: 'J类测试 - clear_thinking 参数行为')
+        booleanParam(name: 'MARKER_K_CUSTOMER_ISSUE', defaultValue: false, description: 'K类测试 - 客户问题复现')
+        booleanParam(name: 'MARKER_GLM52', defaultValue: false, description: 'GLM-5.2 模型缺陷相关用例（K套件按模型分组标记）')
+        booleanParam(name: 'MARKER_GLM53', defaultValue: false, description: 'GLM-5.3 模型缺陷相关用例（K套件按模型分组标记）')
+        booleanParam(name: 'MARKER_KIMIK3', defaultValue: false, description: 'Kimi K3 模型缺陷相关用例（K套件按模型分组标记）')
+        booleanParam(name: 'MARKER_GLM53FLASH', defaultValue: false, description: 'GLM-5.3-Flash 模型缺陷相关用例（K套件按模型分组标记）')
+        booleanParam(name: 'MARKER_P0', defaultValue: false, description: 'P0优先级测试')
+        booleanParam(name: 'MARKER_P1', defaultValue: false, description: 'P1优先级测试')
+        booleanParam(name: 'MARKER_P2', defaultValue: false, description: 'P2优先级测试')
+        booleanParam(name: 'MARKER_SLOW', defaultValue: false, description: '慢速测试')
+        booleanParam(name: 'MARKER_SMOKE', defaultValue: false, description: '冒烟测试 - 核心功能快速验证')
         choice(name: 'SPECIFIC_TEST', choices: [
             'none',
             'tests/test_a_basic_reasoning.py::TestBasicReasoning::test_single_turn_conversation',
@@ -156,7 +216,8 @@ pipeline {
                     println("思考模式:     ${params.THINKING_MODE}")
                     println("ReasoningEffort: ${params.REASONING_EFFORT ?: '(空)'}")
                     println("采样参数:     ${params.SAMPLING_PARAMS ?: '(空, 不覆盖)'}")
-                    println("测试标记:     ${params.MARKER}")
+                    def markerDisplay = markerDisplayText()
+                    println("测试标记:     ${markerDisplay}")
                     println("指定用例:     ${params.SPECIFIC_TEST}")
                     println("模型描述:     ${params.DESCRIPTION}")
                     println("邮件接收者:   ${params.RECIPIENTS}")
@@ -209,6 +270,8 @@ ENDSSH"""
                     def reasoningEffortFlag = params.REASONING_EFFORT ? "--reasoning-effort ${params.REASONING_EFFORT}" : ''
                     def samplingParamsValue = params.SAMPLING_PARAMS ? params.SAMPLING_PARAMS.toString().trim() : ''
                     def samplingParamsFlag = samplingParamsValue ? "--sampling-params '${samplingParamsValue}'" : ''
+                    def selectedMarkers = selectedMarkerList()
+                    def markerFlag = (params.MARKER_ALL || selectedMarkers.isEmpty()) ? '' : "-m '${selectedMarkers.join(' or ')}'"
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """
@@ -235,20 +298,8 @@ if [ -n "${params.SPECIFIC_TEST}" ] && [ "${params.SPECIFIC_TEST}" != "none" ]; 
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
         ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
-elif [ "${params.MARKER}" = "all" ] || [ "${params.MARKER}" = "" ]; then
-    pytest -v \\
-        --base-url "${params.BASE_URL}" \\
-        --api-key "${apiKey}" \\
-        --model-name "${params.MODEL}" \\
-        --chip "${params.CHIP}" \\
-        --engine "${params.ENGINE}" \\
-        --pd-mode "${params.PD}" \\
-        --tester "${params.TESTER}" \\
-        --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
-        --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
 else
-    pytest -v -m "${params.MARKER}" \\
+    pytest -v ${markerFlag} \\
         --base-url "${params.BASE_URL}" \\
         --api-key "${apiKey}" \\
         --model-name "${params.MODEL}" \\
@@ -362,6 +413,7 @@ fi
 
                         // 处理模型名中的路径分隔符
                         def modelDisplayName = params.MODEL.contains('/') ? params.MODEL.split('/')[-1] : params.MODEL
+                        def markerDisplay = markerDisplayText()
 
                         // 检查 API 连通性是否失败（通过 conftest.py 写入的标记文件）
                         def connectivityCheckFailed = false
@@ -493,7 +545,7 @@ fi
                 <tr><th>模型名称</th><td>${modelDisplayName}</td></tr>
                 <tr><th>API 地址</th><td>${params.BASE_URL}</td></tr>
                 <tr><th>PD模式</th><td>${params.PD}</td></tr>
-                <tr><th>测试标记</th><td>${params.MARKER}</td></tr>
+                <tr><th>测试标记</th><td>${markerDisplay}</td></tr>
                 <tr><th>指定用例</th><td>${params.SPECIFIC_TEST}</td></tr>
                 <tr><th>思考模式</th><td>${params.THINKING_MODE}</td></tr>
                 <tr><th>ReasoningEffort</th><td>${params.REASONING_EFFORT ?: '(空)'}</td></tr>
