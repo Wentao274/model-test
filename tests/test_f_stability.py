@@ -503,7 +503,7 @@ class TestStabilityAndBoundary(BaseTest, StreamingTestMixin):
         config = api_client.config
         short_timeout_client = ModelAPIClient(
             api_key=api_client.api_key,
-            base_url=api_client.base_url,
+            base_url=api_client.api_prefix,
             model_name=api_client.model_name,
             timeout=3,
             config=config,

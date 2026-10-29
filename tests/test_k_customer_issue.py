@@ -1257,13 +1257,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 模型，不携带全局采样参数，保持客户原始参数面
         budget_client = ModelAPIClient(
             api_key=api_client.api_key,
-            base_url=api_client.base_url,
+            base_url=api_client.api_prefix,
             model_name=api_client.model_name,
             timeout=K4_RESPONSE_BUDGET_SECONDS,
             config=api_client.config,
             retry_times=0,
         )
-        url = f"{budget_client.base_url}/v1/chat/completions"
+        url = f"{budget_client.api_prefix}/chat/completions"
 
         def run_request(index: int, prompt: str) -> None:
             """K4 单次请求核心逻辑：fp=-2、不传 max_tokens，按 fp=0 预期断言
@@ -1454,7 +1454,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（连发 {len(K5_USER_PROMPTS)} 次，消息各异）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_request(index: int, prompt: str) -> None:
             """K5 单次请求核心逻辑：thinking.type=disabled，按官方实测预期断言
@@ -1712,7 +1712,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（{len(K6_SCENARIOS)} 个组合）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_scenario(scenario: Dict[str, Any]) -> None:
             """K6 单场景核心逻辑：thinking 模式 × temperature 档位联动校验
@@ -1911,7 +1911,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "medium 嵌套 400；倒挂仅告警不判失败）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
         messages = [{"role": "user", "content": K7_USER_PROMPT}]
 
         def run_official_request(index: int, effort: str) -> Dict[str, Any]:
@@ -2255,7 +2255,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "吃满；官方行为对照级别 256/2000 由 K9 验证）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_round(
             label: str, thinking_type: str, temperature: float,
@@ -2513,7 +2513,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "由 K8 验证）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_round(
             label: str, thinking_type: str, temperature: float,
@@ -2819,7 +2819,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "以验证强制语义）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_round(
             label: str, tool_choice: Any, prompt: str, expect: str
@@ -3101,7 +3101,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "0、mt=2048、非流式、不传 thinking，按原始脚本口径）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_round(
             label: str, response_format: Dict[str, Any],
@@ -3298,7 +3298,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "{clear_thinking:true}，按原始脚本口径）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def run_round(label: str, placement: str, effort) -> None:
             """K12 单轮：按放置+档位断言请求被支持"""
@@ -3468,7 +3468,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "多出 \">\" 等多余前缀）===" % K13_EXPECTED
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（需 stop/thinking/reasoning_effort 字
         # 段原样还原，chat_completion 封装不支持这些组合）
@@ -3627,7 +3627,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             " 拒绝；缺陷形态为 200 放行并生成）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（含 tool 角色消息，chat_completion
         # 封装不支持；客户原始请求体不发送采样参数）
@@ -3768,7 +3768,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "测试点2: N<64 应不缓存）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def usage_round(content: str, label: str) -> Dict[str, Any]:
             """K15 单轮：发送请求并返回 usage（OpenAI 协议非流式）"""
@@ -3935,7 +3935,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "各 10 轮排除 1 轮预热实测 9 轮，由原始信息推算）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         def cached_of(usage: Dict[str, Any]):
             """取缓存命中 tokens（prompt_tokens_details.cached_tokens
@@ -4136,7 +4136,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "不生成；缺陷形态为换行未停止且继续输出正文）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（需 stop/thinking 字段原样还原，
         # chat_completion 封装不支持这些组合）
@@ -4440,7 +4440,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "后应被接受，报错复现即 FAIL）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（需按工单原样还原 assistant 历史怪
         # 异结构，chat_completion 封装不支持）；采样参数不豁免（用户
@@ -4906,7 +4906,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "200 + \"At most 16 image(s)...\" 类信息）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（多模态 image_url part 形态，封
         # 装不支持）；不发送采样参数（豁免全局覆盖）
@@ -5072,7 +5072,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "全部材料。"
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         test_logger.info(
             "=== 测试开始: 客户问题 - 1M 上下文请求应被正常支持"
@@ -5426,7 +5426,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             }
         ]
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         test_logger.info(
             "=== 测试开始: 客户问题 - system 消息内嵌 tools 的非标请"
@@ -5824,7 +5824,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 历史运行遗留缓存）
         run_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
-        chat_url = f"{api_client.base_url}/v1/chat/completions"
+        chat_url = f"{api_client.api_prefix}/chat/completions"
         messages_url = f"{api_client.base_url}/anthropic/v1/messages"
 
         def chat_round(
@@ -6372,7 +6372,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "输出）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS
         # （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
@@ -6705,7 +6705,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             " 工单口径豁免全局采样覆盖）==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # 采样参数豁免（用户指定）：两个请求体均显式 temperature=
         # 0.0——工单原始请求体为唯一口径，通过 RAW_SAMPLING_PARAM_
@@ -7023,7 +7023,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "reasoning_effort=low 仅重发耗光请求==="
         )
 
-        url = f"{api_client.base_url}/v1/chat/completions"
+        url = f"{api_client.api_prefix}/chat/completions"
 
         # ---- 第 1 次请求：采集第 1 段思考+JSON 正文（第 2 次请求
         # 的输入）----

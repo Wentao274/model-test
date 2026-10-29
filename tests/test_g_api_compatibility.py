@@ -298,7 +298,7 @@ class TestAPICompatibility(BaseTest):
 
         # 测试 401 认证错误（无效的API key）
         invalid_client = ModelAPIClient(
-            base_url=api_client.base_url,
+            base_url=api_client.api_prefix,
             api_key="invalid_key_12345",
             model_name=api_client.model_name,
         )
@@ -345,7 +345,7 @@ class TestAPICompatibility(BaseTest):
 
         # 测试 404 错误（不存在的端点）
         try:
-            url = f"{api_client.base_url}/v1/nonexistent_endpoint"
+            url = f"{api_client.api_prefix}/nonexistent_endpoint"
             TestLogger.log_request(test_logger, messages, {"url": url})
             resp = requests.get(url, timeout=10, headers=api_client.session.headers)
             self.log_full_response(
@@ -393,7 +393,7 @@ class TestAPICompatibility(BaseTest):
         # SDK 已安装，以下为硬断言
         client = OpenAI(
             api_key=api_client.api_key or "dummy",
-            base_url=f"{api_client.base_url}/v1",
+            base_url=api_client.api_prefix,
         )
         try:
             messages = [{"role": "user", "content": "测试SDK兼容性"}]

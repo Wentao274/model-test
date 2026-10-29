@@ -9,6 +9,10 @@ global:
   output_dir: ./test_results      # 测试结果输出目录
 
 chips:
+  # 智谱官方 API（非 /v1 网关）：base_url 需带版本号段 /v4
+  # zhipu-official:
+  #   enabled: false
+  #   base_url: https://open.bigmodel.cn/api/paas/v4
   metax-c550:
     enabled: false
     base_url: http://10.130.70.1:8000

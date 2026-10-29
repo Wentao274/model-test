@@ -4,6 +4,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import Dict, Any, List, Optional, Iterator, Union
 import requests
@@ -47,6 +48,43 @@ def _attach_api_error(status_code: int, response_text: str, payload: dict):
         pass
 
 
+# OpenAI 风格端点默认挂在 /v1 版本号段下（vLLM/SGLang 等推理网关惯例）。
+# 部分云服务使用不同版本段（如智谱官方 API 为 /api/paas/v4），因此 base_url
+# 允许以版本号段结尾，由客户端识别后透传到所有端点，避免硬拼 /v1 导致 URL 错误。
+_API_VERSION_RE = re.compile(r"/(v\d+)$")
+
+# 容忍直接粘贴完整端点 URL：先剥离末尾的已知端点路径，再识别版本段
+_KNOWN_ENDPOINT_SUFFIXES = ("/chat/completions", "/completions", "/models")
+
+
+def split_base_url(base_url: str):
+    """归一化 base_url，返回 (不含版本段的 base, 版本号)
+
+    规则：
+    - 去除首尾空白与尾部斜杠
+    - 若以完整端点路径结尾（/chat/completions、/completions、/models），先剥离
+    - 若以版本号段（/v1、/v4 等）结尾，剥离并作为 API 版本透传到所有端点
+    - 无版本号段时默认 v1，与既有行为完全一致
+
+    Examples:
+        >>> split_base_url("http://h:8000/v1/")
+        ('http://h:8000', 'v1')
+        >>> split_base_url("https://open.bigmodel.cn/api/paas/v4")
+        ('https://open.bigmodel.cn/api/paas', 'v4')
+        >>> split_base_url("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+        ('https://open.bigmodel.cn/api/paas', 'v4')
+    """
+    raw = (base_url or "").strip().rstrip("/")
+    for suffix in _KNOWN_ENDPOINT_SUFFIXES:
+        if raw.endswith(suffix):
+            raw = raw[: -len(suffix)].rstrip("/")
+            break
+    m = _API_VERSION_RE.search(raw)
+    if m:
+        return raw[: m.start()], m.group(1)
+    return raw, "v1"
+
+
 class ModelAPIClient:
     """模型API客户端，封装OpenAI兼容的API调用"""
 
@@ -64,9 +102,10 @@ class ModelAPIClient:
         retry_times: int = 3,
     ):
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        if self.base_url.endswith("/v1"):
-            self.base_url = self.base_url[:-3]
+        self.base_url, self.api_version = split_base_url(base_url)
+        # 版本感知端点前缀 {base}/{version}：OpenAI 风格端点统一由它拼接；
+        # base_url 保持不含版本段，供 anthropic 协议等自带路径的场景使用
+        self.api_prefix = f"{self.base_url}/{self.api_version}"
         self.model_name = model_name
         self.timeout = timeout
         self.config = config or {}
@@ -222,7 +261,7 @@ class ModelAPIClient:
 
         extra_body = kwargs.pop("extra_body", None)
 
-        url = f"{self.base_url}/v1/chat/completions"
+        url = f"{self.api_prefix}/chat/completions"
         payload = {
             "model": model or self.model_name,
             "messages": messages,
@@ -268,7 +307,7 @@ class ModelAPIClient:
         self._inject_global_params(kwargs)
         extra_body = kwargs.pop("extra_body", None)
 
-        url = f"{self.base_url}/v1/chat/completions"
+        url = f"{self.api_prefix}/chat/completions"
         payload = {
             "model": model or self.model_name,
             "messages": messages,
@@ -300,7 +339,7 @@ class ModelAPIClient:
 
     def list_models(self) -> Dict[str, Any]:
         """获取模型列表"""
-        url = f"{self.base_url}/v1/models"
+        url = f"{self.api_prefix}/models"
         response = self.session.get(url, timeout=self.timeout)
         response.raise_for_status()
         return response.json()
@@ -309,7 +348,7 @@ class ModelAPIClient:
         self, prompt: str, model: Optional[str] = None, **kwargs
     ) -> Dict[str, Any]:
         """传统Completion API"""
-        url = f"{self.base_url}/v1/completions"
+        url = f"{self.api_prefix}/completions"
         payload = {"model": model or self.model_name, "prompt": prompt, **kwargs}
         response = self.session.post(url, json=payload, timeout=self.timeout)
         response.raise_for_status()

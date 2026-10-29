@@ -248,7 +248,7 @@ pytest -m slow -v                           # 慢速测试
 
 | 参数 | 环境变量 | 必填 | 说明 |
 |------|---------|------|------|
-| `--base-url` | `BASE_URL` | 是 | API 地址（无需带 `/v1`，框架自动拼接/去除） |
+| `--base-url` | `BASE_URL` | 是 | API 地址（无需带 `/v1`，框架自动拼接/去除）；非 `/v1` 网关需带版本号段，如智谱官方 `https://open.bigmodel.cn/api/paas/v4` |
 | `--model-name` | `MODEL_NAME` | 是 | 模型服务名称（如 `kimi-k25`、`glm5`、`minimax-m2.5`） |
 | `--api-key` | `API_KEY` | 否 | API 密钥；传空字符串则不携带鉴权头 |
 | `--chip` | `CHIP` | 否 | 芯片平台名称（自动转小写，用于日志/报告目录标识） |

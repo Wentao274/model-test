@@ -12,7 +12,7 @@ import requests
 import yaml
 from typing import Dict, Any, List, Optional, Tuple
 
-from base.api_client import ModelAPIClient
+from base.api_client import ModelAPIClient, split_base_url
 from base.logger import TestLogger
 from base.test_definitions import TEST_CATEGORIES
 from base.report_generator import TestReportGenerator
@@ -537,7 +537,8 @@ def pytest_addoption(parser):
         "--base-url",
         action="store",
         default=None,
-        help="API base URL (e.g., http://127.0.0.1:8080/v1)",
+        help="API base URL, optional version suffix (e.g., http://127.0.0.1:8080/v1, "
+        "Zhipu official: https://open.bigmodel.cn/api/paas/v4)",
     )
     parser.addoption(
         "--api-key",
@@ -1093,12 +1094,11 @@ def _resolve_connectivity_config(session) -> Dict[str, Any]:
     env_model = os.environ.get("MODEL_NAME")
     model_name = cmd_model or env_model or cfg.get("default_model", "qwen35")
 
-    normalized_base_url = (base_url or "").rstrip("/")
-    if normalized_base_url.endswith("/v1"):
-        normalized_base_url = normalized_base_url[:-3]
+    normalized_base_url, api_version = split_base_url(base_url)
 
     return {
         "base_url": normalized_base_url,
+        "api_version": api_version,
         "api_key": api_key or "",
         "model_name": model_name,
     }
@@ -1140,6 +1140,7 @@ def _run_connectivity_check(session) -> None:
     """
     info = _resolve_connectivity_config(session)
     base_url = info["base_url"]
+    api_version = info.get("api_version", "v1")
     api_key = info["api_key"]
     model_name = info["model_name"]
 
@@ -1154,7 +1155,7 @@ def _run_connectivity_check(session) -> None:
         headers["Authorization"] = f"Bearer {api_key}"
 
     print("\n=== API 连通性检查 ===")
-    print(f"  BASE_URL: {base_url}")
+    print(f"  BASE_URL: {base_url} (端点版本号段: /{api_version})")
     print(f"  MODEL: {model_name}")
     if api_key:
         masked = f"***{api_key[-4:]}" if len(api_key) > 4 else "***"
@@ -1177,7 +1178,7 @@ def _run_connectivity_check(session) -> None:
     # print(f"  [OK] /models 连通性检查通过, HTTP状态码: {resp.status_code}")
 
     # 2. 检查 /chat/completions
-    chat_url = f"{base_url}/v1/chat/completions"
+    chat_url = f"{base_url}/{api_version}/chat/completions"
     payload = {
         "model": model_name,
         "messages": [{"role": "user", "content": "hello"}],
@@ -1193,7 +1194,9 @@ def _run_connectivity_check(session) -> None:
     if resp.status_code != 200:
         _fail_and_exit(
             f"ERROR: Chat Completions 接口检查失败, HTTP状态码: {resp.status_code}\n"
-            f"响应内容: {resp.text[:500]}"
+            f"响应内容: {resp.text[:500]}\n"
+            f"提示: 目标服务若使用非 /v1 版本路径（如智谱官方 "
+            f"https://open.bigmodel.cn/api/paas/v4），BASE_URL 需以版本号段结尾"
         )
     print(f"  [OK] /chat/completions 连通性检查通过, HTTP状态码: {resp.status_code}")
     print("=== API 连通性检查完成 ===\n")
