@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K23
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K25
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -250,14 +250,20 @@ K. 客户问题复现测试
   JSON，按工单原样保留）。修复：解析失败后同列表有真实调用时移
   除空占位项再重新校验；缺 "{" 的 arguments 原样保留（不补）；
   兼容 assistant 历史重复的 reasoning_content/reasoning_context
-  （保留最后一个值）。本用例按工单还原该 assistant 消息回填为多
-  轮上下文（user→assistant(空占位+bash 调用+reasoning 双字段)→
-  user 追问，带 bash 工具定义，非流式），硬断言 HTTP 200+choices
-  存在+message 结构存在——上次输出 JSON 必须可作为下次输入上下
-  文，报错复现即 FAIL。不断言 arguments 被补 "{"（修复明确不
-  补）与占位被移除（router 内部行为）。GLM-5.3 专用；采样参数
-  不豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回
-  退 0.7、top_p/seed 注入）。docx 中 role 拼写 "assitant" 判定为
+  （保留最后一个值）。本用例按客户 agent 两步流程还原（用户指定
+  测试逻辑）：第一个请求让模型输出技能周报数据 JSON 并落盘测试脚
+  本同级目录下临时文件（第一步"输出 JSON 到 *.json 文件"）；第
+  二个请求调用工具读取该临时 JSON 文件，将工单原始 assistant 返
+  回数据（user→assistant(空占位+bash 调用+reasoning 双字段)→
+  user 追问携带文件内容，带 bash 工具定义，非流式）回填为输入上
+  下文；测试完成后删除临时 JSON 文件（finally 兜底）。硬断言：
+  第一个请求 HTTP 200 且正文可提取合法 JSON 对象、临时文件回读
+  一致、第二个请求 HTTP 200+choices 存在+message 结构存在——上
+  次输出 JSON 必须可作为下次输入上下文，报错复现即 FAIL。不断
+  言 arguments 被补 "{"（修复明确不补）与占位被移除（router 内
+  部行为）。GLM-5.3 专用；采样参数不豁免——由全局
+  SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、top_p/
+  seed 注入），两个请求一致。docx 中 role 拼写 "assitant" 判定为
   笔误（报错与修复均不涉及 role），按标准 assistant 还原。
   usage 仅日志。（不进 smoke 集：新用例首跑观察期）
 - K19: 单次请求图片数超限（>16）应拒绝并返回恰当错误 [P0]
@@ -423,6 +429,44 @@ K. 客户问题复现测试
   均未产出——留证交开发）。finish/usage 仅日志；模型真实响应断
   言前打印；运行日志不含具体模型名。（不进 smoke 集：新用例首跑
   观察期）
+- K25: assistant 历史重复 reasoning_content 字段应被兼容接受 [P0]
+  客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条消
+  息携带两个 reasoning_content 字段（两轮历史思考未去重地拼接成
+  同键重复）与上一次请求的正文；客户原始工单还曾因思考内容含
+  They're/I'm/It's 等英文撇号导致 JSON 破损。契约（用户指定）：
+  预期不报错、正常响应；第一个 reasoning_content 被第二个覆盖
+  （宽松解析保留最后一个值，K18 修复口径）。因需两段真实思考，
+  共发三次请求（用户指定，JSON 链式回填——第 1/2 次响应 JSON 作
+  为下一请求输入、思考随历史一并回填；提示词为测试自行设计，工单
+  未携带具体提示词）：第 1 次 user 单轮要求仅输出 JSON（响应用于
+  第 2 次请求输入回填）；第 2 次 messages=[assistant(content=第 1
+  次正文（JSON）, reasoning_content=第 1 次思考), user 追问]（回填
+  第 1 次历史，要求仅输出 JSON——响应用于第 3 次请求输入回填）；
+  第 3 次 messages=[assistant(content=第 2 次正文（JSON）,
+  reasoning_content=第 1 次思考, reasoning_content=第 2 次思考),
+  user 追问]，流式。重复键无法经 dict 表达——手工拼接 JSON 文本
+  直发；正文/思考可能含单引号/双引号/换行（用户指定兼容要求），
+  动态值一律 json.dumps 全转义后拼接，发送前三重自检（raw body
+  可被 json.loads 解析、"reasoning_content" 键出现次数==2、转
+  义回读值一致——回读保留最后一个重复键，模拟服务端宽松解析）。
+  硬断言：第 1/2 次请求思考与正文均非空（构造数据源——被测环境
+  应开思考，GLM-5.3 默认开思考）、正文为合法 JSON（JSON 链——作
+  为下一请求输入回填，断裂即场景无法构造 FAIL；容忍 markdown 代
+  码块围栏）；第 3 次请求 HTTP 200（核心——
+  报错/4xx 复现即 FAIL）+ SSE 事件非空 + 合并正文非空 +
+  finish_reason 合法。耗光回退（K24 口径）：max_tokens=8192 下默认
+  max 档思考可能耗尽预算（正文空+finish=length）——该形态以
+  reasoning_effort=low（GLM 顶层思考强度参数，K20 口径）仅重发耗
+  光请求（第 3 次重发构造不变仅加顶层 reasoning_effort 字段——
+  HTTP 200 核心契约首次请求已达成，重复键历史被接受不以正文是否
+  为空转移），断言相同；正文空且 finish≠length 直接 FAIL；low 回
+  退仍无正文即 FAIL（双强度均未产出——留证交开发）。引号覆盖度软观察：三个回填值均不含引号/换
+  行字符时 record_warning 留痕（引号兼容路径本次未被实际覆盖，构
+  造本身已保证安全，不判失败）。采样参数不豁免（默认口径）：由
+  全局 SAMPLING_PARAMS 覆盖——temperature 无覆盖时回退 0.7、
+  top_p/seed 显式指定时注入（K10/K18/K20 口径）。usage 仅日志；
+  模型真实响应（状态码/合并正文/思考）断言前打印（失败时同样可
+  见）。（不进 smoke 集：新用例首跑观察期）
 """
 
 import base64
@@ -434,7 +478,8 @@ import uuid
 import zlib
 import pytest
 import requests
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from base.base_test import BaseTest, StreamingTestMixin
 from base.api_client import ModelAPIClient
@@ -4052,26 +4097,40 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次
         请求的输入上下文提交即报错——"Failed to deserialize the
         JSON body into the target type: missing field `name`"。触
-        发形态（docx 原样还原）：助手历史 tool_calls 列表混有
+        发形态（docx 原样还原）：助手历史 tool_calls 混有
         1) 空占位调用：function.name=""、id=null、arguments="{}"
-           （报错 missing field `name` 即指向它）；
+           （报错 missing field `name` 即指向它）——按客户 agent
+           两步流程，该调用即第一步"输出 JSON 到 *.json 文件"，
+           其 name/id 在返回数据中丢失；
         2) 真实 bash 调用：name="bash"、id="call_8af1ab36a4154c25"，
-           arguments 为 '"command":"cd ... ", "description":
-           "..."}'——缺开头 "{"、非合法 JSON（内部 data,json、SKlLL
-           等怪字符均为工单原文，原样保留）。
+            arguments 为 '"command":"cd ... ", "description":
+            "..."}'——缺开头 "{"、非合法 JSON（命令为运行绘图脚本
+            并读取/复制第一步输出的 skill_weekly.json；内部
+            data,json、SKlLL 等怪字符均为工单原文，原样保留）。
         修复逻辑：解析失败后，同列表还有其他真实调用时移除空占位
         项、保留真实调用再重新校验；缺 "{" 的 arguments 原样保留
         （不补 "{"——通过 router 不代表该字符串成为合法参数
         JSON）；兼容 assistant 历史重复的 reasoning_content/
         reasoning_context（保留最后一个值）。
-        本用例按工单还原该 assistant 消息回填为多轮上下文：
-        user → assistant(空占位+bash 调用+reasoning 双字段并存) →
-        user 追问，带 bash 工具定义，非流式。
+        本用例按客户 agent 两步流程还原（用户指定测试逻辑）：
+        - 第一个请求：模型直接输出技能周报数据 JSON，测试代为执
+          行"输出 JSON 到 *.json 文件"——写入测试脚本同级目录下
+          的临时文件 k18_temp_skill_weekly.json；
+        - 第二个请求：测试代为执行 bash 工具读取该临时 JSON 文件
+          （读取第一个请求输出的 json 文件），将工单原始 assistant
+          返回数据（空占位+bash 调用+reasoning 双字段并存）与读到
+          的文件内容一并回填为输入上下文：user →
+          assistant(返回数据) → user(携带文件内容)，带 bash 工具
+          定义，非流式；
+        - 测试完成后删除生成的临时 JSON 文件（finally 兜底，断言
+          失败同样清理）。
         硬断言：
-        1. HTTP 200（核心——上次输出 JSON 必须可作为下次请求的输
-           入上下文，报错复现即 FAIL）
-        2. choices 存在且非空
-        3. message 结构存在（响应可正常生成）
+        1. 第一个请求 HTTP 200 且正文可提取合法 JSON 对象（第一
+           步契约：输出 JSON 到文件）
+        2. 工具读取临时 JSON 文件成功（回读 json 与输出一致）
+        3. 第二个请求 HTTP 200（核心——上次输出 JSON 必须可作为
+           下次请求的输入上下文，报错复现即 FAIL）
+        4. choices 存在且非空 + message 结构存在（响应可正常生成）
         明确不断言：arguments 被补 "{"（修复明确不补）、空占位被
         移除（router 内部行为，响应不可见）。响应形态（正文/继续
         调用工具）宽松留日志——测试要点是上下文被接受。
@@ -4080,8 +4139,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         无法经 dict 表达，以 reasoning_content + reasoning_context
         两拼写并存覆盖兼容路径。GLM-5.3 专用；采样参数不豁免——
         由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
-        0.7、top_p/seed 注入）。usage 仅日志。（不进 smoke 集：
-        新用例首跑观察期）
+        0.7、top_p/seed 注入），两个请求一致。usage 仅日志。
+        （不进 smoke 集：新用例首跑观察期）
         """
         # K18: 工单原始 bash 调用 arguments（缺开头 "{"、非合法
         # JSON；内部 data,json/SKlLL 等怪字符均为工单原文，原样保留）
@@ -4143,13 +4202,34 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 },
             ],
         }
+        # K18: 第二个请求（返回数据回填上下文）预算——工单口径
         K18_MAX_TOKENS = 512
+        # K18: 第一个请求提示词——按客户 agent 流程第一步"输出
+        # JSON 到 *.json 文件"：让模型直接输出技能周报数据 JSON
+        #（不带工具定义——直接输出 JSON 才可确定性落盘）
+        K18_REQ1_PROMPT = (
+            "请分析工作区数据并生成技能周报数据：直接输出一个 JSON "
+            '对象，包含 3-5 条技能记录，每条含技能名称（skill）、'
+            '本周事件数（events）、评分（score）字段；以 { 开头、'
+            "以 } 结尾，不要使用 markdown 代码块，不要输出 JSON 以"
+            "外的任何内容。"
+        )
+        # K18: 第一个请求预算——简单数据生成任务，2048 留足思考
+        # 预算余量（防御正文被思考耗光）
+        K18_REQ1_MAX_TOKENS = 2048
+        # K18: 临时 JSON 文件名——第一个请求"输出 JSON 到 *.json
+        # 文件"的落盘产物（测试脚本同级目录下，对应工单中的
+        # skill_weekly.json），测试完成后删除
+        K18_TEMP_FILE_NAME = "k18_temp_skill_weekly.json"
+        # K18: 第二个请求 user 追问携带文件内容的防御性截断上限
+        K18_FILE_CONTEXT_LIMIT = 3000
 
         test_logger.info(
             "=== 测试开始: 客户问题 - 模型输出 JSON 回填为下次请求"
-            "输入上下文（assistant 历史含空占位调用/缺 \"{\" 的 bash "
-            "arguments/reasoning 双字段；修复后应被接受，报错复现即 "
-            "FAIL）==="
+            "输入上下文（两步流程：第一个请求输出临时 JSON 文件 → "
+            "第二个请求调用工具读取后回填上下文；assistant 历史含空"
+            "占位调用/缺 \"{\" 的 bash arguments/reasoning 双字段；"
+            "修复后应被接受，报错复现即 FAIL）==="
         )
 
         url = f"{api_client.base_url}/v1/chat/completions"
@@ -4158,7 +4238,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 异结构，chat_completion 封装不支持）；采样参数不豁免（用户
         # 指令）——由全局 SAMPLING_PARAMS（Jenkinsfile，经 conftest
         # 注入 client）覆盖：temperature 全局值优先（无覆盖时回退
-        # 0.7），top_p/seed 未显式指定时注入
+        # 0.7），top_p/seed 未显式指定时注入；两个请求一致
         sampling_extra: Dict[str, Any] = {}
         if api_client.top_p is not None:
             sampling_extra["top_p"] = api_client.top_p
@@ -4167,98 +4247,256 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 sampling_extra["seed"] = int(api_client.seed)
             except (ValueError, TypeError):
                 sampling_extra["seed"] = api_client.seed
-        payload = {
-            "model": api_client.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "请分析工作区数据并生成技能周报图表。",
-                },
-                K18_ASSISTANT,
-                {"role": "user", "content": "请继续完成任务。"},
-            ],
-            "tools": K18_TOOLS,
-            "max_tokens": K18_MAX_TOKENS,
-            "temperature": api_client._effective_temperature(0.7),
-            "stream": False,
-            **sampling_extra,
-        }
 
-        TestLogger.log_request(
-            test_logger,
-            payload["messages"],
-            {
-                "tools": [t["function"]["name"] for t in K18_TOOLS],
-                "max_tokens": K18_MAX_TOKENS,
-                "temperature": payload["temperature"],
-                "top_p": payload.get("top_p", "(不注入)"),
-                "seed": payload.get("seed", "(不注入)"),
+        temp_file = Path(__file__).with_name(K18_TEMP_FILE_NAME)
+        try:
+            # ---- 第一个请求：模型输出技能周报数据 JSON ----
+            req1_payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [
+                    {"role": "user", "content": K18_REQ1_PROMPT}
+                ],
+                "max_tokens": K18_REQ1_MAX_TOKENS,
+                "temperature": api_client._effective_temperature(0.7),
                 "stream": False,
-                "assistant_history": (
-                    "空占位调用(name=\"\", id=null) + bash 调用"
-                    "(arguments 缺 \"{\") + reasoning 双字段"
-                ),
-            },
-        )
-
-        started = time.time()
-        try:
-            response = api_client._post_with_retry(
-                url, payload, stream=False
+                **sampling_extra,
+            }
+            TestLogger.log_request(
+                test_logger,
+                req1_payload["messages"],
+                {
+                    "max_tokens": K18_REQ1_MAX_TOKENS,
+                    "temperature": req1_payload["temperature"],
+                    "top_p": req1_payload.get("top_p", "(不注入)"),
+                    "seed": req1_payload.get("seed", "(不注入)"),
+                    "stream": False,
+                    "step": (
+                        "第一个请求（输出技能周报数据 JSON，落盘临时"
+                        "文件）"
+                    ),
+                },
             )
-        except Exception as e:
-            pytest.fail(f"请求发送异常（{url}）: {e}")
-        elapsed = time.time() - started
-
-        # 断言1（核心）：上次输出 JSON 可作为下次请求输入上下文——
-        # 修复前此请求报 400（missing field `name`），报错复现即 FAIL
-        assert response.status_code == 200, (
-            f"客户问题复现失败：上次请求输出的 assistant JSON 应可"
-            f"作为下次请求的输入上下文，实际 HTTP "
-            f"{response.status_code}（工单原始报错：missing field "
-            f"`name`；修复应移除空占位项后重新校验放行）: "
-            f"{response.text[:400]}"
-        )
-
-        try:
-            result = response.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            pytest.fail(
-                f"响应不是合法 JSON: {e}. 响应体: {response.text[:300]}"
+            started1 = time.time()
+            try:
+                response1 = api_client._post_with_retry(
+                    url, req1_payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"第一个请求发送异常（{url}）: {e}")
+            elapsed1 = time.time() - started1
+            # 模型真实响应断言前打印（失败时同样可见）
+            test_logger.info(
+                f"第一个请求真实响应: HTTP {response1.status_code}, "
+                f"elapsed={elapsed1:.1f}s, "
+                f"body={response1.text[:800]!r}"
+            )
+            # 断言1a：第一个请求本身应成功（第一步：输出 JSON）
+            assert response1.status_code == 200, (
+                f"第一个请求失败：模型应输出技能周报数据 JSON，实际 "
+                f"HTTP {response1.status_code}: {response1.text[:400]}"
+            )
+            try:
+                result1 = response1.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"第一个请求响应不是合法 JSON: {e}. "
+                    f"响应体: {response1.text[:300]}"
+                )
+            choices1 = result1.get("choices") or []
+            assert choices1, (
+                f"第一个请求响应缺少 choices: "
+                f"{json.dumps(result1, ensure_ascii=False)[:500]}"
+            )
+            message1 = choices1[0].get("message")
+            assert isinstance(message1, dict), (
+                f"第一个请求响应 message 结构缺失: "
+                f"{json.dumps(result1, ensure_ascii=False)[:500]}"
+            )
+            content1 = message1.get("content") or ""
+            finish1 = choices1[0].get("finish_reason")
+            TestLogger.log_response(
+                test_logger, result1, "K18-第一个请求响应"
+            )
+            # 断言1b：正文非空且可提取合法 JSON 对象（容忍 markdown
+            # 代码块围栏/前后杂文——提取最外层 {...}）
+            assert content1.strip(), (
+                f"第一个请求正文为空（finish={finish1}），无法输出 "
+                f"JSON 到临时文件: {response1.text[:400]}"
+            )
+            json_start = content1.find("{")
+            json_end = content1.rfind("}")
+            assert json_start != -1 and json_end > json_start, (
+                f"第一个请求正文中未找到 JSON 对象: {content1[:400]!r}"
+            )
+            try:
+                skill_data = json.loads(
+                    content1[json_start : json_end + 1]
+                )
+            except json.JSONDecodeError as e:
+                pytest.fail(
+                    f"第一个请求输出的 JSON 对象解析失败: {e}. "
+                    f"正文: {content1[:400]!r}"
+                )
+            # 第一步落盘：输出 JSON 到测试脚本同级目录下的临时文件
+            #（测试代为执行"输出 JSON 到 *.json 文件"的工具语义）
+            temp_file.write_text(
+                json.dumps(skill_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            test_logger.info(
+                f"第一步完成: 第一个请求输出 JSON 已写入临时文件 "
+                f"{temp_file}"
             )
 
-        # 断言2：choices 存在（上下文被接受且正常生成）
-        choices = result.get("choices") or []
-        assert choices, (
-            f"响应缺少 choices: "
-            f"{json.dumps(result, ensure_ascii=False)[:500]}"
-        )
-        message = choices[0].get("message")
+            # ---- 工具读取：bash 读取第一个请求输出的 JSON 文件 ----
+            #（测试代为执行第二个请求上下文中 bash 工具调用的读取
+            # 语义——工单 bash 命令即读取/复制 skill_weekly.json）
+            assert temp_file.exists(), (
+                f"临时 JSON 文件未生成: {temp_file}"
+            )
+            try:
+                file_text = temp_file.read_text(encoding="utf-8")
+                file_data = json.loads(file_text)
+            except (OSError, json.JSONDecodeError) as e:
+                pytest.fail(
+                    f"工具读取临时 JSON 文件失败（{temp_file}）: {e}"
+                )
+            # 断言2：临时 JSON 文件回读成功且与第一个请求输出一致
+            assert file_data == skill_data, (
+                f"临时 JSON 文件回读内容与第一个请求输出不一致: "
+                f"{file_text[:400]!r}"
+            )
+            test_logger.info(
+                f"第二步完成: 工具已读取第一个请求输出的临时 JSON "
+                f"文件 {temp_file}（{len(file_text)} 字符）: "
+                f"{file_text[:400]!r}"
+            )
 
-        # 断言3：message 结构存在
-        assert isinstance(message, dict), (
-            f"响应 message 结构缺失: "
-            f"{json.dumps(result, ensure_ascii=False)[:500]}"
-        )
+            # ---- 第二个请求：返回数据回填为输入上下文（核心断言） ----
+            req2_followup = (
+                "请继续完成任务。工具已读取第一个请求输出的技能周报数"
+                "据文件，内容如下：\n"
+                f"{file_text[:K18_FILE_CONTEXT_LIMIT]}\n"
+                "请基于以上数据继续。"
+            )
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "请分析工作区数据并生成技能周报图表。",
+                    },
+                    K18_ASSISTANT,
+                    {"role": "user", "content": req2_followup},
+                ],
+                "tools": K18_TOOLS,
+                "max_tokens": K18_MAX_TOKENS,
+                "temperature": api_client._effective_temperature(0.7),
+                "stream": False,
+                **sampling_extra,
+            }
+            TestLogger.log_request(
+                test_logger,
+                payload["messages"],
+                {
+                    "tools": [t["function"]["name"] for t in K18_TOOLS],
+                    "max_tokens": K18_MAX_TOKENS,
+                    "temperature": payload["temperature"],
+                    "top_p": payload.get("top_p", "(不注入)"),
+                    "seed": payload.get("seed", "(不注入)"),
+                    "stream": False,
+                    "step": (
+                        "第二个请求（工具读取 JSON 文件后回填上下文）"
+                    ),
+                    "assistant_history": (
+                        "空占位调用(name=\"\", id=null) + bash 调用"
+                        "(arguments 缺 \"{\") + reasoning 双字段"
+                    ),
+                    "temp_file": str(temp_file),
+                },
+            )
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"第二个请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+            # 模型真实响应断言前打印（失败时同样可见）
+            test_logger.info(
+                f"第二个请求真实响应: HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"body={response.text[:800]!r}"
+            )
+            # 断言3（核心）：上次输出 JSON 可作为下次请求输入上下文
+            # ——修复前此请求报 400（missing field `name`），报错
+            # 复现即 FAIL
+            assert response.status_code == 200, (
+                f"客户问题复现失败：上次请求输出的 assistant JSON 应可"
+                f"作为下次请求的输入上下文，实际 HTTP "
+                f"{response.status_code}（工单原始报错：missing field "
+                f"`name`；修复应移除空占位项后重新校验放行）: "
+                f"{response.text[:400]}"
+            )
+            try:
+                result = response.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"第二个请求响应不是合法 JSON: {e}. "
+                    f"响应体: {response.text[:300]}"
+                )
+            # 断言4：choices 存在（上下文被接受且正常生成）
+            choices = result.get("choices") or []
+            assert choices, (
+                f"第二个请求响应缺少 choices: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
+            message = choices[0].get("message")
+            assert isinstance(message, dict), (
+                f"第二个请求响应 message 结构缺失: "
+                f"{json.dumps(result, ensure_ascii=False)[:500]}"
+            )
 
-        content = message.get("content") or ""
-        tool_calls = message.get("tool_calls")
-        finish = choices[0].get("finish_reason")
-        usage = result.get("usage") or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls")
+            finish = choices[0].get("finish_reason")
+            usage = result.get("usage") or {}
 
-        TestLogger.log_response(test_logger, result, "K18-响应")
-        test_logger.info(
-            f"HTTP 200, elapsed={elapsed:.1f}s, finish={finish}, "
-            f"content_len={len(content)}, tool_calls="
-            f"{'有' if tool_calls else '无'}, usage="
-            f"{json.dumps(usage, ensure_ascii=False)}"
-        )
-        test_logger.info(
-            "客户问题复现通过: 上次输出 JSON 已被接受为下次请求的"
-            "输入上下文（含空占位调用/缺 \"{\" 的 bash arguments/"
-            "reasoning 双字段的 assistant 历史通过校验，正常生成响"
-            "应）"
-        )
+            TestLogger.log_response(
+                test_logger, result, "K18-第二个请求响应"
+            )
+            test_logger.info(
+                f"HTTP 200, elapsed={elapsed:.1f}s, finish={finish}, "
+                f"content_len={len(content)}, tool_calls="
+                f"{'有' if tool_calls else '无'}, usage="
+                f"{json.dumps(usage, ensure_ascii=False)}"
+            )
+            test_logger.info(
+                "客户问题复现通过: 两步流程完成——第一个请求输出 JSON "
+                "到临时文件、工具读取成功、上次输出 JSON（含空占位调"
+                "用/缺 \"{\" 的 bash arguments/reasoning 双字段的 "
+                "assistant 历史）已被接受为下次请求的输入上下文，正常"
+                "生成响应"
+            )
+        finally:
+            # ---- 测试完成后删除生成的临时 JSON 文件（断言失败同样
+            # 清理，finally 兜底）----
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+                    test_logger.info(
+                        f"清理完成: 已删除临时 JSON 文件 {temp_file}"
+                    )
+                else:
+                    test_logger.info(
+                        f"清理完成: 临时 JSON 文件不存在（无需删除）: "
+                        f"{temp_file}"
+                    )
+            except OSError as e:
+                test_logger.warning(
+                    f"临时 JSON 文件删除失败: {temp_file} ({e})"
+                )
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53FLASH
@@ -6177,3 +6415,568 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
         finally:
             api_client.timeout = original_timeout
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_duplicate_reasoning_content_history_accepted(
+        self, api_client: ModelAPIClient, test_logger, record_warning
+    ):
+        """K25 [P0]: 客户问题 - assistant 历史重复 reasoning_content
+        字段应被兼容接受
+
+        客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条
+        消息携带两个 reasoning_content 字段（两轮历史思考未去重地拼
+        接成同键重复）与上一次请求的正文。客户原始工单还曾因思考内
+        容含 They're/I'm/It's 等英文撇号导致 JSON 破损——正文与思
+        考内容可能含单引号/双引号/换行等字符，须兼容处理、不影响
+        正常请求格式（用户指定）。
+        契约（用户指定）：预期不报错、正常响应；第一个
+        reasoning_content 被第二个覆盖（宽松解析保留最后一个值，
+        K18 修复口径——兼容 assistant 历史重复的 reasoning 字段）。
+        因需两段真实思考内容，共发三次请求（用户指定，JSON 链式回
+        填——第 1/2 次响应 JSON 作为下一请求输入、思考随历史一并
+        回填）：
+        - 第 1 次请求（user 单轮，流式）：要求仅输出 JSON——采集第
+          1 段思考+第 1 次正文（JSON，作为第 2 次请求输入回填）；
+        - 第 2 次请求（流式）：messages=[assistant(content=第 1 次正
+          文（JSON）, reasoning_content=第 1 次思考), user 追问]——回
+          填第 1 次历史（单 reasoning_content 经 dict 表达，K18 口
+          径），要求仅输出 JSON——采集第 2 段思考+第 2 次正文
+          （JSON，作为第 3 次请求输入回填）；
+        - 第 3 次请求（流式）：messages=[assistant(content=第 2 次正
+          文（JSON）, reasoning_content=第 1 次思考,
+          reasoning_content=第 2 次思考), user 追问]。
+        提示词为测试自行设计（工单未携带具体提示词——用户口径仅要
+        求结构：JSON 链式回填+两个 reasoning_content）。
+        同键字面重复无法经 dict 表达——手工拼接 JSON 文本直发；所有
+        动态值（正文/思考）一律经 json.dumps 全转义后拼接（单/双引
+        号、换行、反斜杠全转义），发送前三重自检：
+        1. raw body 可被 json.loads 解析（动态值含特殊字符时转义正
+           确，客户原始 JSON 破损形态在此拦截）；
+        2. "reasoning_content" 键在 raw body 中出现且仅出现 2 次
+           （重复键真实上送，不被 dict 去重）；
+        3. 转义回读一致——json.loads 保留最后一个重复键（与服务端
+           宽松解析"第一个被第二个覆盖"契约一致），content 与第 2 次
+           正文逐字一致。
+        硬断言：第 1/2 次请求思考与正文均非空（第 3 次请求的构造数
+        据源——被测环境应开思考，GLM-5.3 默认开思考，无思考即环境异
+        常 FAIL 留证）、正文为合法 JSON（JSON 链——第 1/2 次响应作
+        为下一请求输入回填，断裂即场景无法构造 FAIL；容忍 markdown
+        代码块围栏）；第 3 次请求 HTTP 200（核心——重复
+        reasoning_content 历史被拒绝即缺陷形态复现 FAIL）+ SSE 事
+        件非空 + 合并正文非空 + finish_reason 合法。
+        耗光回退（K24 口径）：max_tokens=8192 下默认 max 档思考可
+        能耗尽预算（正文空+finish=length，K24 实测 32768 预算亦可
+        被耗光）——该形态不判失败，以 reasoning_effort=low（GLM
+        顶层思考强度参数，K20 口径）仅重发耗光请求（第 3 次重发
+        构造不变，仅加顶层 reasoning_effort 字段——HTTP 200 核心
+        契约首次请求已达成，重复键历史被接受不以正文是否为空转
+        移），断言相同；正文空且 finish≠length 直接 FAIL；low 回
+        退仍无正文即 FAIL（默认 max 与 low 双强度均未产出——留证
+        交开发）。
+        引号覆盖度软观察：三个回填值（第 2 次正文/两次思考）均不含
+        引号/换行字符时 record_warning 留痕——引号兼容路径本次未被
+        实际覆盖（构造本身已保证安全，不判失败）。
+        采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS 覆盖
+        ——temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注
+        入（K10/K18/K20 口径）。max_tokens=8192 为客户工单原始口
+        径，三次请求一致。usage 仅日志；模型真实响应（状态码/合并
+        正文/思考）断言前打印（失败时同样可见）。（不进 smoke 集：
+        新用例首跑观察期）
+        """
+        # K25: 第 1/2/3 次请求的用户消息（工单未携带具体提示词——
+        # 测试自行设计；用户口径：第 1/2 次响应须为 JSON 作为下一
+        # 请求输入回填，故第 1/2 次显式要求仅输出 JSON 对象；第 3
+        # 次为 JSON 链终点追问，无 JSON 输出要求）
+        K25_USER_Q1 = (
+            "你好，请仅输出一个合法的 JSON 对象回答：2的平方根大约"
+            '是多少？格式为 {"answer": "<你的回答>"}，除该 JSON 外'
+            "不要输出任何其他文字。"
+        )
+        K25_USER_Q2 = (
+            "继续，请仅输出一个合法的 JSON 对象回答：2的平方等于"
+            '几？格式为 {"answer": "<你的回答>"}，除该 JSON 外不要'
+            "输出任何其他文字。"
+        )
+        K25_USER_Q3 = "继续，3的平方等于几"
+
+        # K25: 客户工单原始口径 max_tokens（三次请求一致）
+        K25_MAX_TOKENS = 8192
+
+        def as_json(text_value: str) -> Optional[Any]:
+            """K25 JSON 解析（容忍 markdown 代码块围栏）：第 1/2 次
+            响应正文须为合法 JSON——作为下一请求输入回填。"""
+            stripped = text_value.strip()
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+            if stripped.startswith("```"):
+                lines = stripped.splitlines()
+                if len(lines) >= 2 and lines[-1].strip().endswith("```"):
+                    inner = "\n".join(lines[1:-1]).strip()
+                    try:
+                        return json.loads(inner)
+                    except json.JSONDecodeError:
+                        return None
+            return None
+
+        def ask_and_collect(
+            label: str,
+            messages: List[Dict[str, Any]],
+            require_json: bool = False,
+        ) -> Dict[str, Any]:
+            """K25 采集请求：流式获取一次思考+一次正文（JSON 链）
+
+            第 1 次调用 messages=[user 单轮]；第 2 次调用回填第 1 次
+            历史 [assistant(content=第 1 次正文 JSON,
+            reasoning_content=第 1 次思考), user 追问]（单
+            reasoning_content 经 dict 表达，K18 口径）。
+            require_json=True 时断言响应正文为合法 JSON（用户口径：
+            第 1/2 次响应作为下一请求输入回填——JSON 链条断裂即场
+            景无法构造 FAIL）。
+            采样参数不豁免（默认口径）：chat_completion_stream 自
+            动注入全局 temperature/top_p/seed（temperature 无覆盖时
+            回退 0.7）。
+            耗光回退（K24 口径）：默认 max 档思考可能耗尽 8192 预
+            算（正文空+finish=length），该形态以 reasoning_effort=
+            low（GLM 顶层思考强度参数，K20 口径）仅重发本采集请求
+            （断言相同）；正文空且 finish≠length 直接 FAIL；low 回
+            退仍无正文即 FAIL（默认 max 与 low 双强度均未产出——留
+            证交开发）。
+            """
+
+            def attempt(effort: Optional[str] = None) -> Dict[str, Any]:
+                TestLogger.log_request(
+                    test_logger,
+                    messages,
+                    {
+                        "max_tokens": K25_MAX_TOKENS,
+                        "stream": True,
+                        "temperature": "全局覆盖优先（无覆盖时回退 0.7）",
+                        **(
+                            {"reasoning_effort": effort}
+                            if effort is not None
+                            else {}
+                        ),
+                    },
+                )
+                request_kwargs: Dict[str, Any] = {
+                    "max_tokens": K25_MAX_TOKENS
+                }
+                if effort is not None:
+                    request_kwargs["reasoning_effort"] = effort
+                response_iter = api_client.chat_completion_stream(
+                    messages, **request_kwargs
+                )
+                result = self.collect_stream_chunks(response_iter)
+                finish_reason = None
+                for chunk in reversed(result["chunks"]):
+                    if chunk.get("choices"):
+                        finish_reason = chunk["choices"][0].get(
+                            "finish_reason"
+                        )
+                        break
+                # 模型真实响应（合并正文/思考全文）断言前打印（失败
+                # 时同样可见）
+                effort_tag = (
+                    f"（reasoning_effort={effort}）" if effort else ""
+                )
+                test_logger.info(
+                    f"{label} 真实响应{effort_tag}: "
+                    f"chunks={len(result['chunks'])}, "
+                    f"finish={finish_reason}, "
+                    f"content={result['content'][:2000]!r}, "
+                    f"reasoning={result['reasoning'][:2000]!r}"
+                )
+                return {
+                    "reasoning": result["reasoning"],
+                    "content": result["content"],
+                    "finish": finish_reason,
+                    "chunks_count": len(result["chunks"]),
+                }
+
+            collected = attempt()
+            if (
+                not collected["content"].strip()
+                and collected["finish"] == "length"
+            ):
+                test_logger.info(
+                    f"{label} 思考耗光预算（正文空 + finish=length，"
+                    f"默认 max 思考强度，max_tokens={K25_MAX_TOKENS}）"
+                    f"——按 K24 口径以 reasoning_effort=low 重发采集"
+                    f"（仅重发耗光请求，断言相同）"
+                )
+                collected = attempt("low")
+            assert collected["chunks_count"], (
+                f"{label} 未返回任何流式 chunks"
+            )
+            assert collected["reasoning"].strip(), (
+                f"{label} 未返回思考内容（reasoning 为空）——本用例需"
+                f"两段真实思考构造重复 reasoning_content 历史回填，"
+                f"被测环境应开启思考（GLM-5.3 默认开思考）"
+            )
+            if not collected["content"].strip():
+                if collected["finish"] == "length":
+                    pytest.fail(
+                        f"客户问题复现失败：{label} low 回退重发后仍无"
+                        f"正文（finish=length）——默认 max 与 low 双强"
+                        f"度均未产出正文，留证交开发"
+                    )
+                pytest.fail(
+                    f"{label} 未返回正文（content 为空）且非思考耗光形"
+                    f"态（finish={collected['finish']!r}）"
+                )
+            assert (
+                collected["finish"] in self.VALID_STREAM_FINISH_REASONS
+            ), f"{label} finish_reason 非法: {collected['finish']!r}"
+            if require_json:
+                parsed_json = as_json(collected["content"])
+                assert parsed_json is not None, (
+                    f"{label} 响应正文非合法 JSON——第 1/2 次响应须"
+                    f"作为下一请求输入回填（JSON 链条断裂，场景无法构"
+                    f"造）: {collected['content'][:400]!r}"
+                )
+                test_logger.info(
+                    f"{label} 响应为合法 JSON: "
+                    + json.dumps(parsed_json, ensure_ascii=False)[:400]
+                )
+            return collected
+
+        def dumps(value: Any) -> str:
+            """K25 动态值序列化：json.dumps 全转义——单/双引号、换
+            行、反斜杠等一律转义，正文/思考内容含任意字符时 JSON 格
+            式不破损（客户原始工单即因思考含 They're/I'm 等撇号致
+            JSON 破损）"""
+            return json.dumps(value, ensure_ascii=False)
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - assistant 历史重复 "
+            "reasoning_content 字段（两次思考回填，宽松解析保留最后"
+            "一个值——第一个被第二个覆盖）——三次请求 JSON 链式回填"
+            "（用户口径）：第 1 次 user 单轮要求仅输出 JSON（响应作"
+            "为第 2 次输入）；第 2 次回填第 1 次历史（content=第 1 "
+            "次 JSON+reasoning_content=第 1 次思考）并要求仅输出 "
+            "JSON（响应作为第 3 次输入）；第 3 次回填 assistant("
+            "content=第 2 次 JSON, reasoning_content=第 1 次思考, "
+            "reasoning_content=第 2 次思考)+user 追问，预期不报错、"
+            "正常响应；动态值全转义（引号/换行兼容）；默认 max 思考"
+            "耗光预算（正文空+finish=length）时按 K24 口径以 "
+            "reasoning_effort=low 仅重发耗光请求==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # ---- 第 1 次请求：采集第 1 段思考+JSON 正文（第 2 次请求
+        # 的输入）----
+        first = ask_and_collect(
+            "第 1 次请求（user 单轮，采集第 1 段思考+JSON 正文）",
+            [{"role": "user", "content": K25_USER_Q1}],
+            require_json=True,
+        )
+
+        # ---- 第 2 次请求：回填第 1 次历史（content=第 1 次正文
+        # JSON+reasoning_content=第 1 次思考——单键经 dict 表达，
+        # K18 口径），采集第 2 段思考+JSON 正文（第 3 次请求的输
+        # 入）----
+        second = ask_and_collect(
+            "第 2 次请求（回填第 1 次历史，采集第 2 段思考+JSON 正文）",
+            [
+                {
+                    "role": "assistant",
+                    "content": first["content"],
+                    "reasoning_content": first["reasoning"],
+                },
+                {"role": "user", "content": K25_USER_Q2},
+            ],
+            require_json=True,
+        )
+
+        # 采样参数不豁免（默认口径）：temperature 无覆盖时回退 0.7、
+        # top_p/seed 显式指定时注入（K10/K18/K20 口径）——手工拼入
+        # raw body（直发路径不经 chat_completion 封装）
+        sampling_fields = ""
+        if api_client.top_p is not None:
+            sampling_fields += f'"top_p": {dumps(api_client.top_p)}, '
+        if api_client.seed:
+            try:
+                sampling_fields += f'"seed": {dumps(int(api_client.seed))}, '
+            except (ValueError, TypeError):
+                sampling_fields += f'"seed": {dumps(api_client.seed)}, '
+
+        # ---- 构造第 3 次请求：assistant 历史同键 reasoning_content
+        # 字面重复（dict 无法表达重复键，手工拼接 JSON 文本；content=
+        # 第 2 次请求正文 JSON——上一次的回复，第 2 次响应作为本请
+        # 求输入（JSON 链终点），两个 reasoning_content 分别为第 1、
+        # 2 次请求的思考内容）----
+        def build_third_body(effort: Optional[str] = None) -> str:
+            """第 3 次请求 raw body 构造器（重复键直发专用）。
+
+            耗光回退重发时 effort="low"（GLM 顶层思考强度参数，
+            K24/K20 口径）——构造不变，仅加顶层 reasoning_effort 字
+            段；每次构造均执行三重自检（low 回退体同样必须满足）。
+            """
+            assistant_raw = (
+                "{"
+                '"role": "assistant", '
+                f'"content": {dumps(second["content"])}, '
+                f'"reasoning_content": {dumps(first["reasoning"])}, '
+                f'"reasoning_content": {dumps(second["reasoning"])}'
+                "}"
+            )
+            user_raw = dumps({"role": "user", "content": K25_USER_Q3})
+            messages_raw = f"[{assistant_raw}, {user_raw}]"
+            effort_fields = (
+                f'"reasoning_effort": {dumps(effort)}, '
+                if effort is not None
+                else ""
+            )
+            raw_body = (
+                "{"
+                f'"model": {dumps(api_client.model_name)}, '
+                '"stream": true, '
+                f'"max_tokens": {K25_MAX_TOKENS}, '
+                f'"temperature": {dumps(api_client._effective_temperature(0.7))}, '
+                f"{effort_fields}"
+                f"{sampling_fields}"
+                f'"messages": {messages_raw}'
+                "}"
+            )
+            # ---- 三重自检（每次构造均执行——low 回退体同样必须满
+            # 足）：转义正确性与重复键真实性 ----
+            # 自检1：raw body 为合法 JSON——正文/思考含单双引号/换
+            # 行等字符时全转义后必须仍可解析（客户原始 JSON 破损形
+            # 态在此拦截）
+            parsed_body = json.loads(raw_body)
+            # 自检2：重复键真实上送（wire 上出现且仅出现两次，不被
+            # 去重）
+            dup_count = raw_body.count('"reasoning_content"')
+            assert dup_count == 2, (
+                f"构造自检失败：raw body 中 reasoning_content 键应出现 2"
+                f" 次（字面重复），实际 {dup_count} 次"
+            )
+            # 自检3：转义回读一致——json.loads 保留最后一个重复键
+            # （与服务端宽松解析契约一致：第一个 reasoning_content 被
+            # 第二个覆盖），content 与第 2 次请求正文逐字一致
+            parsed_assistant = parsed_body["messages"][0]
+            assert (
+                parsed_assistant["reasoning_content"] == second["reasoning"]
+            ), "构造自检失败：回读的 reasoning_content 与第 2 次请求思考不一致"
+            assert parsed_assistant["content"] == second["content"], (
+                "构造自检失败：回读的 content 与第 2 次请求正文不一致"
+            )
+            effort_tag = (
+                f"（reasoning_effort={effort}）" if effort else ""
+            )
+            test_logger.info(
+                f"第 3 次请求构造自检通过{effort_tag}: "
+                f"raw body 合法 JSON、reasoning_content 键出现 "
+                f"{dup_count} 次、转义回读值一致（raw body "
+                f"{len(raw_body)} 字符）"
+            )
+            return raw_body
+
+        raw_body = build_third_body()
+
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"[第 2 次请求正文 JSON（上一次的回复），"
+                        f"{len(second['content'])} 字符]"
+                    ),
+                },
+                {"role": "user", "content": K25_USER_Q3},
+            ],
+            {
+                "max_tokens": K25_MAX_TOKENS,
+                "stream": True,
+                "assistant_history_reasoning": (
+                    "reasoning_content 键字面重复两次：第 1 次思考"
+                    f"（{len(first['reasoning'])} 字符）+ 第 2 次思考"
+                    f"（{len(second['reasoning'])} 字符）"
+                ),
+                "request_form": (
+                    "raw JSON 文本直发（dict 无法表达重复键；动态值经"
+                    " json.dumps 全转义）"
+                ),
+            },
+        )
+
+        # ---- 引号覆盖度软观察：三个回填值实际是否含引号/换行字符
+        # ——含则引号兼容路径被真实覆盖；均不含仅 record_warning 留
+        # 痕（构造已保证安全，不判失败）----
+        quote_chars = ("'", '"', "\n")
+        embedded_values = [
+            ("第 2 次正文", second["content"]),
+            ("第 1 次思考", first["reasoning"]),
+            ("第 2 次思考", second["reasoning"]),
+        ]
+        any_quote_hit = False
+        for value_label, value in embedded_values:
+            hits = [repr(ch) for ch in quote_chars if ch in value]
+            if hits:
+                any_quote_hit = True
+                test_logger.info(
+                    f"回填值含特殊字符（{value_label}）: {'、'.join(hits)}"
+                    f"——已全转义嵌入，引号兼容路径被真实覆盖"
+                )
+        if not any_quote_hit:
+            warn_msg = (
+                "K25: 本次运行回填的正文/思考均不含单双引号/换行字符"
+                "——引号兼容路径未被实际覆盖（构造已保证安全：动态值一"
+                "律经 json.dumps 全转义，仅覆盖度观察）"
+            )
+            test_logger.warning(warn_msg)
+            record_warning(warn_msg)
+
+        def send_raw_stream(label: str, body: str) -> Dict[str, Any]:
+            """K25 第 3 次请求：raw JSON 文本直发（重复键无法经
+            dict/json= 表达），解析 OpenAI 流式 SSE，返回合并的
+            {"chunks", "content", "reasoning", "finish"}。
+
+            非 200 直接 FAIL——客户契约为预期不报错、正常响应，重复
+            reasoning_content 历史被拒绝（400/5xx）即缺陷形态复现。
+            """
+            try:
+                response = api_client.session.post(
+                    url,
+                    data=body.encode("utf-8"),
+                    timeout=api_client.timeout,
+                    stream=True,
+                )
+            except Exception as e:
+                pytest.fail(f"{label} 发送异常（{url}）: {e}")
+            # 模型真实响应（状态码/响应体全文）断言前打印（失败时同
+            # 样可见）
+            if response.status_code != 200:
+                test_logger.error(
+                    f"{label} 真实响应: HTTP {response.status_code}, "
+                    f"body={response.text[:500]!r}"
+                )
+                pytest.fail(
+                    f"客户问题复现失败：{label} 应正常响应（HTTP 200），"
+                    f"实际 HTTP {response.status_code}——重复 "
+                    f"reasoning_content 的 assistant 历史被拒绝（预期"
+                    f"宽松解析：第一个被第二个覆盖后放行）: "
+                    f"{response.text[:400]!r}"
+                )
+            chunks: List[Dict[str, Any]] = []
+            content_parts: List[str] = []
+            reasoning_parts: List[str] = []
+            finish_reason = None
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                chunks.append(chunk)
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+                # 兼容 reasoning/reasoning_content 两种字段拼写
+                # （collect_stream_chunks 同口径）
+                reasoning = delta.get("reasoning") or delta.get(
+                    "reasoning_content"
+                )
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                if choices[0].get("finish_reason"):
+                    finish_reason = choices[0]["finish_reason"]
+            # 模型真实响应（合并正文/思考全文）断言前打印
+            test_logger.info(
+                f"{label} 真实响应: HTTP 200, chunks={len(chunks)}, "
+                f"finish={finish_reason}, "
+                f"content={''.join(content_parts)[:2000]!r}, "
+                f"reasoning={''.join(reasoning_parts)[:2000]!r}"
+            )
+            return {
+                "chunks": chunks,
+                "content": "".join(content_parts),
+                "reasoning": "".join(reasoning_parts),
+                "finish": finish_reason,
+            }
+
+        # ---- 第 3 次请求（核心）：重复 reasoning_content 历史回填 ----
+        third = send_raw_stream(
+            "第 3 次请求（assistant 历史重复 reasoning_content 回填）",
+            raw_body,
+        )
+
+        # 耗光回退（K24 口径）：HTTP 200 核心契约（重复键历史被接
+        # 受）首次请求已达成——正文空+finish=length 为思考耗光形态
+        # （非契约违约），以 reasoning_effort=low 仅重发本请求（构
+        # 造不变仅加顶层 reasoning_effort 字段，断言相同）
+        if not third["content"].strip() and third["finish"] == "length":
+            test_logger.info(
+                "第 3 次请求思考耗光预算（正文空 + finish=length，"
+                "默认 max 思考强度，max_tokens=8192）——HTTP 200 核心"
+                "契约已达成（重复 reasoning_content 历史被接受），按 "
+                "K24 口径以 reasoning_effort=low 回退重发（构造不变仅"
+                "加顶层 reasoning_effort 字段，断言相同）"
+            )
+            third = send_raw_stream(
+                "第 3 次请求（重复 reasoning_content 回填，"
+                "reasoning_effort=low 回退重发）",
+                build_third_body("low"),
+            )
+
+        # 硬断言（客户契约：不报错、正常响应）
+        assert third["chunks"], (
+            "客户问题复现失败：第 3 次请求 HTTP 200 但未返回任何 SSE "
+            "事件"
+        )
+        assert third["content"].strip(), (
+            f"客户问题复现失败：第 3 次请求未返回正文（content 为空，"
+            f"finish={third['finish']}）——"
+            + (
+                "low 回退重发后仍无正文（默认 max 与 low 双强度均未产"
+                "出正文——留证交开发）"
+                if third["finish"] == "length"
+                else "重复 reasoning_content 历史回填后未正常响应"
+            )
+        )
+        assert (
+            third["finish"] in self.VALID_STREAM_FINISH_REASONS
+        ), f"第 3 次请求 finish_reason 非法: {third['finish']!r}"
+
+        # usage 软观察：三次请求均未要求 include_usage，chunk 中出现
+        # 的 usage 仅日志
+        usage = next(
+            (
+                c.get("usage")
+                for c in reversed(third["chunks"])
+                if c.get("usage")
+            ),
+            None,
+        )
+        test_logger.info(
+            "第 3 次请求 usage: "
+            + (
+                json.dumps(usage, ensure_ascii=False)
+                if usage
+                else "（未携带——未要求 include_usage）"
+            )
+        )
+
+        test_logger.info(
+            "客户问题复现通过: assistant 历史重复 reasoning_content 回"
+            "填被兼容接受——第 3 次请求 HTTP 200 且正常生成正文（第一"
+            "个 reasoning_content 被第二个覆盖后放行，宽松解析契约生"
+            "效）；动态值全程经 json.dumps 全转义，正文/思考含引号/换"
+            "行等字符不影响请求格式"
+        )

@@ -860,14 +860,21 @@ TEST_CATEGORIES = {
                 "缺开头 \"{\"、非合法 JSON）。修复：解析失败后同列表"
                 "有真实调用时移除空占位项再重新校验；缺 \"{\" 的 "
                 "arguments 原样保留（不补）；兼容重复的 reasoning_"
-                "content/reasoning_context（保留最后一个值）。按工单"
-                "还原该 assistant 消息回填为多轮上下文（user→"
-                "assistant→user，带 bash 工具定义，非流式），断言 "
-                "HTTP 200+choices+message——上次输出 JSON 必须可作为"
-                "下次输入上下文，报错复现即 FAIL；不断言 arguments "
-                "被补 \"{\" 与占位被移除。适用 GLM-5.3；采样参数不"
-                "豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无"
-                "覆盖时回退 0.7、top_p/seed 注入）",
+                "content/reasoning_context（保留最后一个值）。按客户 "
+                "agent 两步流程还原（用户指定测试逻辑）：第一个请求"
+                "让模型输出技能周报数据 JSON 并落盘测试脚本同级目录"
+                "下临时文件（第一步\"输出 JSON 到 *.json 文件\"）；"
+                "第二个请求调用工具读取该临时 JSON 文件，将工单原始 "
+                "assistant 返回数据（user→assistant→user 追问携带文"
+                "件内容，带 bash 工具定义，非流式）回填为输入上下"
+                "文；测试完成后删除临时 JSON 文件（finally 兜底）。"
+                "断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对"
+                "象、临时文件回读一致、第二个请求 HTTP 200+choices"
+                "+message——上次输出 JSON 必须可作为下次输入上下"
+                "文，报错复现即 FAIL；不断言 arguments 被补 \"{\" 与"
+                "占位被移除。适用 GLM-5.3；采样参数不豁免——由全局 "
+                "SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 "
+                "0.7、top_p/seed 注入），两个请求一致",
                 "output_json_as_input_context",
                 "P0",
             ),
@@ -1083,6 +1090,61 @@ TEST_CATEGORIES = {
                 "响应（状态码/响应体全文）断言前打印；适用 "
                 "GLM-5.3；运行日志不含具体模型名",
                 "dual_request_response_with_effort_fallback",
+                "P0",
+            ),
+            (
+                "K25",
+                "assistant 历史重复 reasoning_content 字段应被兼容接受",
+                "客户问题（工单跟进）：多轮对话回填 assistant 历史时，"
+                "同一条消息携带两个 reasoning_content 字段（两轮历史"
+                "思考未去重地拼接成同键重复）与上一次请求的正文；客"
+                "户原始工单还曾因思考内容含 They're/I'm/It's 等英文"
+                "撇号导致 JSON 破损。契约（用户指定）：预期不报错、"
+                "正常响应；第一个 reasoning_content 被第二个覆盖（宽"
+                "松解析保留最后一个值，K18 修复口径）。因需两段真实"
+                "思考，共发三次请求（用户指定，JSON 链式回填——第 "
+                "1/2 次响应 JSON 作为下一请求输入、思考随历史一并"
+                "回填；提示词为测试自行设计，工单未携带具体提示词"
+                "——用户口径仅要求结构）：第 1 次 user 单轮要求仅输"
+                "出 JSON（响应用于第 2 次请求输入回填）；第 2 次 "
+                "messages=[assistant(content=第 1 次正文（JSON）, "
+                "reasoning_content=第 1 次思考), user 追问]（回填第 "
+                "1 次历史，单键经 dict 表达——K18 口径，要求仅输出 "
+                "JSON——响应用于第 3 次请求输入回填）；第 3 次 "
+                "messages=[assistant(content=第 2 次正文（JSON）, "
+                "reasoning_content=第 1 次思考, reasoning_content=第 "
+                "2 次思考), user 追问]，流式。重复键无法经 dict 表"
+                "达——手工拼接 JSON 文本直发；正文/思考可能含单引"
+                "号/双引号/换行（用户指定兼容要求），动态值一律 "
+                "json.dumps 全转义后拼接，发送"
+                "前三重自检（raw body 可被 json.loads 解析、"
+                "reasoning_content 键出现次数==2、转义回读值一致——"
+                "回读保留最后一个重复键，模拟服务端宽松解析）。硬断"
+                "言：第 1/2 次请求思考与正文均非空（构造数据源——被"
+                "测环境应开思考，GLM-5.3 默认开思考）、正文为合法 "
+                "JSON（JSON 链——作为下一请求输入回填，断裂即场景"
+                "无法构造 FAIL；容忍 markdown 代码块围栏）；第 3 次请求"
+                "HTTP 200（核心——报错/4xx 复现即 FAIL）+ SSE 事件"
+                "非空 + 合并正文非空 + finish_reason 合法。耗光回退"
+                "（K24 口径）：max_tokens=8192 下默认 max 档思考可能"
+                "耗尽预算（正文空+finish=length）——该形态以 "
+                "reasoning_effort=low（GLM 顶层思考强度参数，K20 口"
+                "径）仅重发耗光请求（第 3 次重发构造不变仅加顶层 "
+                "reasoning_effort 字段——HTTP 200 核心契约首次请求"
+                "已达成，重复键历史被接受不以正文是否为空转移），断"
+                "言相同；正文空且 finish≠length 直接 FAIL；low 回退"
+                "仍无正文即 FAIL（双强度均未产出——留证交开发）。"
+                "引号覆盖"
+                "度软观察：三个回填值均不含引号/换行字符时 "
+                "record_warning 留痕（引号兼容路径本次未被实际覆盖，"
+                "构造本身已保证安全，不判失败）。采样参数不豁免（默"
+                "认口径）：由全局 SAMPLING_PARAMS 覆盖——temperature "
+                "无覆盖时回退 0.7、top_p/seed 显式指定时注入（K10/"
+                "K18/K20 口径）。max_tokens=8192 为客户工单原始口径，"
+                "三次请求一致；usage 仅日志；模型真实响应（状态码/"
+                "合并正文/思考）断言前打印（失败时同样可见）；适用 "
+                "GLM-5.3",
+                "duplicate_reasoning_content_history_accepted",
                 "P0",
             ),
         ],

@@ -8,7 +8,7 @@
 - **原样复现**：system/user 提示词、tools 定义、tool_choice、thinking、stream、
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
-- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K24 为
+- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K25 为
   P0 必测（任何失败应阻断发布），K8/K9 按客户工单优先级为 P1。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免**：`RAW_SAMPLING_PARAM_TESTS` 豁免名单默认规则（用户口径）：
@@ -56,13 +56,14 @@
 | K15 | 细粒度前缀匹配短输入缓存阈值 | 客户问题：短文本缓存命中率不达标，根因推理引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640 tok 量级），客户输入低于该块长（如 625 tok）完全不缓存；平台修复为细粒度前缀匹配（sglang prefix-match-unit=64）；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两个测试点（OpenAI 协议非流式、不发送采样参数，cached_tokens 取 usage.prompt_tokens_details.cached_tokens 兼容 usage.cached_tokens）：1) 输入 64<N<640 相同请求连发两次，断言第 2 次 cached_tokens>0；2) 输入 N<64 相同请求连发两次，断言 cached_tokens==0；以服务端 prompt_tokens 校验规模前提 | P0 |
 | K16 | 固定前缀/多轮上下文缓存命中率达标 | 客户问题：修复前固定前缀每轮 cached=7680/input=8693（88.35%）、多轮上下文 87.16%，均低于 90% 目标；根因 640 token 分块粒度将共享前缀截断（8192→12×640=7680，损失 512），细粒度匹配（64）后应 ≈94.2%≥90%；同时适用 GLM-5.3 与 GLM-5.3-Flash | 两模式（OpenAI 协议非流式、不发送采样参数，规模由原始信息推算：~12800 字符共享前缀 ≈8192 tok + ~780 字符/轮唯一问题 ≈501 tok）：1) 固定前缀 10 轮独立请求；2) 多轮上下文单会话逐轮追加（回复极短）；均排除第 1 轮预热实测 9 轮，断言各模式 Σcached/Σprompt_tokens ≥90%，任一 <90% 即 FAIL | P0 |
 | K17 | stop 停止符（换行符）在推理阶段生效 | 客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用于推理输出——推理里的第一个换行即触发停止，正文不会生成；反之若换行未触发停止、继续输出正文，则换行符未生效；适用 GLM-5.3 | 按场景构造流式请求（stream=true、stop=["\n"]、thinking={type:enabled}（K1 口径）、max_tokens=512 防御性预算、不发送采样参数），断言 SSE 有事件、合并正文为空（核心）、finish_reason==stop、合并 reasoning 不含换行（停止符不泄漏） | P0 |
-| K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按工单还原该 assistant 消息回填为多轮上下文（user→assistant→user，带 bash 工具定义，非流式，采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖），断言 HTTP 200（核心）、choices 存在、message 结构存在 | P0 |
+| K18 | 模型输出 JSON 可回填为下次请求输入上下文 | 客户问题（AGDC2-28）：上次请求输出的 assistant JSON 作为下次请求的输入上下文提交即报错（missing field `name`）——助手历史 tool_calls 混有空占位调用（name=""、id=null）与真实 bash 调用（arguments 缺开头 "{"、非合法 JSON）；修复为移除空占位项再校验、缺 "{" 原样保留（不补）、兼容重复 reasoning 字段；适用 GLM-5.3 | 按客户 agent 两步流程还原（用户指定测试逻辑）：第一个请求让模型输出技能周报数据 JSON 并落盘测试脚本同级目录下临时文件（第一步"输出 JSON 到 *.json 文件"）；第二个请求调用工具读取该临时 JSON 文件，将工单原始 assistant 返回数据（user→assistant(空占位+bash 调用+reasoning 双字段)→user 追问携带文件内容，带 bash 工具定义，非流式）回填为输入上下文；测试完成后删除临时 JSON 文件（finally 兜底，断言失败同样清理）；断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对象、临时文件回读一致、第二个请求 HTTP 200（核心）、choices 存在、message 结构存在；采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖 | P0 |
 | K19 | 单次请求图片数超限（>16）应拒绝并返回恰当错误 | 客户问题：单次请求携带超过 16 张图片导致请求失败；根因服务端 serving-pool 显式配置 --limit-mm-per-prompt {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）；契约为超限请求应失败并返回恰当错误信息（参考 "At most 16 image(s) may be provided in one prompt"）；适用 GLM-5.3-Flash | 代码生成 17 张 32x32 纯色 PNG（base64 data URL，无外部依赖），单条 user 消息携带 17 个 image_url part 非流式提交（不发送采样参数——豁免），断言响应失败（非 200）且错误信息含 "at most 16 image"（大小写不敏感） | P0 |
 | K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出预算 max_tokens 覆盖思考+正文，两轮思考档位（用户指定补 max 场景）——low 轮（1024）常规、max 轮（4096）最大思考负载，输出侧同步压窗口（总消耗 ≈961K/964K，两种 1M 口径均满足），单条 user 消息非流式提交（采样参数不豁免——用户指定：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入；跑必冷仅 low 轮——用户加固：low 轮（含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中文），前缀必不命中 KV 缓存，真 1M 冷 prefill；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许命中历史缓存加速），断言探针 200 且有 usage、每轮主请求 HTTP 200、choices/content 非空、每轮主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
 | K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
 | K22 | /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 | 客户问题：相同请求下 Anthropic 协议（/anthropic/v1/messages）前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）——根因：该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态计费行（字符串/块数组两种 system 形态），前缀缓存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证 ≥90%）；开发修复：入引擎前条件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、其余内容原样保留；适用 GLM-5.3 | 测试要点（用户口径）：同轮等价请求逐轮交替发送两协议（同轮同问；前缀头部渠道标记行不同——用户指定：剥离计费行后两协议前缀仍从位置 0 分叉，互不命中对方缓存条目，各自建条目/各自命中，messages 冷轮为真冷），统计二者缓存命中率并逐轮比较——冷轮不参与比较（需热轮才能统计命中率），组级判定（用户指定）：单组失败不中断后续组，5 组中至少 4 组该组全部热轮差值 ≤3 个百分点（用户指定容差）即 PASS、不足 4 组 FAIL；热轮 messages 全量 miss（read=0 且 creation=0）时同轮重发一次鉴别（用户指定）：重发命中→WARN 留痕继续（偶发——疑似多实例路由/条目可见性问题）；仍 miss→该组不符合预期（剥离失效形态，判别力不变）；每请求在 system 头部构造逐请求变化的计费行；循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1 组中英混合，整请求长度尽量超过 8k tokens；覆盖两条剥离代码路径（块数组断点挂 system 块——K3 口径；字符串断点挂 user 首块）；每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮不参与比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求，组间间隔 3 秒（用户指定）；硬断言：①组级判定（用户指定）——单组失败不中断后续组，5 组中至少 4 组该组全部热轮差值 ≤3 个百分点即 PASS、不足 4 组 FAIL；②每请求 HTTP 200 且响应正常；缺陷形态 messages ≈0% vs chat ≈94%（五组全不符合→FAIL）、修复后两协议每热轮均 ≈94%（五组全符合→PASS）；热轮 cache_creation>0（剥离失效直接信号）与双低形态仅日志留痕；运行日志不含具体模型名 | P0 |
 | K23 | 孤儿 tool 消息应对齐官方放行并正常消费 | 客户问题（新工单，官方对齐口径）：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），平台返回 400（"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool calls'."——type: alaya code error、code: invalid text request——网关层白加的校验）；智谱官方源对同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」且模型在 reasoning 中实际引用 tool 数据（工具数据被正常消费）；新契约（客户指定）：预期结果同官方一致——此类消息序列不做校验、正常出结果；与 K14 关系：K14 为当时工单口径原始契约（保持不变——用户指令），二者输入同类预期相反，平台采纳官方对齐修复后 K14 将 FAIL、其保留/退役由用户决定；适用 GLM-5.3 | 按客户新工单原始请求体还原（messages=[user"查一下北京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文本无 tool_calls——孤儿条件）、tool tool_call_id="call_weather_001" content={"city":"北京","temp_c":18,"condition":"晴"}、user"根据工具返回的数据，用一句话告诉我天气。"]、max_tokens=200、非流式、无 tools/thinking；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始 400 拦截形态复现即 FAIL）、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空——官方形态为正常答句）；官方行为细节（输出/推理引用工具数据要素）软校验仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 | K24 | 双请求正常响应（思考耗尽预算 low 强度回退） | 客户问题（新工单）：客户两个请求（中文同音词与言部汉字写作题、英文数学题），temperature=0.0、max_completion_tokens=32768（工单原始字段名）、非流式，期望均正常响应并返回正文；风险形态（用户指定）：默认 max 思考强度下思考可能耗光预算（正文空+finish=length）；适用 GLM-5.3 | 按工单原始请求体还原两请求直发（采样参数豁免——用户指定：两请求体均显式 temperature=0.0，工单体为唯一口径，通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖，top_p/seed 不注入）；第 1 轮默认 max 思考强度（不带 reasoning_effort），有正常正文即通过，断言 HTTP 200、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空）；耗光形态（正文空+finish=length）按用户指定契约转 reasoning_effort=low（GLM 顶层思考强度参数，K20 口径）重发且仅重测耗光请求（已通过不重测），断言相同；正文空且 finish≠length 直接 FAIL；low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；finish/usage 仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
+| K25 | assistant 历史重复 reasoning_content 字段应被兼容接受 | 客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条消息携带两个 reasoning_content 字段（两轮历史思考未去重地拼接成同键重复）与上一次请求的正文；客户原始工单还曾因思考内容含 They're/I'm/It's 等英文撇号导致 JSON 破损——正文与思考可能含单引号/双引号/换行等字符，须兼容处理、不影响请求格式（用户指定）；契约（用户指定）：预期不报错、正常响应，第一个 reasoning_content 被第二个覆盖（宽松解析保留最后一个值，K18 修复口径）；适用 GLM-5.3 | 共发三次请求（用户指定，JSON 链式回填——第 1/2 次响应 JSON 作为下一请求输入、思考随历史一并回填；提示词为测试自行设计，工单未携带具体提示词——用户口径仅要求结构）：第 1 次 user 单轮流式要求仅输出 JSON——采集第 1 段思考+第 1 次正文（JSON，作为第 2 次请求输入回填）；第 2 次流式回填第 1 次历史 messages=[assistant(content=第 1 次正文（JSON）, reasoning_content=第 1 次思考), user 追问]（单键经 dict 表达——K18 口径）并要求仅输出 JSON——采集第 2 段思考+第 2 次正文（JSON，作为第 3 次请求输入回填）；第 3 次流式回填 messages=[assistant(content=第 2 次正文（JSON）, reasoning_content=第 1 次思考, reasoning_content=第 2 次思考), user 追问]——重复键无法经 dict 表达，手工拼接 JSON 文本直发，动态值一律 json.dumps 全转义，发送前三重自检（合法 JSON、reasoning_content 键出现次数==2、转义回读值一致）；硬断言第 1/2 次思考与正文均非空（构造数据源）且正文为合法 JSON（JSON 链断裂即场景无法构造 FAIL；容忍 markdown 代码块围栏）、第 3 次 HTTP 200（核心——被拒绝即 FAIL）+ SSE 事件非空 + 合并正文非空 + finish_reason 合法；耗光回退（K24 口径）：max_tokens=8192 下默认 max 档思考可能耗尽预算（正文空+finish=length）——该形态以 reasoning_effort=low 仅重发耗光请求（第 3 次重发构造不变仅加顶层 reasoning_effort 字段——HTTP 200 核心契约首次请求已达成），断言相同，正文空且 finish≠length 直接 FAIL，low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；引号覆盖度软观察（三个回填值均无引号/换行字符时 record_warning，不判失败）；采样参数不豁免（默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入）；max_tokens=8192 工单口径三次一致；usage 仅日志；模型真实响应断言前打印 | P0 |
 
 ## 运行方式
 
@@ -1006,6 +1007,9 @@ the JSON body into the target type: missing field 'name'`。触发
    arguments 为 `'"command":"cd ... ", "description": "..."}'`
    ——缺开头 `{`、非合法 JSON（内部 `data,json`、`SKlLL` 等怪
    字符均为工单原文，原样保留）。
+（按客户 agent 两步流程解读：第一个 tool 调用即第一步"输出
+JSON 到 *.json 文件"——其 name/id 在返回数据中丢失；bash 调
+用即第二步，读取/复制第一步输出的 skill_weekly.json）
 修复逻辑（开发回复）：
 1. 先按原有逻辑解析、校验请求，正常请求直接通过；
 2. 解析失败后，识别 assistant 历史中的空占位调用；同一列表还有
@@ -1017,29 +1021,51 @@ the JSON body into the target type: missing field 'name'`。触发
 4. 兼容 assistant 历史里重复的 reasoning_content /
    reasoning_context，保留最后一个值。
 
-**请求构造**（按工单还原，OpenAI 协议 `/v1/chat/completions`
-非流式，手工 payload 直发）：
-- messages：user（"请分析工作区数据并生成技能周报图表。"）→
-  assistant（工单原样还原：content=null、reasoning_content +
-  reasoning_context 双字段并存、tool_calls=[空占位调用, 真实
-  bash 调用（arguments 缺 `{`）]）→ user（"请继续完成任务。"）
-- tools：bash 工具定义（agent 场景——模型输出调用了 bash，请求
-  必然定义了该工具）
-- max_tokens=512；采样参数不豁免（用户指令）——由全局
+**请求构造**（按客户 agent 两步流程还原——用户指定测试逻辑，
+OpenAI 协议 `/v1/chat/completions` 非流式，手工 payload 直发）：
+- **第一个请求**（第一步"输出 JSON 到 *.json 文件"）：user 单轮
+  要求直接输出技能周报数据 JSON 对象（3-5 条记录；不带工具定
+  义——直接输出 JSON 才可确定性落盘）；max_tokens=2048（留足
+  思考预算余量，防御正文被思考耗光）；测试代为执行"输出 JSON
+  到 *.json 文件"——从正文提取最外层 `{...}`（容忍 markdown
+  代码块围栏/前后杂文）、json.loads 校验后写入测试脚本同级目录
+  下临时文件 `tests/k18_temp_skill_weekly.json`（对应工单中的
+  skill_weekly.json）
+- **工具读取**：测试代为执行第二个请求上下文中 bash 工具调用的
+  读取语义——读取第一个请求输出的临时 JSON 文件，回读 json 与
+  第一个请求输出一致
+- **第二个请求**（核心）：user（"请分析工作区数据并生成技能周
+  报图表。"）→ assistant（工单原样还原：content=null、
+  reasoning_content + reasoning_context 双字段并存、
+  tool_calls=[空占位调用, 真实 bash 调用（arguments 缺 `{`）]）
+  → user 追问（携带工具读取到的临时 JSON 文件内容，防御性截断
+  上限 3000 字符）；tools：bash 工具定义（agent 场景——模型输
+  出调用了 bash，请求必然定义了该工具）；max_tokens=512（工单
+  口径）
+- 采样参数不豁免（用户指令）——两个请求一致，由全局
   SAMPLING_PARAMS（Jenkinsfile，经 `--sampling-params` 注入）
   覆盖：temperature 全局值优先（无覆盖时回退 0.7），top_p/seed
   未显式指定时注入
+- **测试完成后删除生成的临时 JSON 文件**（finally 兜底，断言失
+  败同样清理）
 
 **断言**（硬）：
-1. HTTP 200（核心——上次输出 JSON 必须可作为下次请求的输入上
-   下文，报错复现即 FAIL）
-2. choices 存在且非空
-3. message 结构存在（响应可正常生成）
+1. 第一个请求 HTTP 200 且正文可提取合法 JSON 对象（第一步契约：
+   输出 JSON 到文件）
+2. 工具读取临时 JSON 文件成功（回读 json 与输出一致）
+3. 第二个请求 HTTP 200（核心——上次输出 JSON 必须可作为下次请
+   求的输入上下文，报错复现即 FAIL）
+4. 第二个请求 choices 存在且非空 + message 结构存在（响应可正
+   常生成）
 
 **判定矩阵**：
-- 请求被接受（200）且正常生成 → PASS（上下文回填成功）
-- HTTP 400 报 missing field `name`（或同型反序列化错误）→
-  FAIL（工单缺陷复现——空占位调用未被容忍）
+- 第一个请求未输出合法 JSON 对象（正文空/无 `{...}`/解析失败）
+  → FAIL（第一步"输出 JSON 到文件"契约未达成）
+- 临时 JSON 文件回读失败或与第一个请求输出不一致 → FAIL（工具
+  读取链路破损）
+- 第二个请求被接受（200）且正常生成 → PASS（上下文回填成功）
+- 第二个请求 HTTP 400 报 missing field `name`（或同型反序列化
+  错误）→ FAIL（工单缺陷复现——空占位调用未被容忍）
 - 200 但无 choices / 无 message 结构 → FAIL（上下文被接受但未
   正常生成）
 
@@ -1060,13 +1086,26 @@ the JSON body into the target type: missing field 'name'`。触发
 - **采样参数不豁免（用户指令）**：对齐 K10 新口径——由全局
   SAMPLING_PARAMS 覆盖（默认 temperature=1.0、top_p=0.95、seed
   不发送；SAMPLING_PARAMS 留空即无覆盖回退 temperature=0.7）
-- **多轮最小还原**：user→assistant(工单输出)→user 追问——
-  工单核心是"输出回填为上下文"，不额外自造 tool 响应消息
+- **两步流程还原（用户指定测试逻辑）**：第一个请求输出临时
+  JSON 文件、第二个请求调用工具读取后回填——对应客户 agent
+  场景中两个 tool 调用（输出 JSON 到文件 + bash 读取该文件）；
+  临时文件落盘测试脚本同级目录（tests/），测试完成后 finally
+  兜底删除（断言失败同样清理）
+- **第一个请求不带工具定义**：直接输出 JSON 才可确定性落盘
+  （带工具定义时模型可能改为发起工具调用，正文无 JSON 可写盘）
+- **多轮最小还原**：第二个请求 user→assistant(工单输出)→user
+  追问——工单核心是"输出回填为上下文"，不额外自造 tool 响应
+  消息；工具读取到的文件内容经 user 追问带入（role=tool 消息
+  可能引入额外服务端校验路径，偏离工单报错形态，不采用）
+- **临时文件内容截断上限 3000 字符**：防御模型输出超长 JSON
+  撑大第二个请求上下文
 - **不进 smoke 集**：新用例首跑观察期
 
 **注意事项**：
 - 修复逻辑第 2 条的"只有空占位项时不直接删除"分支不在本用例
   覆盖范围（工单报错场景为占位+真实调用并存）
+- 临时 JSON 文件（`tests/k18_temp_skill_weekly.json`）为运行期
+  产物，测试结束（无论成败）即被 finally 删除，不入库
 - usage 仅日志
 - marker：仅 `GLM53`（用户指定；采样参数不豁免）
 
@@ -1551,4 +1590,120 @@ tool 消息里的数据（工具数据被模型正常消费）。
 
 **注意事项**：
 - finish/usage 仅日志留痕
+- marker：`GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
+
+### test_duplicate_reasoning_content_history_accepted (K25)
+
+**背景**：客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条
+assistant 消息携带**两个 reasoning_content 字段**（两轮历史思考未去重
+地拼接成同键重复）与上一次请求的正文，预期不报错、正常响应。客户原始
+工单还曾因思考内容含 They're/I'm/It's 等英文撇号导致 JSON 破损——
+**正文与思考内容可能含单引号/双引号/换行等字符，须兼容处理、不影响
+正常的请求格式**（用户指定）。
+
+**契约**（用户指定）：
+- 预期不报错、正常响应
+- 第一个 reasoning_content 被**第二个覆盖**（宽松解析保留最后一个值，
+  K18 修复口径——兼容 assistant 历史重复的 reasoning 字段）
+
+**请求构造**（共三次请求——JSON 链式回填，用户指定；提示词为测试
+自行设计，工单未携带具体提示词——用户口径仅要求结构：JSON 链+
+两个 reasoning_content）：
+
+| 请求 | messages | 目的 |
+|------|----------|------|
+| 第 1 次 | [user: 问平方根，要求仅输出 JSON（格式 {"answer": "<你的回答>"}）] | 流式采集第 1 段思考 + 第 1 次正文（JSON——作为第 2 次请求输入回填） |
+| 第 2 次 | [assistant(content=第 1 次正文 JSON, reasoning_content=第 1 次思考), user: "继续，2的平方等于几"+要求仅输出 JSON] | 回填第 1 次历史（单键经 dict 表达——K18 口径），流式采集第 2 段思考 + 第 2 次正文（JSON——作为第 3 次请求输入回填） |
+| 第 3 次（核心） | [assistant(content=第 2 次正文 JSON, reasoning_content=第 1 次思考, reasoning_content=第 2 次思考), user: "继续，3的平方等于几"] | 重复键回填——预期 HTTP 200 正常响应 |
+
+- `max_tokens=8192`（客户工单原始口径，三次请求一致）、`stream=true`
+- 第 3 次请求形态与用户示例一致：messages 以 assistant 历史开头，
+  content 为上一次的回复，两个 reasoning_content 分别为前两次请求的
+  思考内容
+
+**重复键的表达**（实现要点）：
+- 同键字面重复**无法经 dict 表达**（Python dict 自动去重、requests 的
+  `json=` 也会丢失重复键）——手工拼接 JSON 文本，以
+  `session.post(data=raw)` 直发（Content-Type/Authorization 由
+  session 既有头携带）
+- **引号兼容（用户指定）**：所有动态值（正文/思考）一律经
+  `json.dumps` 序列化后拼接——单/双引号、换行、反斜杠全转义，
+  模型回复含任意字符时 JSON 格式均不破损
+
+**发送前三重自检**：
+1. raw body 可被 `json.loads` 解析（动态值含特殊字符时转义正确——
+   客户原始 JSON 破损形态在此拦截）
+2. `"reasoning_content"` 键在 raw body 中出现且仅出现 2 次（重复键
+   真实上送，不被 dict 去重）
+3. 转义回读一致：`json.loads` 保留最后一个重复键（与服务端宽松解析
+   "第一个被第二个覆盖"契约一致），content 与第 2 次正文逐字一致
+
+**断言**（硬）：
+1. 第 1/2 次请求：思考与正文均非空（第 3 次请求的构造数据源——被测
+   环境应开思考，GLM-5.3 默认开思考，无思考即环境异常 FAIL 留证）、
+   正文为合法 JSON（JSON 链——作为下一请求输入回填，断裂即场景无法
+   构造 FAIL；容忍 markdown 代码块围栏，如 json 围栏块）、
+   finish_reason 合法
+2. 第 3 次请求：HTTP 200（核心——报错/4xx 复现即 FAIL）、SSE 事件
+   非空、合并正文非空、finish_reason 合法
+
+**耗光回退（K24 口径）**：三次请求均 `max_tokens=8192`，默认 max 档
+思考可能耗尽预算（正文空+`finish=length`，K24 实测 32768 预算亦可被
+耗光）——该形态不判失败，以 `reasoning_effort=low`（GLM 顶层思考强
+度参数，K20 口径）**仅重发耗光请求**（第 3 次重发构造不变，仅加顶层
+`reasoning_effort` 字段——HTTP 200 核心契约首次请求已达成，重复键历
+史被接受不以正文是否为空转移），断言相同；正文空且 finish≠length 直
+接 FAIL；low 回退仍无正文即 FAIL（默认 max 与 low 双强度均未产出——
+留证交开发）。
+
+**软观察**：
+- 引号覆盖度：三个回填值（第 2 次正文/两次思考）均不含引号/换行字符
+  时 `record_warning` 留痕——引号兼容路径本次未被实际覆盖（构造本身
+  已保证安全，不判失败）；含则 INFO 留痕路径被真实覆盖
+- usage 仅日志（三次请求均未要求 include_usage）
+
+**判定矩阵**：
+- 第 3 次请求 200 且正文非空 → PASS（宽松解析契约生效）
+- 第 3 次请求 4xx/5xx（严格解析拒绝重复键）→ FAIL（客户问题形态复现）
+- raw body 自检失败（转义/重复键丢失）→ FAIL（测试构造缺陷，发送前
+  拦截）
+- 第 1/2 次请求无思考内容 → FAIL（环境未开思考，无法构造场景，留证）
+- 第 1/2 次响应正文非合法 JSON → FAIL（JSON 链断裂——无法构造下一
+  请求输入回填，留证）
+- 任一请求正文空+finish=length（思考耗光预算）→ 以
+  reasoning_effort=low 仅重发该请求（构造不变，仅加顶层
+  reasoning_effort 字段），断言相同
+- low 回退重发后仍无正文（finish=length）→ FAIL（双强度均未产出
+  ——留证交开发）
+- 任一请求正文空且 finish≠length → 直接 FAIL（非耗光形态的空响应
+  为异常形态）
+
+**设计决策记录**：
+- **P0**（客户报障场景）
+- **三次请求 JSON 链采集真实思考**：用户指定——第 1/2 次响应 JSON
+  作为下一请求输入回填、思考随历史一并回填，用模型真实产生的思考/正
+  文回填而非合成占位文本，忠实还原客户逐轮 JSON 输入回填+历史思考未
+  去重拼接的实际形态；提示词为测试自行设计（工单未携带具体提示词
+  ——用户口径仅要求结构：JSON 链+两个 reasoning_content）
+- **手工拼接 raw JSON 直发**：dict 无法表达重复键（K18 曾以
+  reasoning_content + reasoning_context 两拼写并存近似覆盖，本用例
+  按用户示例要求同键字面重复——上送报文中真实出现两次）
+- **动态值全转义 + 发送前自检**：客户原始工单的 JSON 破损（思考含英
+  文撇号）即引号兼容问题的直接来源——构造安全由 json.dumps 保证，
+  自检验证转义回读一致
+- **采样参数不豁免**（默认口径）：由全局 SAMPLING_PARAMS 覆盖
+  （temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入，K10/
+  K18/K20 口径）
+- **耗光回退对齐 K24**：max_tokens=8192 下默认 max 档思考可能耗光
+  预算（K24 实测 32768 预算亦可被耗光）——耗光为环境/参数风险形态
+  而非契约违约；处理口径与 K24 用户指定契约一致（low 仅重发耗光请
+  求、非耗光空响应直接 FAIL、双强度未产出留证 FAIL）
+- **打印口径**：模型真实响应（状态码/合并正文/思考全文）断言前打印
+  （失败时同样可见）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 第 3 次请求以 assistant 消息开头（无前置 user）——与用户示例一致，
+  部分严格实现要求首轮为 user，若被拒为该类校验触发，报错形态会如实
+  暴露该部署行为
 - marker：`GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
