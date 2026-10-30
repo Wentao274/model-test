@@ -516,10 +516,16 @@ K. 客户问题复现测试
   带 MCP 工具定义，非流式），断言 HTTP 200（核心——报错复现即
   FAIL）+choices 存在+message 结构存在+模型发起修正工具调用且
   每条调用 name/id 非空、arguments 为合法 JSON 对象（修正行为
-  ——修复目的"让模型继续纠正"）；不断言历史被改写/修复。GLM-
-  5.3 专用；采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖
-  （temperature 无覆盖时回退 0.7、top_p/seed 注入）。usage 仅日
-  志。（不进 smoke 集：新用例首跑观察期）
+  ——修复目的"让模型继续纠正"）；不断言历史被改写/修复。耗光回
+  退（K24/K25 口径）：预算 16k（max_tokens=16384，工单未载），
+  默认档思考仍可能耗尽预算（无正文无调用+finish=length——首跑
+  实测 2048 预算 reasoning_tokens 全耗），该形态以
+  reasoning_effort=low 重发（构造不变仅加顶层 reasoning_effort
+  字段——HTTP 200 核心契约首次请求已达成），断言相同；双强度
+  均未产出即 FAIL（留证交开发）。GLM-5.3 专用；采样参数不豁免
+  ——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
+  0.7、top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
+  首跑观察期）
 """
 
 import base64
@@ -7735,10 +7741,18 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
            用 name 非空、id 非空、arguments 为合法 JSON 对象（修
            正后的参数必须合法）
         明确不断言：历史畸形 arguments 被改写/修复为合法 JSON
-        （修复是按字符串保留，不改写历史）。GLM-5.3 专用；采样参
-        数不豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无
-        覆盖时回退 0.7、top_p/seed 注入）。usage 仅日志。（不进
-        smoke 集：新用例首跑观察期）
+        （修复是按字符串保留，不改写历史）。        耗光回退（K24/K25 口
+        径）：预算 16k（max_tokens=16384——覆盖默认档思考+大尺
+        寸修正输出；工单未载 max_tokens），默认档思考仍可能耗尽
+        预算（无正文无调用+finish=length——首跑实测 2048 预算
+        reasoning_tokens 全耗）——该形态以
+        reasoning_effort=low（GLM 顶层思考强度参数）重发（构造不
+        变仅加顶层 reasoning_effort 字段；HTTP 200 核心契约首次请
+        求已达成），断言相同；双强度均未产出即 FAIL（留证交开
+        发）。GLM-5.3 专用；采样参数不豁免——由全局
+        SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、
+        top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
+        首跑观察期）
         """
         # K27: 工单同款畸形 arguments（保真浓缩版）——恰因两处
         # 括号错误而非法："refId": "A"}]（缺一个 }）与 40}}}],
@@ -7840,9 +7854,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         )
         # K27: 首个 user 消息（MCP 场景任务）
         K27_PROMPT = "请通过 Grafana 工具更新 SLA 状态面板。"
-        # K27: 预算——修正调用可能输出大尺寸 arguments（对齐工单
-        # 场景量级）
-        K27_MAX_TOKENS = 2048
+        # K27: 预算 16k——覆盖默认档思考+大尺寸修正 arguments 输
+        # 出（工单未载 max_tokens；首跑 2048 预算曾被思考全耗，上
+        # 调至 16k 并以 reasoning_effort=low 兜底）
+        K27_MAX_TOKENS = 16384
 
         # 场景自检：畸形 arguments 常量必须恰为非合法 JSON（否则
         # 用例失去缺陷触发能力）
@@ -7948,7 +7963,83 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"响应 message 结构缺失: {list(result.keys())}"
         )
         TestLogger.log_response(test_logger, result, "K27-响应")
+
         tool_calls = message.get("tool_calls") or []
+        content = message.get("content") or ""
+        finish = choices[0].get("finish_reason")
+        # 耗光回退（K24/K25 口径）：无正文无调用+finish=length 为
+        # 思考耗尽预算形态（真实环境首跑实测：2048 预算曾全被思
+        # 考耗光——reasoning_tokens=2048/2048；现预算已上调 16k，
+        # low 兜底），非契约违约；以
+        # reasoning_effort=low（GLM 顶层思考强度参数，K20 口径）重
+        # 发（构造不变仅加顶层 reasoning_effort 字段——HTTP 200 核
+        # 心契约首次请求已达成），断言相同
+        if not tool_calls and not content.strip() and finish == "length":
+            test_logger.info(
+                "第 1 次请求思考耗光预算（无正文无调用 + "
+                "finish=length——HTTP 200 核心契约已达成：历史非法 "
+                "arguments 被容忍），按 K24/K25 口径以 "
+                "reasoning_effort=low 回退重发（构造不变仅加顶层 "
+                "reasoning_effort 字段）"
+            )
+            retry_payload = {**payload, "reasoning_effort": "low"}
+            TestLogger.log_request(
+                test_logger,
+                retry_payload["messages"],
+                {
+                    "tools": [K27_TOOL_NAME],
+                    "max_tokens": K27_MAX_TOKENS,
+                    "temperature": retry_payload["temperature"],
+                    "top_p": retry_payload.get("top_p", "(不注入)"),
+                    "seed": retry_payload.get("seed", "(不注入)"),
+                    "stream": False,
+                    "reasoning_effort": "low",
+                    "step": "low 回退重发（思考耗光形态）",
+                },
+            )
+            started_r = time.time()
+            try:
+                response_r = api_client._post_with_retry(
+                    url, retry_payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"low 回退重发异常（{url}）: {e}")
+            elapsed_r = time.time() - started_r
+            test_logger.info(
+                f"low 回退真实响应: HTTP {response_r.status_code}, "
+                f"elapsed={elapsed_r:.1f}s, "
+                f"body={response_r.text[:800]!r}"
+            )
+            assert response_r.status_code == 200, (
+                f"low 回退重发失败：实际 HTTP "
+                f"{response_r.status_code}: {response_r.text[:400]}"
+            )
+            try:
+                result = response_r.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                pytest.fail(
+                    f"low 回退响应不是合法 JSON: {e}. "
+                    f"响应体已记录于测试日志"
+                )
+            choices = result.get("choices") or []
+            assert choices, (
+                f"low 回退响应缺少 choices: {list(result.keys())}"
+            )
+            message = choices[0].get("message")
+            assert isinstance(message, dict), (
+                f"low 回退响应 message 结构缺失: {list(result.keys())}"
+            )
+            TestLogger.log_response(
+                test_logger, result, "K27-low 回退响应"
+            )
+            tool_calls = message.get("tool_calls") or []
+            content = message.get("content") or ""
+            finish = choices[0].get("finish_reason")
+            if not tool_calls and not content.strip() and finish == "length":
+                pytest.fail(
+                    "low 回退重发后仍无产出（默认与 low 双强度思考均"
+                    "耗光预算——留证交开发）"
+                )
         # 断言3a（修正行为前提）：模型应发起工具调用——追问明确要
         # 求修正后重新调用工具（纯文本回答无法证明"继续纠正"）
         assert tool_calls, (

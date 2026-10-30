@@ -1206,9 +1206,14 @@ TEST_CATEGORIES = {
                 "错复现即 FAIL）+choices 存在+message 结构存在+模型"
                 "发起修正工具调用且每条调用 name/id 非空、arguments "
                 "为合法 JSON 对象（修正行为——修复目的\"让模型继续纠"
-                "正\"）；不断言历史被改写/修复。适用 GLM-5.3；采样参"
-                "数不豁免——由全局 SAMPLING_PARAMS 覆盖"
-                "（temperature 无覆盖时回退 0.7、top_p/seed 注入）",
+                "正\"）；不断言历史被改写/修复。耗光回退（K24/K25 口"
+                "径）：预算 16k（max_tokens=16384，工单未载），默认档"
+                "思考仍可能耗尽预算（无正文无调用+finish=length——首跑"
+                "实测 2048 预算 reasoning_tokens 全耗），以 "
+                "reasoning_effort=low 重发，断言相同；双强度"
+                "均未产出即 FAIL。适用 GLM-5.3；采样参数不豁免——由"
+                "全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 "
+                "0.7、top_p/seed 注入）",
                 "invalid_arguments_history_tolerated",
                 "P0",
             ),

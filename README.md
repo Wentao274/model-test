@@ -362,10 +362,10 @@ pytest --junit-xml=report.xml       # JUnit XML
 |------|------|--------|------|
 | `TESTER` | string | `liwt` | 测试人员名称（必填，用于产物目录与报告标识） |
 | `CHIP` | string | `nvidia-h100` | 芯片平台名称（必填） |
-| `ENGINE` | choice | `vllm` | 推理框架：`vllm` / `sglang` |
+| `ENGINE` | choice | `sglang` | 推理框架：`sglang` / `vllm` |
 | `PD` | choice | `agg` | PD 分离模式：`agg`（非分离）/ `disagg`（PD 分离） |
-| `MODEL` | string | `kimi-k2.5` | 模型服务名称（必填） |
-| `BASE_URL` | string | `http://10.201.149.10:8080` | API 地址（必填，**无需带 `/v1`**） |
+| `MODEL` | string | `glm-5.3` | 模型服务名称（必填） |
+| `BASE_URL` | string | `https://codingplan-staging.alayanew.com:26443` | API 地址（必填，**无需带 `/v1`**） |
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |

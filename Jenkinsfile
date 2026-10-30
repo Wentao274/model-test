@@ -46,10 +46,10 @@ pipeline {
     parameters {
         string(name: 'TESTER', defaultValue: 'liwt', description: '测试人员名称（必填）')
         string(name: 'CHIP', defaultValue: 'nvidia-h100', description: '芯片平台名称（必填）')
-        choice(name: 'ENGINE', choices: ['vllm', 'sglang'], description: '推理框架（必填）')
+        choice(name: 'ENGINE', choices: ['sglang', 'vllm'], description: '推理框架（必填）')
         choice(name: 'PD', choices: ['agg', 'disagg'], description: 'PD分离模式（agg表示非PD分离，disagg表示PD分离）')
-        string(name: 'MODEL', defaultValue: 'kimi-k2.5', description: '模型服务名称 (必填)')
-        string(name: 'BASE_URL', defaultValue: 'http://10.201.149.10:8080', description: 'API 地址（必填）；非 /v1 网关需带版本号段，如智谱官方 https://open.bigmodel.cn/api/paas/v4')
+        string(name: 'MODEL', defaultValue: 'glm-5.3', description: '模型服务名称 (必填)')
+        string(name: 'BASE_URL', defaultValue: 'https://codingplan-staging.alayanew.com:26443', description: 'API 地址（必填）；非 /v1 网关需带版本号段，如智谱官方 https://open.bigmodel.cn/api/paas/v4')
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
