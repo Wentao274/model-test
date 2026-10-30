@@ -857,10 +857,13 @@ TEST_CATEGORIES = {
                 "作为下次请求的输入上下文提交即报错（missing field "
                 "`name`）——助手历史 tool_calls 混有空占位调用"
                 "（name=\"\"、id=null）与真实 bash 调用（arguments "
-                "缺开头 \"{\"、非合法 JSON）。修复：解析失败后同列表"
-                "有真实调用时移除空占位项再重新校验；缺 \"{\" 的 "
-                "arguments 原样保留（不补）；兼容重复的 reasoning_"
-                "content/reasoning_context（保留最后一个值）。按客户 "
+                "缺开头 \"{\"、非合法 JSON）；模型侧修复已明确任何"
+                "情况下不返回空 function——按用户指定不再保留空 "
+                "function 场景（回放数据已移除空占位调用）。修复：解"
+                "析失败后同列表有真实调用时移除空占位项再重新校验；"
+                "缺 \"{\" 的 arguments 原样保留（不补）；兼容重复的 "
+                "reasoning_content/reasoning_context（保留最后一个"
+                "值）。按客户 "
                 "agent 两步流程还原（用户指定测试逻辑）：第一个请求"
                 "让模型输出技能周报数据 JSON 并落盘测试脚本同级目录"
                 "下临时文件（第一步\"输出 JSON 到 *.json 文件\"）；"
@@ -871,8 +874,9 @@ TEST_CATEGORIES = {
                 "断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对"
                 "象、临时文件回读一致、第二个请求 HTTP 200+choices"
                 "+message——上次输出 JSON 必须可作为下次输入上下"
-                "文，报错复现即 FAIL；不断言 arguments 被补 \"{\" 与"
-                "占位被移除。后续问题（开发文档）：修复上线后新问题 "
+                "文，报错复现即 FAIL；不断言 arguments 被补 \"{\""
+                "（通过 router 不代表该字符串成为合法参数 JSON）。后"
+                "续问题（开发文档）：修复上线后新问题 "
                 "tool_call_id 悬空引用（must reference an unanswered "
                 "tool call）——根因为模型返回空 function（id=null），"
                 "客户端以 missing_tool_call_id 回填错误结果后被协议"
@@ -1180,31 +1184,6 @@ TEST_CATEGORIES = {
                 " 覆盖（temperature 无覆盖时回退 0.7、top_p/seed 注"
                 "入），两个请求一致",
                 "negative_lookahead_tool_pattern_accepted",
-                "P0",
-            ),
-            (
-                "K27",
-                "模型不应返回空 function（根因修复验证）",
-                "客户问题（AGDC2-38，根因文档）：missing field `name`"
-                " 报错的实质是模型返回空字符串 name 的空 function"
-                "（id=null）；router 侧 SMG 1.13.0 已做兼容（同列表"
-                "有真实调用时移除空占位项再校验），根上解决（开发建"
-                "议）为模型不返回空 function——空 function 衍生客户"
-                "端以 missing_tool_call_id 回填错误结果、再次请求被"
-                "协议校验拒绝（must reference an unanswered tool "
-                "call）的后续问题。复刻工单首个 user 回合（\"请分析"
-                "工作区数据并生成技能周报图表。\"，带 bash 工具定义、"
-                "非流式单次请求），断言 HTTP 200、模型发起工具调用"
-                "（生成图表必须执行绘图脚本——纯文本回答无法覆盖根"
-                "因）、每条调用 name/id 非空且 arguments 为合法 JSON"
-                " 对象（根因断言；同时覆盖工单同款畸形 arguments 缺 "
-                "\"{\" 的模型输出缺陷）；与 K18 第三个请求（根因断"
-                "言）同源——独立成用例以便 router 兼容修复未部署时"
-                "也能单独验证模型侧根因修复（K18 内该断言排于回填断"
-                "言之后会被阻断）。适用 GLM-5.3；采样参数不豁免——"
-                "由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时"
-                "回退 0.7、top_p/seed 注入）",
-                "model_not_return_empty_function",
                 "P0",
             ),
         ],

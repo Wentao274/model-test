@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K27
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K26
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -247,29 +247,32 @@ K. 客户问题复现测试
   body into the target type: missing field `name`"。触发形态：助
   手历史 tool_calls 列表混有空占位调用（name=""、id=null、
   arguments="{}"）与真实 bash 调用（arguments 缺开头 "{"、非合法
-  JSON，按工单原样保留）。修复：解析失败后同列表有真实调用时移
-  除空占位项再重新校验；缺 "{" 的 arguments 原样保留（不补）；
-  兼容 assistant 历史重复的 reasoning_content/reasoning_context
-  （保留最后一个值）。后续问题（开发文档）：修复上线后新问题
-  tool_call_id 悬空引用（must reference an unanswered tool
-  call）——根因为模型返回空 function（id=null），客户端以
-  missing_tool_call_id 回填错误结果后被协议校验拒绝；根上解决
-  为模型不返回空 function。本用例按客户 agent 两步流程还原（用
-  户指定测试逻辑）：第一个请求让模型输出技能周报数据 JSON（示
-  例记录，无需真实数据）并落盘测试脚本同级目录下临时文件（第
-  一步"输出 JSON 到 *.json 文件"）；第二个请求调用工具读取该
-  临时 JSON 文件，将工单原始 assistant 返回数据（user→
-  assistant(空占位+bash 调用+reasoning 双字段)→user 追问携带
-  文件内容，带 bash 工具定义，非流式）回填为输入上下文；第三
-  个请求（根因断言）复刻工单首个 user 回合（带 bash 工具定义）
-  断言模型输出的工具调用结构完整；测试完成后删除临时 JSON 文
-  件（finally 兜底）。硬断言：第一个请求 HTTP 200 且正文可提取
-  合法 JSON 对象、临时文件回读一致、第二个请求 HTTP 200+
-  choices 存在+message 结构存在——上次输出 JSON 必须可作为下
-  次输入上下文，报错复现即 FAIL；第三个请求模型发起工具调用且
-  每条调用 name/id 非空、arguments 为合法 JSON 对象（模型不得
-  返回空 function）。不断言 arguments 被补 "{"（修复明确不补）
-  与占位被移除（router 内部行为）。GLM-5.3 专用；采样参数不豁
+  JSON，按工单原样保留）；模型侧修复已明确任何情况下不返回空
+  function——本用例按用户指定不再保留空 function 场景（回放数
+  据中已移除空占位调用）。修复：解析失败后同列表有真实调用时
+  移除空占位项再重新校验；缺 "{" 的 arguments 原样保留（不
+  补）；兼容 assistant 历史重复的 reasoning_content/
+  reasoning_context（保留最后一个值）。后续问题（开发文档）：
+  修复上线后新问题 tool_call_id 悬空引用（must reference an
+  unanswered tool call）——根因为模型返回空 function
+  （id=null），客户端以 missing_tool_call_id 回填错误结果后被
+  协议校验拒绝；根上解决为模型不返回空 function。本用例按客户
+  agent 两步流程还原（用户指定测试逻辑）：第一个请求让模型输
+  出技能周报数据 JSON（示例记录，无需真实数据）并落盘测试脚本
+  同级目录下临时文件（第一步"输出 JSON 到 *.json 文件"）；第
+  二个请求调用工具读取该临时 JSON 文件，将工单原始 assistant
+  返回数据（user→assistant(真实 bash 调用（arguments 缺
+  "{"）+reasoning 双字段)→user 追问携带文件内容，带 bash 工具
+  定义，非流式）回填为输入上下文；第三个请求（根因断言）复刻
+  工单首个 user 回合（带 bash 工具定义）断言模型输出的工具调
+  用结构完整；测试完成后删除临时 JSON 文件（finally 兜底）。
+  硬断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对象、临
+  时文件回读一致、第二个请求 HTTP 200+choices 存在+message 结
+  构存在——上次输出 JSON 必须可作为下次输入上下文，报错复现
+  即 FAIL；第三个请求模型发起工具调用且每条调用 name/id 非
+  空、arguments 为合法 JSON 对象（模型不得返回空 function）。
+  不断言 arguments 被补 "{"（修复明确不补——通过 router 不代
+  表该字符串成为合法参数 JSON）。GLM-5.3 专用；采样参数不豁
   免——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
   0.7、top_p/seed 注入），三个请求一致。docx 中 role 拼写
   "assitant" 判定为笔误（报错与修复均不涉及 role），按标准
@@ -497,21 +500,6 @@ K. 客户问题复现测试
   SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、top_p/seed
   注入），两个请求一致。usage 仅日志。（不进 smoke 集：新用例首
   跑观察期）
-- K27: 模型不应返回空 function（根因修复验证） [P0]
-  客户问题（AGDC2-38，根因文档）：missing field `name` 报错的实
-  质是模型返回空字符串 name 的空 function（id=null）；router 侧
-  SMG 1.13.0 已做兼容（同列表有真实调用时移除空占位项再校验），
-  根上解决（开发建议）为模型不返回空 function——空 function 衍
-  生客户端以 missing_tool_call_id 回填错误结果、再次请求被协议
-  校验拒绝的后续问题。复刻工单首个 user 回合（带 bash 工具定义、
-  非流式单次请求），断言模型发起工具调用且每条调用 name/id 非
-  空、arguments 为合法 JSON 对象（同时覆盖工单同款畸形
-  arguments）；与 K18 第三个请求（根因断言）同源——独立成用例
-  以便 router 兼容修复未部署时也能单独验证模型侧根因修复（K18
-  内该断言排于回填断言之后会被阻断）。GLM-5.3 专用；采样参数不
-  豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
-  0.7、top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
-  首跑观察期）
 """
 
 import base64
@@ -4310,19 +4298,26 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         JSON body into the target type: missing field `name`"。触
         发形态（docx 原样还原）：助手历史 tool_calls 混有
         1) 空占位调用：function.name=""、id=null、arguments="{}"
-           （报错 missing field `name` 即指向它）——按客户 agent
+           （报错 missing field `name` 即指向它；按客户 agent
            两步流程，该调用即第一步"输出 JSON 到 *.json 文件"，
-           其 name/id 在返回数据中丢失；
+           其 name/id 在返回数据中丢失）——模型侧修复已明确任
+           何情况下不返回空 function，本用例按用户指定不再保留
+           该空 function 场景（回放数据中已移除）；
         2) 真实 bash 调用：name="bash"、id="call_8af1ab36a4154c25"，
             arguments 为 '"command":"cd ... ", "description":
             "..."}'——缺开头 "{"、非合法 JSON（命令为运行绘图脚本
             并读取/复制第一步输出的 skill_weekly.json；内部
             data,json、SKlLL 等怪字符均为工单原文，原样保留）。
-        修复逻辑：解析失败后，同列表还有其他真实调用时移除空占位
-        项、保留真实调用再重新校验；缺 "{" 的 arguments 原样保留
-        （不补 "{"——通过 router 不代表该字符串成为合法参数
-        JSON）；兼容 assistant 历史重复的 reasoning_content/
-        reasoning_context（保留最后一个值）。
+        修复逻辑（router 侧，SMG 1.13.0）：解析失败后，同列表还
+        有其他真实调用时移除空占位项、保留真实调用再重新校验；
+        缺 "{" 的 arguments 原样保留（不补 "{"——通过 router 不
+        代表该字符串成为合法参数 JSON）；兼容 assistant 历史重复
+        的 reasoning_content/reasoning_context（保留最后一个
+        值）。注：模型侧根上解决（任何情况下不返回空 function）
+        生效后，空占位场景不再产生——本用例回放历史仅保留真实
+        bash 调用（缺 "{" arguments 原样）+ reasoning 双字段（用
+        户指定），验证剩余契约：含真实工具调用的上次输出可回填
+        为下次请求输入上下文。
         后续问题（开发文档，SMG 1.13.0 修复上线后引出）：不再报
         missing field `name`，但出现新问题——"messages[141].
         tool_call_id must reference an unanswered tool call in
@@ -4342,10 +4337,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
           k18_temp_skill_weekly.json；
         - 第二个请求：测试代为执行 bash 工具读取该临时 JSON 文件
           （读取第一个请求输出的 json 文件），将工单原始 assistant
-          返回数据（空占位+bash 调用+reasoning 双字段并存）与读到
-          的文件内容一并回填为输入上下文：user →
-          assistant(返回数据) → user(携带文件内容)，带 bash 工具
-          定义，非流式；
+          返回数据（真实 bash 调用（arguments 缺 "{"）+reasoning
+          双字段并存——空占位调用已按用户指定移除）与读到的文件
+          内容一并回填为输入上下文：user → assistant(返回数据) →
+          user(携带文件内容)，带 bash 工具定义，非流式；
         - 第三个请求（根因断言）：复刻工单首个 user 回合（同一消
           息、带 bash 工具定义）——工单中模型在该回合输出了空占
           位调用与畸形 bash arguments，断言本次模型输出的每条工
@@ -4365,9 +4360,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
            非空、arguments 为合法 JSON 对象（根因断言：模型不得
            返回空 function；同时覆盖工单同款畸形 arguments 缺
            "{" 的模型输出缺陷）
-        明确不断言：arguments 被补 "{"（修复明确不补）、空占位被
-        移除（router 内部行为，响应不可见）。响应形态（正文/继续
-        调用工具）宽松留日志——测试要点是上下文被接受。
+        明确不断言：arguments 被补 "{"（修复明确不补——通过
+        router 不代表该字符串成为合法参数 JSON）。响应形态（正
+        文/继续调用工具）宽松留日志——测试要点是上下文被接受。
         docx 中 role 拼写 "assitant" 判定为笔误（报错与修复均不涉
         及 role），按标准 assistant 还原。reasoning 同键字面重复
         无法经 dict 表达，以 reasoning_content + reasoning_context
@@ -4408,9 +4403,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             }
         ]
         # K18: 按工单还原的 assistant 历史消息（上次请求的输出 JSON）
-        # ——空占位调用（name=""、id=null、arguments="{}"）与真实
-        # bash 调用（arguments 缺 "{"）同列表，reasoning 双拼写并
-        # 存（重复 reasoning 字段兼容路径）
+        # ——真实 bash 调用（arguments 缺 "{"、非合法 JSON，原样保
+        # 留）+ reasoning 双拼写并存（重复 reasoning 字段兼容路
+        # 径）；工单中的空占位调用（name=""、id=null）不再保留—
+        # —模型侧修复已明确任何情况下不返回空 function（用户指
+        # 定：不保留空 function 场景）
         K18_ASSISTANT = {
             "role": "assistant",
             "content": None,
@@ -4421,11 +4418,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 "已确认数据文件位置，准备调用 bash 执行绘图脚本。"
             ),
             "tool_calls": [
-                {
-                    "function": {"arguments": "{}", "name": ""},
-                    "id": None,
-                    "type": "function",
-                },
                 {
                     "function": {
                         "arguments": K18_BASH_ARGS,
@@ -4471,8 +4463,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "=== 测试开始: 客户问题 - 模型输出 JSON 回填为下次请求"
             "输入上下文（两步流程+根因断言：第一个请求输出临时 JSON "
             "文件 → 第二个请求调用工具读取后回填上下文 → 第三个请"
-            "求断言模型不返回空 function；assistant 历史含空占位调"
-            "用/缺 \"{\" 的 bash arguments/reasoning 双字段；修复"
+            "求断言模型不返回空 function；assistant 历史含缺 \"{\" "
+            "的 bash arguments/reasoning 双字段（空占位调用已按用户"
+            "指定移除——模型侧修复后不保留空 function 场景）；修复"
             "后应被接受，报错复现即 FAIL）==="
         )
 
@@ -4656,8 +4649,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         "第二个请求（工具读取 JSON 文件后回填上下文）"
                     ),
                     "assistant_history": (
-                        "空占位调用(name=\"\", id=null) + bash 调用"
-                        "(arguments 缺 \"{\") + reasoning 双字段"
+                        "bash 调用(arguments 缺 \"{\") + reasoning "
+                        "双字段（空占位调用已按用户指定移除）"
                     ),
                     "temp_file": str(temp_file),
                 },
@@ -4677,13 +4670,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"body={response.text[:800]!r}"
             )
             # 断言3（核心）：上次输出 JSON 可作为下次请求输入上下文
-            # ——修复前此请求报 400（missing field `name`），报错
-            # 复现即 FAIL
+            # ——历史含缺 "{" 的 bash arguments 与 reasoning 双字
+            # 段（空占位调用已按用户指定移除），被拒绝即 FAIL
             assert response.status_code == 200, (
                 f"客户问题复现失败：上次请求输出的 assistant JSON 应可"
                 f"作为下次请求的输入上下文，实际 HTTP "
-                f"{response.status_code}（工单原始报错：missing field "
-                f"`name`；修复应移除空占位项后重新校验放行）: "
+                f"{response.status_code}（历史含缺 \"{{\" 的 bash "
+                f"arguments 与 reasoning 双字段；空占位调用已按用户"
+                f"指定移除——模型侧修复后不保留空 function 场景）: "
                 f"{response.text[:400]}"
             )
             try:
@@ -7673,199 +7667,4 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "已被兼容放行——非流式 HTTP 200 且正常生成、流式 HTTP "
             "200 且 SSE 正常（生成约束工具副本置 strict=false 绕过"
             "强制编译，原始 schema/工具描述/格式约束保留）"
-        )
-
-    @pytest.mark.k_customer_issue
-    @pytest.mark.GLM53
-    @pytest.mark.p0
-    def test_model_not_return_empty_function(
-        self, api_client: ModelAPIClient, test_logger
-    ):
-        """K27 [P0]: 客户问题 - 模型不应返回空 function（根因修复验证）
-
-        客户问题（AGDC2-38，根因文档）：missing field `name` 报错的
-        实质是模型返回了空字符串 name 的空 function（id=null）——
-        router 侧 SMG 1.13.0 已做兼容（解析失败后同列表有真实调用
-        时移除空占位项再重新校验），但根上解决（开发建议）是模型
-        不要返回空的 function：空 function 还衍生后续问题——客户
-        端工具执行后以 tool_call_id="missing_tool_call_id" 回填错
-        误结果，再次请求被协议校验拒绝（must reference an
-        unanswered tool call）；不同客户端工具处理结果的方式不同。
-        本用例复刻工单首个 user 回合（"请分析工作区数据并生成技
-        能周报图表。"——工单中模型在该回合输出了空占位调用与畸
-        形 bash arguments 的根因行为），带 bash 工具定义、非流式
-        单次请求，断言模型本次输出的每条工具调用结构完整。与 K18
-        第三个请求（根因断言）同源——独立成用例：K18 内该断言排
-        于回填断言之后，router 兼容修复（SMG 1.13.0）未部署时会被
-        回填 400 阻断；本用例不受其影响，可单独验证模型侧根因修
-        复。
-        硬断言：
-        1. HTTP 200
-        2. 模型发起工具调用（生成图表必须执行绘图脚本——工单场
-           景中模型对该消息即发起 bash 调用；纯文本回答无法覆盖
-           根因）
-        3. 每条调用 name 非空、id 非空、arguments 为合法 JSON
-           对象（根因断言：模型不得返回空 function；同时覆盖工
-           单同款畸形 arguments 缺 "{" 的模型输出缺陷）
-        单次探针（空 function 为该场景的确定性缺陷——流水线重复
-        运行提供统计信号）。GLM-5.3 专用；采样参数不豁免——由全
-        局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、
-        top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
-        首跑观察期）
-        """
-        # K27: bash 工具定义（复刻工单 agent 场景——模型输出调用
-        # 了 bash，请求必然定义了该工具）
-        K27_TOOLS = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "bash",
-                    "description": (
-                        "Run a shell command in the workspace"
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "command": {"type": "string"},
-                            "description": {"type": "string"},
-                        },
-                        "required": ["command"],
-                    },
-                },
-            }
-        ]
-        # K27: 工单首个 user 回合消息（工单原文——模型在该回合输
-        # 出了空占位调用与畸形 bash arguments）
-        K27_PROMPT = "请分析工作区数据并生成技能周报图表。"
-        # K27: 预算——工具调用生成任务，2048 留足思考预算余量
-        #（K18 口径——防御正文/调用被思考耗光）
-        K27_MAX_TOKENS = 2048
-
-        test_logger.info(
-            "=== 测试开始: 客户问题 - 模型不应返回空 function（根因"
-            "修复验证：复刻工单首个 user 回合，带 bash 工具定义，断"
-            "言每条工具调用 name/id 非空、arguments 为合法 JSON 对"
-            "象——返回空 function 即 FAIL）==="
-        )
-
-        url = f"{api_client.api_prefix}/chat/completions"
-
-        # 采样参数不豁免（用户指定——不进豁免名单）：由全局
-        # SAMPLING_PARAMS（Jenkinsfile，经 conftest 注入 client）
-        # 覆盖：temperature 全局值优先（无覆盖时回退 0.7），
-        # top_p/seed 未显式指定时注入
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (ValueError, TypeError):
-                sampling_extra["seed"] = api_client.seed
-
-        payload: Dict[str, Any] = {
-            "model": api_client.model_name,
-            "messages": [{"role": "user", "content": K27_PROMPT}],
-            "tools": K27_TOOLS,
-            "max_tokens": K27_MAX_TOKENS,
-            "temperature": api_client._effective_temperature(0.7),
-            "stream": False,
-            **sampling_extra,
-        }
-        TestLogger.log_request(
-            test_logger,
-            payload["messages"],
-            {
-                "tools": [t["function"]["name"] for t in K27_TOOLS],
-                "max_tokens": K27_MAX_TOKENS,
-                "temperature": payload["temperature"],
-                "top_p": payload.get("top_p", "(不注入)"),
-                "seed": payload.get("seed", "(不注入)"),
-                "stream": False,
-                "step": "根因断言请求（模型不得返回空 function）",
-            },
-        )
-        started = time.time()
-        try:
-            response = api_client._post_with_retry(
-                url, payload, stream=False
-            )
-        except Exception as e:
-            pytest.fail(f"请求发送异常（{url}）: {e}")
-        elapsed = time.time() - started
-        # 模型真实响应断言前打印（失败时同样可见）
-        test_logger.info(
-            f"真实响应: HTTP {response.status_code}, "
-            f"elapsed={elapsed:.1f}s, body={response.text[:800]!r}"
-        )
-        # 断言1：请求应成功
-        assert response.status_code == 200, (
-            f"根因断言请求失败：实际 HTTP {response.status_code}: "
-            f"{response.text[:400]}"
-        )
-        try:
-            result = response.json()
-        except (json.JSONDecodeError, ValueError) as e:
-            pytest.fail(f"响应不是合法 JSON: {e}. 响应体已记录于测试日志")
-        choices = result.get("choices") or []
-        assert choices, f"响应缺少 choices: {list(result.keys())}"
-        message = choices[0].get("message")
-        assert isinstance(message, dict), (
-            f"响应 message 结构缺失: {list(result.keys())}"
-        )
-        TestLogger.log_response(test_logger, result, "K27-响应")
-        tool_calls = message.get("tool_calls") or []
-        # 断言2：该回合模型应发起工具调用（生成图表必须执行绘图脚
-        # 本——工单场景中模型对该消息即发起 bash 调用；纯文本回答
-        # 无法覆盖"空 function"根因）
-        assert tool_calls, (
-            f"模型未发起工具调用（finish="
-            f"{choices[0].get('finish_reason')}），无法验证根因断言"
-            f"（模型不得返回空 function，响应体已记录于测试日志）"
-        )
-        # 断言3（根因）：每条工具调用结构完整——name 非空、id 非
-        # 空、arguments 为合法 JSON 对象（对应开发根上解决"模型不
-        # 要返回空的 function"；同时覆盖工单同款畸形 arguments 缺
-        # "{" 的模型输出缺陷）
-        for i, tc in enumerate(tool_calls):
-            tc = tc if isinstance(tc, dict) else {}
-            fn = tc.get("function") or {}
-            name = fn.get("name")
-            tc_id = tc.get("id")
-            raw_args = fn.get("arguments")
-            assert isinstance(name, str) and name.strip(), (
-                f"模型返回空 function：tool_calls[{i}].function.name "
-                f"为空（{name!r}）——客户问题根因（空 name 致 400 "
-                f"missing field `name`；空 function 致客户端回填 "
-                f"missing_tool_call_id 后被协议拒绝），模型不得返回"
-                f"空 function"
-            )
-            assert isinstance(tc_id, str) and tc_id.strip(), (
-                f"模型返回空 function：tool_calls[{i}].id 为空"
-                f"（{tc_id!r}）——客户端将以 missing_tool_call_id "
-                f"回填，后续请求被协议校验拒绝"
-            )
-            args_obj = raw_args
-            if isinstance(raw_args, str):
-                try:
-                    args_obj = json.loads(raw_args)
-                except json.JSONDecodeError as e:
-                    pytest.fail(
-                        f"模型返回畸形 arguments：tool_calls[{i}]"
-                        f".function.arguments 非合法 JSON（{e}）"
-                        f"——工单同款模型输出缺陷（缺 \"{{\"）"
-                        f"（原始 arguments 已记录于测试日志）"
-                    )
-            assert isinstance(args_obj, dict), (
-                f"模型返回畸形 arguments：tool_calls[{i}].function"
-                f".arguments 应为 JSON 对象，实际 "
-                f"{type(args_obj).__name__}（原始 arguments 已记录于"
-                f"测试日志）"
-            )
-        usage = result.get("usage") or {}
-        test_logger.info(
-            f"根因断言通过: 模型返回 {len(tool_calls)} 条结构完整的"
-            f"工具调用（name/id 非空、arguments 均为合法 JSON 对象）"
-            f"，未返回空 function, elapsed={elapsed:.1f}s, usage="
-            f"{json.dumps(usage, ensure_ascii=False)}"
         )

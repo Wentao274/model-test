@@ -85,7 +85,6 @@ RAW_SAMPLING_PARAM_TESTS = {
     # K20（test_1m_context_request_supported）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     # K21（test_system_message_embedded_tools_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
     # K26（test_negative_lookahead_tool_pattern_accepted）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
-    # K27（test_model_not_return_empty_function）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
 }
 
 
