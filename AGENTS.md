@@ -8,7 +8,7 @@
 1. **用例本体**（`tests/test_k_customer_issue.py`）：
    - 测试方法（追加于文件末尾，不改动已有用例）；
    - 模块 docstring：新增用例条目 + 头部优先级范围枚举（当前口径：
-     `K1-K7、K10-K26 为 P0，K8/K9 为 P1`）。
+     `K1-K7、K10-K27 为 P0，K8/K9 为 P1`）。
 2. **注册**（`base/test_definitions.py`）：追加条目
    （id/标题/描述/方法名后缀/优先级）。
 3. **Jenkinsfile**：用例选择参数（choice）列表追加测试节点

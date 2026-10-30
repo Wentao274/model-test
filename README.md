@@ -35,9 +35,9 @@
 | H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测（**已默认禁用**） |
 | J. clear_thinking 参数行为 | `j_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
-| K. 客户问题复现 | `k_customer_issue` | 26 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行），P0 为主持续追加 |
+| K. 客户问题复现 | `k_customer_issue` | 27 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正），P0 为主持续追加 |
 
-> 总计：136 个测试点（P0: 60 / P1: 60 / P2: 16）
+> 总计：137 个测试点（P0: 61 / P1: 60 / P2: 16）
 
 ---
 

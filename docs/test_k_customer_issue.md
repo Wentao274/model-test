@@ -65,6 +65,7 @@
 | K24 | 双请求正常响应（思考耗尽预算 low 强度回退） | 客户问题（新工单）：客户两个请求（中文同音词与言部汉字写作题、英文数学题），temperature=0.0、max_completion_tokens=32768（工单原始字段名）、非流式，期望均正常响应并返回正文；风险形态（用户指定）：默认 max 思考强度下思考可能耗光预算（正文空+finish=length）；适用 GLM-5.3 | 按工单原始请求体还原两请求直发（采样参数豁免——用户指定：两请求体均显式 temperature=0.0，工单体为唯一口径，通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖，top_p/seed 不注入）；第 1 轮默认 max 思考强度（不带 reasoning_effort），有正常正文即通过，断言 HTTP 200、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空）；耗光形态（正文空+finish=length）按用户指定契约转 reasoning_effort=low（GLM 顶层思考强度参数，K20 口径）重发且仅重测耗光请求（已通过不重测），断言相同；正文空且 finish≠length 直接 FAIL；low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；finish/usage 仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 | K25 | assistant 历史重复 reasoning_content 字段应被兼容接受 | 客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条消息携带两个 reasoning_content 字段（两轮历史思考未去重地拼接成同键重复）与上一次请求的正文；客户原始工单还曾因思考内容含 They're/I'm/It's 等英文撇号导致 JSON 破损——正文与思考可能含单引号/双引号/换行等字符，须兼容处理、不影响请求格式（用户指定）；契约（用户指定）：预期不报错、正常响应，第一个 reasoning_content 被第二个覆盖（宽松解析保留最后一个值，K18 修复口径）；适用 GLM-5.3 | 共发三次请求（用户指定，JSON 链式回填——第 1/2 次响应 JSON 作为下一请求输入、思考随历史一并回填；提示词为测试自行设计，工单未携带具体提示词——用户口径仅要求结构）：第 1 次 user 单轮流式要求仅输出 JSON——采集第 1 段思考+第 1 次正文（JSON，作为第 2 次请求输入回填）；第 2 次流式回填第 1 次历史 messages=[assistant(content=第 1 次正文（JSON）, reasoning_content=第 1 次思考), user 追问]（单键经 dict 表达——K18 口径）并要求仅输出 JSON——采集第 2 段思考+第 2 次正文（JSON，作为第 3 次请求输入回填）；第 3 次流式回填 messages=[assistant(content=第 2 次正文（JSON）, reasoning_content=第 1 次思考, reasoning_content=第 2 次思考), user 追问]——重复键无法经 dict 表达，手工拼接 JSON 文本直发，动态值一律 json.dumps 全转义，发送前三重自检（合法 JSON、reasoning_content 键出现次数==2、转义回读值一致）；硬断言第 1/2 次思考与正文均非空（构造数据源）且正文为合法 JSON（JSON 链断裂即场景无法构造 FAIL；容忍 markdown 代码块围栏）、第 3 次 HTTP 200（核心——被拒绝即 FAIL）+ SSE 事件非空 + 合并正文非空 + finish_reason 合法；耗光回退（K24 口径）：max_tokens=8192 下默认 max 档思考可能耗尽预算（正文空+finish=length）——该形态以 reasoning_effort=low 仅重发耗光请求（第 3 次重发构造不变仅加顶层 reasoning_effort 字段——HTTP 200 核心契约首次请求已达成），断言相同，正文空且 finish≠length 直接 FAIL，low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；引号覆盖度软观察（三个回填值均无引号/换行字符时 record_warning，不判失败）；采样参数不豁免（默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入）；max_tokens=8192 工单口径三次一致；usage 仅日志；模型真实响应断言前打印 | P0 |
 | K26 | 工具 schema 负向前瞻正则应被兼容放行 | 客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前瞻正则——后端编译为 structural_tag 生成约束时底层语法编译器不支持 lookahead：非流式报 400（Failed to compile structural_tag grammar——Lookahead is not supported yet，request id 2026102616110264231215776333070）、流式报 provider_unavailable（upstream_stream_error）；修复（frontend 预处理兼容，非编译器新增 lookahead 支持）：GLM-5.3+glm47 解析器+SGLang、tool_choice=auto、工具未显式 strict、schema 含 ^(?! 开头正则时命中——仅将生成约束工具副本置 strict=false 绕过强制编译，原始 schema/工具描述/格式约束保留；该路径不再由 grammar 强制保证参数满足完整 schema；适用 GLM-5.3 | 按触发形态构造：path 参数 pattern 以 ^(?! 开头（禁止路径穿越 ^(?!.*\.\.).+$）、不显式 strict、tool_choice=auto，user 消息自然诱导 write_workspace_file 调用，非流式+流式各发一次；断言：非流式 HTTP 200（核心——grammar 编译错误复现即 FAIL）+choices 非空+message 结构存在，流式 HTTP 200（核心——provider_unavailable 复现即 FAIL）+SSE 事件非空+至少一个含 choices 数据块；不断言工具被调用与参数满足 pattern（兼容绕过明确口径）、响应形态宽松留日志；采样参数不豁免（用户指定——不进豁免名单，全局 SAMPLING_PARAMS 覆盖）；usage 仅日志 | P0 |
+| K27 | 历史非法 JSON arguments 应被容忍 | 客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型输出的工具调用 arguments 本身非合法 JSON（两处括号错误——"refId": "A"}] 缺 }、40}}}] 处多 }，上游流式日志证实由模型产生）；客户端执行失败、回放全量历史，服务端校验历史 tool_calls 的 arguments 直接 400（Assistant tool call function.arguments must be valid JSON）——纯服务端问题，与 codex 客户端无本质关系；修复：历史无法解析的 arguments 按字符串保留、不再 400、让模型继续纠正；适用 GLM-5.3 | 复刻客户链路（user→assistant(畸形 arguments 调用，保真浓缩版——两处错误形态与关键结构原样、场景自检必非法)→tool(执行失败结果，协议配对必需)→user 追问修正重试，带 MCP 工具定义，非流式，max_tokens=2048），断言 HTTP 200（核心——报错复现即 FAIL）+choices 非空+message 结构存在+模型发起修正工具调用且每条调用 name/id 非空、arguments 为合法 JSON 对象（修正行为——修复目的"让模型继续纠正"）；不断言历史被改写/修复；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；usage 仅日志 | P0 |
 
 ## 运行方式
 
@@ -1876,3 +1877,101 @@ schema。
 - 本用例不覆盖"pattern 非 ^(?! 开头/工具显式 strict/tool_choice
   非 auto"等非命中分支（修复明确仅兼容命中形态，非命中分支行为
   不在修复契约内）
+
+### test_invalid_arguments_history_tolerated (K27)
+
+**背景**：客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：
+1. codex 向模型发请求，模型返回 assistant 消息调用 MCP 工具
+   `mcp__grafana__update_dashboard`（arguments 为嵌套 Grafana
+   dashboard JSON）；
+2. **模型输出的 arguments 本身不是合法 JSON**——两处括号错误：
+   `"refId": "A"}]`（缺一个 `}`，应为 `"refId": "A"}}]`）与
+   `40}}}]` 处（多一个 `}`）；PDF 第 8-10 页上游流式日志
+   （upstreamResponseChunk）逐 chunk 证实错误内容由上游模型产
+   生；
+3. codex 执行 MCP 工具失败（无法解析），拼接失败结果并回放全
+   量历史继续请求；
+4. 服务端校验历史消息 tool_calls[].function.arguments，发现非
+   合法 JSON → 400 `Assistant tool call function.arguments
+   must be valid JSON`。
+问题定位分析：**纯服务端问题，与 codex 客户端无本质关系**——
+畸形源头为模型输出（上游日志证实）、报错点为服务端校验层（自
+家校验拒绝自家模型的历史输出）、客户端行为为标准 agent 回放
+（arguments 对客户端是不透明字符串，换任何客户端同路径复
+现）、修复落在服务端。codex 唯一相关性是 MCP 场景+巨型嵌套
+arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
+修复（开发方案）：历史里无法解析的 arguments 按字符串保留，
+让模型继续纠正，不再直接 400 拒绝。
+
+**请求构造**（OpenAI 协议 `/v1/chat/completions` 非流式单次请
+求）：
+- `user`："请通过 Grafana 工具更新 SLA 状态面板。"
+- `assistant`：`content=null`，`tool_calls=[{id=
+  "call_37835f057d824692ad063945"（工单截图原值），name=
+  "mcp__grafana__update_dashboard"，arguments=畸形 JSON}]`——
+  arguments 采用**保真浓缩版**（~2.2KB）：完整保留工单两处括
+  号错误形态与关键结构（dataset/rawSql/title/uid/操作路径）；
+  PDF 换行提取无法保证 3KB 原文字节级保真，浓缩版在两处错误之
+  外结构合法（修正该两处即可解析，构造时已程序化验证）；场景
+  自检：常量经 json.loads 解析必须失败
+- `tool`：`tool_call_id` 匹配，`content`=执行失败结果
+  （arguments 非合法 JSON——客户"失败结果"回填形态；role=tool
+  为协议配对必需，K18 实测缺失被 400 拒绝）
+- `user` 追问："工具执行失败：arguments 不是合法 JSON。请修正
+  参数后重新调用工具完成任务。"（修正行为契约的确定性前提）
+- `tools`：`mcp__grafana__update_dashboard` 工具定义
+  （parameters 保留顶层结构——历史校验针对 arguments 字符串，
+  无需复刻完整 Grafana schema）
+- `max_tokens=2048`（修正调用可能输出大尺寸 arguments）
+- 采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖（temperature
+  无覆盖时回退 0.7、top_p/seed 注入）
+
+**断言**（硬）：
+1. HTTP 200（核心——修复前 400 must be valid JSON，报错复现
+   即 FAIL）
+2. choices 存在且非空 + message 结构存在
+3. 修正行为（修复目的"让模型继续纠正"）：模型发起工具调用
+   （追问明确要求修正后重新调用——纯文本回答无法证明纠正），
+   每条调用 name 非空、id 非空、arguments 为合法 JSON 对象
+
+**判定矩阵**：
+- HTTP 400 报 must be valid JSON（或同型历史 arguments 校验错
+  误）→ FAIL（客户缺陷复现——历史未被容忍）
+- 200 但无 choices / 无 message 结构 → FAIL（请求被接受但未正
+  常生成）
+- 模型未发起工具调用 → FAIL（无法验证修复目的"让模型继续纠
+  正"）
+- 修正调用任一 arguments 非合法 JSON 对象 → FAIL（模型未纠正
+  参数——修复目的未达成）
+- 200 且模型发起修正调用、arguments 合法 → PASS（容忍+自我纠
+  正全链路生效）
+
+**设计决策记录**：
+- **P0**（按客户工单，AGDC2-19）
+- **畸形 arguments 保真浓缩版**：完整保留工单两处括号错误形
+  态（文档点名的 `"refId": "A"}]` 缺 `}` 与 `40}}}]` 多 `}`）
+  与关键结构（dataset/rawSql/title/uid/操作路径）——PDF 换行
+  提取无法保证 3KB 原文字节级保真（损坏的"原文"更糟）；浓缩
+  版经程序化验证"恰因两处错误非法、修正两处即合法"
+- **场景自检硬编码**：json.loads(常量) 必须失败——防止后续维
+  护误改正常量致用例失去缺陷触发能力
+- **修正行为硬断言**：开发修复目的即"让模型继续纠正"——追问
+  明确要求重新调用工具（行为契约，同 K18 第三个请求口径）；
+  修正调用的 arguments 必须为合法 JSON 对象（纠正的直接证据）
+- **role=tool 不可少**：assistant 带 tool_calls 后必须紧跟匹配
+  工具结果消息（K18 实测配对校验 400）——客户链路本就有工具
+  结果回填
+- **明确不断言**：历史畸形 arguments 被改写/修复为合法 JSON
+  （修复是按字符串保留，不改写历史）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- usage 仅日志
+- marker：`GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
+- 与 K18 的关系：K18 覆盖"缺 `{` arguments 原样保留不补"
+  （router 层容忍）；K27 覆盖 serving 层 must-be-valid-JSON 校
+  验容忍 + 模型自我纠正行为——畸形形态互补（K18 缺 `{` vs K27
+  缺 `}`/多 `}`），验证层级不同
+- K18 第二个请求的 bash arguments 亦为非合法 JSON（缺 `{`）—
+  —若 serving 层该校验在配对校验之后生效，K18 可能同路径触发
+  本用例覆盖的报错形态（两次运行的先后顺序可揭示校验层级）

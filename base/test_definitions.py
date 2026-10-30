@@ -1187,6 +1187,31 @@ TEST_CATEGORIES = {
                 "negative_lookahead_tool_pattern_accepted",
                 "P0",
             ),
+            (
+                "K27",
+                "历史非法 JSON arguments 应被容忍",
+                "客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）："
+                "模型输出的工具调用 arguments 本身非合法 JSON（两处"
+                "括号错误——\"refId\": \"A\"}] 缺 }、40}}}] 处多 }，"
+                "上游流式日志证实由模型产生）；客户端执行失败、回放"
+                "全量历史，服务端校验历史 tool_calls 的 arguments 直"
+                "接 400（Assistant tool call function.arguments "
+                "must be valid JSON）——纯服务端问题，与 codex 客户"
+                "端无本质关系。修复：历史无法解析的 arguments 按字符"
+                "串保留、不再 400、让模型继续纠正。复刻客户链路"
+                "（user→assistant(畸形 arguments 调用，保真浓缩版—"
+                "—两处错误形态与关键结构原样、场景自检必非法)→"
+                "tool(执行失败结果，协议配对必需)→user 追问修正重试，"
+                "带 MCP 工具定义，非流式），断言 HTTP 200（核心——报"
+                "错复现即 FAIL）+choices 存在+message 结构存在+模型"
+                "发起修正工具调用且每条调用 name/id 非空、arguments "
+                "为合法 JSON 对象（修正行为——修复目的\"让模型继续纠"
+                "正\"）；不断言历史被改写/修复。适用 GLM-5.3；采样参"
+                "数不豁免——由全局 SAMPLING_PARAMS 覆盖"
+                "（temperature 无覆盖时回退 0.7、top_p/seed 注入）",
+                "invalid_arguments_history_tolerated",
+                "P0",
+            ),
         ],
     },
 }

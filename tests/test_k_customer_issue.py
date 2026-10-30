@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K26
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K27
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -502,6 +502,24 @@ K. 客户问题复现测试
   SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、top_p/seed
   注入），两个请求一致。usage 仅日志。（不进 smoke 集：新用例首
   跑观察期）
+- K27: 历史非法 JSON arguments 应被容忍 [P0]
+  客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型输出的
+  工具调用 arguments 本身非合法 JSON（两处括号错误——"refId":
+  "A"}] 缺 }、40}}}] 处多 }，上游流式日志证实由模型产生）；客户
+  端执行失败、回放全量历史，服务端校验历史 tool_calls 的
+  arguments 直接 400（Assistant tool call function.arguments
+  must be valid JSON）——纯服务端问题，与 codex 客户端无本质关
+  系。修复：历史无法解析的 arguments 按字符串保留、不再 400、
+  让模型继续纠正。复刻客户链路（user→assistant(畸形 arguments
+  调用，保真浓缩版——两处错误形态与关键结构原样、场景自检必
+  非法)→tool(执行失败结果，协议配对必需)→user 追问修正重试，
+  带 MCP 工具定义，非流式），断言 HTTP 200（核心——报错复现即
+  FAIL）+choices 存在+message 结构存在+模型发起修正工具调用且
+  每条调用 name/id 非空、arguments 为合法 JSON 对象（修正行为
+  ——修复目的"让模型继续纠正"）；不断言历史被改写/修复。GLM-
+  5.3 专用；采样参数不豁免——由全局 SAMPLING_PARAMS 覆盖
+  （temperature 无覆盖时回退 0.7、top_p/seed 注入）。usage 仅日
+  志。（不进 smoke 集：新用例首跑观察期）
 """
 
 import base64
@@ -7677,4 +7695,304 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "已被兼容放行——非流式 HTTP 200 且正常生成、流式 HTTP "
             "200 且 SSE 正常（生成约束工具副本置 strict=false 绕过"
             "强制编译，原始 schema/工具描述/格式约束保留）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_invalid_arguments_history_tolerated(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K27 [P0]: 客户问题 - 历史非法 JSON arguments 应被容忍
+
+        客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型调
+        用 mcp__grafana__update_dashboard 时输出的 arguments 本身
+        不是合法 JSON（两处括号错误——"refId": "A"}] 缺一个 }、
+        40}}}] 处多一个 }；PDF 上游流式日志证实错误由上游模型产
+        生）；客户端执行 MCP 工具失败、拼接失败结果并回放全量历
+        史继续请求，服务端校验历史消息 tool_calls[].function.
+        arguments 发现非合法 JSON，直接 400——"Assistant tool
+        call function.arguments must be valid JSON"。问题定位分
+        析：纯服务端问题（畸形源头为模型输出、报错点为服务端校
+        验、客户端行为为标准 agent 回放），与 codex 客户端无本质
+        关系。
+        修复（开发方案）：历史里无法解析的 arguments 按字符串保
+        留，让模型继续纠正，不再直接 400 拒绝。
+        本用例复刻客户链路（user → assistant(畸形 arguments 的工
+        具调用) → tool(执行失败结果——协议配对必需) → user 追问
+        要求修正重试），带 MCP 工具定义，非流式。畸形 arguments
+        采用保真浓缩版（~2.2KB）：完整保留工单两处括号错误形态
+        与关键结构（dataset/rawSql/title/uid/操作路径）——PDF 换
+        行提取无法保证 3KB 原文字节级保真；场景自检：常量经
+        json.loads 解析必须失败（恰因两处工单错误而非法，修正该
+        两处即可解析，构造时已验证）。
+        硬断言：
+        1. HTTP 200（核心——修复前 400 must be valid JSON，报错
+           复现即 FAIL）
+        2. choices 存在且非空 + message 结构存在
+        3. 修正行为（修复目的"让模型继续纠正"）：模型发起工具调
+           用（追问明确要求修正后重新调用——行为契约），每条调
+           用 name 非空、id 非空、arguments 为合法 JSON 对象（修
+           正后的参数必须合法）
+        明确不断言：历史畸形 arguments 被改写/修复为合法 JSON
+        （修复是按字符串保留，不改写历史）。GLM-5.3 专用；采样参
+        数不豁免——由全局 SAMPLING_PARAMS 覆盖（temperature 无
+        覆盖时回退 0.7、top_p/seed 注入）。usage 仅日志。（不进
+        smoke 集：新用例首跑观察期）
+        """
+        # K27: 工单同款畸形 arguments（保真浓缩版）——恰因两处
+        # 括号错误而非法："refId": "A"}]（缺一个 }）与 40}}}],
+        # 处被注入多余 }（40}}}]},）；修正该两处即恢复合法
+        K27_MALFORMED_ARGS = (
+            '{"dashboard": {"timeSettings": {"from": "now-6h", "to": '
+            '"now"}}, "operations": [{"op": "add", "path": "$.elements.'
+            'panel-131", "value": {"kind": "Panel", "spec": {"data": '
+            '{"kind": "QueryGroup", "spec": {"queries": [{"kind": '
+            '"PanelQuery", "spec": {"hidden": false, "query": '
+            '{"datasource": {"name": "${data_source}"}, "group": '
+            '"mysql", "kind": "DataQuery", "spec": {"dataset": '
+            '"tokenmarket_dw_prod", "editorMode": "code", "format": '
+            '"time_series", "rawQuery": true, "rawSql": "SELECT\\n  '
+            "CAST(FLOOR(a.request_finished_at / 300000) * 300000 AS "
+            "BIGINT) AS time,\\n  a.model AS metric,\\n  CASE\\n    "
+            "WHEN COUNT(1) = 0 THEN 100.0\\n    ELSE (1 - SUM(CASE "
+            "WHEN a.rsp_code >= 500 THEN 1 ELSE 0 END) / COUNT(1)) * "
+            "100\\n  END AS value\\nFROM gateway_request_logs_dwd AS "
+            "a\\nWHERE a.request_finished_at BETWEEN $__from AND "
+            "$__to\\n  AND a.channel_id IN (${channel_id:csv})\\n  AND "
+            "a.model IN ($model_id)\\n  AND a.user_id = CASE WHEN "
+            "'$user_id' = '' THEN a.user_id ELSE '$user_id' END\\n  "
+            "AND a.api_key_name = CASE WHEN '$api_key_name' = '' THEN "
+            "a.api_key_name ELSE '$api_key_name' END\\nGROUP BY time, "
+            'metric\\nORDER BY time ASC", "sql": {"columns": '
+            '[{"parameters": [], "type": "function"}], "groupBy": '
+            '[{"property": {"type": "string"}, "type": "groupBy"}], '
+            '"limit": 50}}, "version": "v0"}, "refId": "A"}], '
+            '"queryOptions": {}, "transformations": []}}, '
+            '"description": "按 5 分钟窗口计算各模型服务可用性；绿色 '
+            '≥99.9%，蓝色 99.5%-99.9%，黄色 99%-99.5%，红色 <99%。", '
+            '"id": 131, "links": [], "title": "模型 - SLA 状态时间轴", '
+            '"vizConfig": {"group": "state-timeline", "kind": '
+            '"VizConfig", "spec": {"fieldConfig": {"defaults": '
+            '{"thresholds": {"mode": "absolute", "steps": [{"color": '
+            '"red", "value": null}, {"color": "yellow", "value": 99}, '
+            '{"color": "blue", "value": 99.5}, {"color": "green", '
+            '"value": 99.9}]}}, "overrides": []}, "options": '
+            '{"alignValue": "left", "legend": {"displayMode": "list", '
+            '"placement": "bottom", "showLegend": false}, "tooltip": '
+            '{"mode": "single", "sort": "none"}}, "version": "13.2.0"'
+            '}}}}}, {"op": "add", "path": "$.layout.spec.tabs[0].spec.'
+            'layout.spec.rows[0].spec.layout.spec.items/-", "value": '
+            '{"kind": "GridLayoutItem", "spec": {"element": {"kind": '
+            '"ElementReference", "name": "panel-131"}, "height": 8, '
+            '"width": 12, "x": 12, "y": 40}}}]}, "uid": "ad7mst8"}'
+        )
+        # K27: 工单工具调用 id（工单截图原值）与 MCP 工具名
+        K27_CALL_ID = "call_37835f057d824692ad063945"
+        K27_TOOL_NAME = "mcp__grafana__update_dashboard"
+        # K27: MCP 工具定义（parameters 保留顶层结构——历史校验针
+        # 对 arguments 字符串，无需复刻完整 Grafana schema）
+        K27_TOOLS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": K27_TOOL_NAME,
+                    "description": "Update a Grafana dashboard",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "dashboard": {"type": "object"},
+                            "uid": {"type": "string"},
+                        },
+                        "required": ["dashboard", "uid"],
+                    },
+                },
+            }
+        ]
+        # K27: 按客户链路还原的 assistant 历史消息——模型输出的工
+        # 具调用（arguments 即上述畸形 JSON，原样回放）
+        K27_ASSISTANT = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": K27_CALL_ID,
+                    "type": "function",
+                    "function": {
+                        "name": K27_TOOL_NAME,
+                        "arguments": K27_MALFORMED_ARGS,
+                    },
+                }
+            ],
+        }
+        # K27: 客户端工具执行失败结果（arguments 非合法 JSON——客
+        # 户"失败结果"回填形态；role=tool 为协议配对必需，K18 实
+        # 测缺失被 400 拒绝）
+        K27_TOOL_RESULT = (
+            "Error: failed to parse arguments for tool "
+            "mcp__grafana__update_dashboard: invalid JSON"
+        )
+        # K27: user 追问——明确要求修正后重新调用工具（修正行为契
+        # 约的确定性前提）
+        K27_FOLLOWUP = (
+            "工具执行失败：arguments 不是合法 JSON。请修正参数后重"
+            "新调用工具完成任务。"
+        )
+        # K27: 首个 user 消息（MCP 场景任务）
+        K27_PROMPT = "请通过 Grafana 工具更新 SLA 状态面板。"
+        # K27: 预算——修正调用可能输出大尺寸 arguments（对齐工单
+        # 场景量级）
+        K27_MAX_TOKENS = 2048
+
+        # 场景自检：畸形 arguments 常量必须恰为非合法 JSON（否则
+        # 用例失去缺陷触发能力）
+        try:
+            json.loads(K27_MALFORMED_ARGS)
+            pytest.fail(
+                "场景构造失效：K27_MALFORMED_ARGS 竟可解析为合法 "
+                "JSON——不再具备 must-be-valid-JSON 触发能力"
+            )
+        except json.JSONDecodeError:
+            pass
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 历史非法 JSON arguments 应被"
+            "容忍（user→assistant(畸形 arguments 调用)→tool(执行失"
+            "败)→user 追问修正重试；修复前 400 must be valid JSON，"
+            "报错复现即 FAIL；修复后模型应发起修正调用且 arguments "
+            "合法）==="
+        )
+
+        url = f"{api_client.api_prefix}/chat/completions"
+
+        # 采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS
+        #（Jenkinsfile，经 conftest 注入 client）覆盖：temperature
+        # 全局值优先（无覆盖时回退 0.7），top_p/seed 未显式指定时
+        # 注入
+        sampling_extra: Dict[str, Any] = {}
+        if api_client.top_p is not None:
+            sampling_extra["top_p"] = api_client.top_p
+        if api_client.seed:
+            try:
+                sampling_extra["seed"] = int(api_client.seed)
+            except (ValueError, TypeError):
+                sampling_extra["seed"] = api_client.seed
+
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [
+                {"role": "user", "content": K27_PROMPT},
+                K27_ASSISTANT,
+                {
+                    "role": "tool",
+                    "tool_call_id": K27_CALL_ID,
+                    "content": K27_TOOL_RESULT,
+                },
+                {"role": "user", "content": K27_FOLLOWUP},
+            ],
+            "tools": K27_TOOLS,
+            "max_tokens": K27_MAX_TOKENS,
+            "temperature": api_client._effective_temperature(0.7),
+            "stream": False,
+            **sampling_extra,
+        }
+        TestLogger.log_request(
+            test_logger,
+            payload["messages"],
+            {
+                "tools": [K27_TOOL_NAME],
+                "max_tokens": K27_MAX_TOKENS,
+                "temperature": payload["temperature"],
+                "top_p": payload.get("top_p", "(不注入)"),
+                "seed": payload.get("seed", "(不注入)"),
+                "stream": False,
+                "step": "历史非法 arguments 回放+修正重试",
+                "assistant_history": (
+                    'arguments 两处括号错误（"refId": "A"}] 缺 }、'
+                    "40}}}] 处多 }）"
+                ),
+            },
+        )
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+        # 模型真实响应断言前打印（失败时同样可见）
+        test_logger.info(
+            f"真实响应: HTTP {response.status_code}, "
+            f"elapsed={elapsed:.1f}s, body={response.text[:800]!r}"
+        )
+        # 断言1（核心）：历史非法 arguments 应被容忍——修复前此请
+        # 求报 400（Assistant tool call function.arguments must be
+        # valid JSON），报错复现即 FAIL
+        assert response.status_code == 200, (
+            f"客户问题复现失败：历史含非法 JSON arguments 的请求应被"
+            f"容忍（按字符串保留、模型继续纠正），实际 HTTP "
+            f"{response.status_code}（客户原始报错：Assistant tool "
+            f"call function.arguments must be valid JSON）: "
+            f"{response.text[:400]}"
+        )
+        try:
+            result = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            pytest.fail(f"响应不是合法 JSON: {e}. 响应体已记录于测试日志")
+        # 断言2：choices 存在且非空 + message 结构存在
+        choices = result.get("choices") or []
+        assert choices, f"响应缺少 choices: {list(result.keys())}"
+        message = choices[0].get("message")
+        assert isinstance(message, dict), (
+            f"响应 message 结构缺失: {list(result.keys())}"
+        )
+        TestLogger.log_response(test_logger, result, "K27-响应")
+        tool_calls = message.get("tool_calls") or []
+        # 断言3a（修正行为前提）：模型应发起工具调用——追问明确要
+        # 求修正后重新调用工具（纯文本回答无法证明"继续纠正"）
+        assert tool_calls, (
+            f"模型未发起修正工具调用（finish="
+            f"{choices[0].get('finish_reason')}）——无法验证修复目的"
+            f"（让模型继续纠正，响应体已记录于测试日志）"
+        )
+        # 断言3b（修正行为）：每条调用结构完整且 arguments 为合法
+        # JSON 对象——模型应以修正后的合法参数重新调用
+        for i, tc in enumerate(tool_calls):
+            tc = tc if isinstance(tc, dict) else {}
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            tc_id = tc.get("id")
+            raw_args = fn.get("arguments")
+            assert isinstance(name, str) and name.strip(), (
+                f"修正调用的 function.name 为空（{name!r}）: "
+                f"{json.dumps(tc, ensure_ascii=False)[:300]}"
+            )
+            assert isinstance(tc_id, str) and tc_id.strip(), (
+                f"修正调用的 id 为空（{tc_id!r}）: "
+                f"{json.dumps(tc, ensure_ascii=False)[:300]}"
+            )
+            args_obj = raw_args
+            if isinstance(raw_args, str):
+                try:
+                    args_obj = json.loads(raw_args)
+                except json.JSONDecodeError as e:
+                    pytest.fail(
+                        f"模型未纠正参数：tool_calls[{i}].function."
+                        f"arguments 仍非合法 JSON（{e}）——修复目的"
+                        f"（让模型继续纠正）未达成（原始 arguments 已"
+                        f"记录于测试日志）"
+                    )
+            assert isinstance(args_obj, dict), (
+                f"修正调用的 arguments 应为 JSON 对象，实际 "
+                f"{type(args_obj).__name__}（原始 arguments 已记录于"
+                f"测试日志）"
+            )
+        usage = result.get("usage") or {}
+        test_logger.info(
+            f"客户问题复现通过: 历史非法 JSON arguments 已被容忍——"
+            f"HTTP 200 且模型发起 {len(tool_calls)} 条修正工具调用"
+            f"（arguments 均为合法 JSON 对象），elapsed="
+            f"{elapsed:.1f}s, usage="
+            f"{json.dumps(usage, ensure_ascii=False)}"
         )

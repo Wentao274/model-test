@@ -187,7 +187,8 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_orphan_tool_message_accepted',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_dual_request_response_with_effort_fallback',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_duplicate_reasoning_content_history_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_lookahead_tool_pattern_accepted'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_lookahead_tool_pattern_accepted',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_invalid_arguments_history_tolerated'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
