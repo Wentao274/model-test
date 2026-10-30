@@ -262,8 +262,10 @@ K. 客户问题复现测试
   同级目录下临时文件（第一步"输出 JSON 到 *.json 文件"）；第
   二个请求调用工具读取该临时 JSON 文件，将工单原始 assistant
   返回数据（user→assistant(真实 bash 调用（arguments 缺
-  "{"）+reasoning 双字段)→user 追问携带文件内容，带 bash 工具
-  定义，非流式）回填为输入上下文；第三个请求（根因断言）复刻
+  "{"）+reasoning 双字段)→tool(工具读取结果——协议必需：
+  assistant 带 tool_calls 后必须紧跟匹配 tool_call_id 的工具结
+  果消息，实测缺失被 400 拒绝)→user 追问，带 bash 工具定义，
+  非流式）回填为输入上下文；第三个请求（根因断言）复刻
   工单首个 user 回合（带 bash 工具定义）断言模型输出的工具调
   用结构完整；测试完成后删除临时 JSON 文件（finally 兜底）。
   硬断言：第一个请求 HTTP 200 且正文可提取合法 JSON 对象、临
@@ -4340,7 +4342,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
           返回数据（真实 bash 调用（arguments 缺 "{"）+reasoning
           双字段并存——空占位调用已按用户指定移除）与读到的文件
           内容一并回填为输入上下文：user → assistant(返回数据) →
-          user(携带文件内容)，带 bash 工具定义，非流式；
+          tool(工具读取结果——协议必需：assistant 带 tool_calls
+          后必须紧跟匹配 tool_call_id 的工具结果消息，实测缺失被
+          400 拒绝 messages[2] missing tool results) → user 追问，
+          带 bash 工具定义，非流式；
         - 第三个请求（根因断言）：复刻工单首个 user 回合（同一消
           息、带 bash 工具定义）——工单中模型在该回合输出了空占
           位调用与畸形 bash arguments，断言本次模型输出的每条工
@@ -4450,7 +4455,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 文件"的落盘产物（测试脚本同级目录下，对应工单中的
         # skill_weekly.json），测试完成后删除
         K18_TEMP_FILE_NAME = "k18_temp_skill_weekly.json"
-        # K18: 第二个请求 user 追问携带文件内容的防御性截断上限
+        # K18: 第二个请求工具结果消息携带文件内容的防御性截断上限
         K18_FILE_CONTEXT_LIMIT = 3000
         # K18: 工单首个 user 回合消息（工单原文）——第二个请求历
         # 史第 0 条与第三个请求（根因断言）复用同一消息
@@ -4613,12 +4618,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
 
             # ---- 第二个请求：返回数据回填为输入上下文（核心断言） ----
-            req2_followup = (
-                "请继续完成任务。工具已读取第一个请求输出的技能周报数"
-                "据文件，内容如下：\n"
-                f"{file_text[:K18_FILE_CONTEXT_LIMIT]}\n"
-                "请基于以上数据继续。"
-            )
+            # 协议必需：assistant 带 tool_calls 后必须紧跟匹配
+            # tool_call_id 的 role=tool 工具结果消息——实测缺失被
+            # 400 拒绝（messages[2]: missing tool results for
+            # preceding assistant tool_calls）；工具读取到的文件内
+            # 容经 tool 消息携带（协议原生位置——原 user 追问携带
+            # 方案不满足工具结果配对约束，已被服务端拒绝证伪）
             payload: Dict[str, Any] = {
                 "model": api_client.model_name,
                 "messages": [
@@ -4627,7 +4632,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         "content": K18_CHART_PROMPT,
                     },
                     K18_ASSISTANT,
-                    {"role": "user", "content": req2_followup},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_8af1ab36a4154c25",
+                        "content": file_text[:K18_FILE_CONTEXT_LIMIT],
+                    },
+                    {"role": "user", "content": "请继续完成任务。"},
                 ],
                 "tools": K18_TOOLS,
                 "max_tokens": K18_MAX_TOKENS,
