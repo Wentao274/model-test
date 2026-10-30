@@ -1182,6 +1182,31 @@ TEST_CATEGORIES = {
                 "negative_lookahead_tool_pattern_accepted",
                 "P0",
             ),
+            (
+                "K27",
+                "模型不应返回空 function（根因修复验证）",
+                "客户问题（AGDC2-38，根因文档）：missing field `name`"
+                " 报错的实质是模型返回空字符串 name 的空 function"
+                "（id=null）；router 侧 SMG 1.13.0 已做兼容（同列表"
+                "有真实调用时移除空占位项再校验），根上解决（开发建"
+                "议）为模型不返回空 function——空 function 衍生客户"
+                "端以 missing_tool_call_id 回填错误结果、再次请求被"
+                "协议校验拒绝（must reference an unanswered tool "
+                "call）的后续问题。复刻工单首个 user 回合（\"请分析"
+                "工作区数据并生成技能周报图表。\"，带 bash 工具定义、"
+                "非流式单次请求），断言 HTTP 200、模型发起工具调用"
+                "（生成图表必须执行绘图脚本——纯文本回答无法覆盖根"
+                "因）、每条调用 name/id 非空且 arguments 为合法 JSON"
+                " 对象（根因断言；同时覆盖工单同款畸形 arguments 缺 "
+                "\"{\" 的模型输出缺陷）；与 K18 第三个请求（根因断"
+                "言）同源——独立成用例以便 router 兼容修复未部署时"
+                "也能单独验证模型侧根因修复（K18 内该断言排于回填断"
+                "言之后会被阻断）。适用 GLM-5.3；采样参数不豁免——"
+                "由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时"
+                "回退 0.7、top_p/seed 注入）",
+                "model_not_return_empty_function",
+                "P0",
+            ),
         ],
     },
 }
