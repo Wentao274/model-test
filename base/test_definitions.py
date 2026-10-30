@@ -1155,6 +1155,33 @@ TEST_CATEGORIES = {
                 "duplicate_reasoning_content_history_accepted",
                 "P0",
             ),
+            (
+                "K26",
+                "工具 schema 负向前瞻正则应被兼容放行",
+                "客户问题：工具参数 schema 的 pattern 包含 ^(?!...) "
+                "负向前瞻正则——后端编译为 structural_tag 生成约束时"
+                "底层语法编译器不支持 lookahead：非流式报 400"
+                "（Failed to compile structural_tag grammar——"
+                "Lookahead is not supported yet）、流式报 "
+                "provider_unavailable（upstream_stream_error）。修"
+                "复（frontend 预处理兼容，非编译器新增 lookahead 支"
+                "持）：GLM-5.3+glm47 解析器+SGLang、tool_choice="
+                "auto、工具未显式 strict、schema 含 ^(?! 开头正则时"
+                "命中——仅将生成约束工具副本置 strict=false 绕过强"
+                "制编译，原始 schema/工具描述/格式约束保留；该路径"
+                "不再由 grammar 强制保证参数满足完整 schema。按触发"
+                "形态构造：path 参数 pattern 以 ^(?! 开头（禁止路径"
+                "穿越）、不显式 strict、tool_choice=auto，非流式+流"
+                "式各发一次。断言：非流式 HTTP 200+choices 非空+"
+                "message 结构存在；流式 HTTP 200+SSE 事件非空+至少"
+                "一个含 choices 数据块——报错复现即 FAIL；不断言工"
+                "具被调用与参数满足 pattern（兼容绕过明确口径）。适"
+                "用 GLM-5.3；采样参数不豁免——由全局 SAMPLING_PARAMS"
+                " 覆盖（temperature 无覆盖时回退 0.7、top_p/seed 注"
+                "入），两个请求一致",
+                "negative_lookahead_tool_pattern_accepted",
+                "P0",
+            ),
         ],
     },
 }

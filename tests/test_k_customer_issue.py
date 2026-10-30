@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K25
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K26
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -476,6 +476,27 @@ K. 客户问题复现测试
   top_p/seed 显式指定时注入（K10/K18/K20 口径）。usage 仅日志；
   模型真实响应（状态码/合并正文/思考）断言前打印（失败时同样可
   见）。（不进 smoke 集：新用例首跑观察期）
+- K26: 工具 schema 负向前瞻正则应被兼容放行 [P0]
+  客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前瞻正
+  则——后端编译为 structural_tag 生成约束时，底层语法编译器不支
+  持 lookahead：非流式报 400（Failed to compile structural_tag
+  grammar——Lookahead is not supported yet）、流式报
+  provider_unavailable（upstream_stream_error）。修复（frontend
+  请求预处理兼容，非底层编译器新增 lookahead 支持）：GLM-5.3+
+  glm47 工具解析器+SGLang 后端、tool_choice=auto（structural-tag
+  schema 模式 auto）、工具未显式 strict、schema 含 ^(?! 开头正则
+  时命中——仅将生成约束用的工具副本置 strict=false 绕过强制编
+  译，原始 schema/工具描述/工具调用格式约束保留；属兼容绕过，
+  该路径不再由 grammar 强制保证参数满足完整 schema。按触发形态
+  构造：path 参数 pattern 以 ^(?! 开头（禁止路径穿越）、不显式
+  strict、tool_choice=auto，非流式+流式各发一次。硬断言：非流式
+  HTTP 200+choices 非空+message 结构存在；流式 HTTP 200+SSE 事件
+  非空+至少一个含 choices 数据块——报错复现即 FAIL；不断言工具
+  被调用与参数满足 pattern（兼容绕过明确口径）。GLM-5.3 专用；
+  采样参数不豁免（用户指定——不进豁免名单）：由全局
+  SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、top_p/seed
+  注入），两个请求一致。usage 仅日志。（不进 smoke 集：新用例首
+  跑观察期）
 """
 
 import base64
@@ -7336,4 +7357,305 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "个 reasoning_content 被第二个覆盖后放行，宽松解析契约生"
             "效）；动态值全程经 json.dumps 全转义，正文/思考含引号/换"
             "行等字符不影响请求格式"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_negative_lookahead_tool_pattern_accepted(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K26 [P0]: 客户问题 - 工具 schema 负向前瞻正则应被兼容放行
+
+        客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前
+        瞻正则——后端将其编译为 structural_tag 生成约束时，底层语
+        法编译器不支持 lookahead，请求失败：
+        - 非流式报 400："Failed to compile structural_tag
+          grammar: .../regex_converter.cc:83: Regex parsing error
+          at position 4: Lookahead is not supported yet."（request
+          id 2026102616110264231215776333070）；
+        - 流式报："The upstream provider is unavailable. Please
+          retry later."（provider_unavailable /
+          upstream_stream_error）。
+        修复（frontend 请求预处理兼容——非底层编译器新增
+        lookahead 支持）：仅当 GLM-5.3、glm47 工具解析器、SGLang
+        后端、tool_choice=auto（structural-tag schema 模式
+        auto）、工具未显式设置 strict、schema 含以 ^(?! 开头的正
+        则时命中——只把用于生成约束的工具副本设为 strict=false，
+        避免强制编译该 schema；模型提示词里的原始 schema、工具描
+        述及工具调用格式约束保留。属兼容绕过：该路径不再由
+        grammar 强制保证参数满足完整 schema。
+        本用例按触发形态构造请求：工具 path 参数 pattern 以 ^(?!
+        开头（负向前瞻——禁止路径穿越：^(?!.*\\.\\.).+$）、不显
+        式 strict、tool_choice=auto，user 消息自然诱导工具调用；
+        非流式与流式各发一次。
+        硬断言：
+        1. 非流式 HTTP 200（核心——修复前 400 grammar 编译错
+           误，报错复现即 FAIL）
+        2. 非流式 choices 存在且非空 + message 结构存在
+        3. 流式 HTTP 200（核心——修复前 provider_unavailable，
+           报错复现即 FAIL）
+        4. 流式 SSE 事件非空 + 至少一个含 choices 的数据块
+        明确不断言：工具被调用、调用参数满足 pattern（兼容绕过
+        路径不再由 grammar 强制保证——开发明确口径）、响应形态
+        （正文或工具调用增量均可，宽松留日志）。GLM-5.3 专用；采
+        样参数不豁免（用户指定——不进 RAW_SAMPLING_PARAM_TESTS
+        豁免名单）：由全局 SAMPLING_PARAMS 覆盖（temperature 无
+        覆盖时回退 0.7、top_p/seed 注入），两个请求一致。usage
+        仅日志。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K26: 工具定义——path 参数 pattern 以 ^(?! 开头（负向前
+        # 瞻：禁止路径穿越 ..），不显式 strict（修复触发条件：工
+        # 具未显式设置 strict）
+        K26_TOOLS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_workspace_file",
+                    "description": (
+                        "Write content to a file in the workspace"
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "pattern": "^(?!.*\\.\\.).+$",
+                                "description": (
+                                    "Workspace-relative file path; "
+                                    "must not contain '..'"
+                                ),
+                            },
+                            "content": {"type": "string"},
+                        },
+                        "required": ["path", "content"],
+                    },
+                },
+            }
+        ]
+        # K26: user 消息——自然诱导 write_workspace_file 调用
+        #（path 取值合法，不触碰负向前瞻拒绝域）
+        K26_PROMPT = (
+            "请把技能周报数据保存到工作区文件 reports/"
+            "skill_weekly.json：调用 write_workspace_file 工具，"
+            "path 为 reports/skill_weekly.json，content 为一个 "
+            "JSON 对象字符串，包含 3-5 条示例技能记录，每条含技能"
+            "名称（skill）、本周事件数（events）、评分（score）字"
+            "段。"
+        )
+        # K26: 预算——工具调用生成任务，2048 留足思考预算余量
+        #（K18 口径——防御正文/调用被思考耗光）
+        K26_MAX_TOKENS = 2048
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 工具 schema 负向前瞻正则兼容"
+            "放行（pattern 以 ^(?! 开头 + 不显式 strict + "
+            "tool_choice=auto；非流式+流式各发一次，grammar 编译错"
+            "误/provider_unavailable 复现即 FAIL）==="
+        )
+
+        url = f"{api_client.base_url}/v1/chat/completions"
+
+        # 采样参数不豁免（用户指定——不进豁免名单）：由全局
+        # SAMPLING_PARAMS（Jenkinsfile，经 conftest 注入 client）
+        # 覆盖：temperature 全局值优先（无覆盖时回退 0.7），
+        # top_p/seed 未显式指定时注入；两个请求一致
+        sampling_extra: Dict[str, Any] = {}
+        if api_client.top_p is not None:
+            sampling_extra["top_p"] = api_client.top_p
+        if api_client.seed:
+            try:
+                sampling_extra["seed"] = int(api_client.seed)
+            except (ValueError, TypeError):
+                sampling_extra["seed"] = api_client.seed
+
+        # ---- 非流式请求（核心断言：grammar 编译错误修复）----
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K26_PROMPT}],
+            "tools": K26_TOOLS,
+            "tool_choice": "auto",
+            "max_tokens": K26_MAX_TOKENS,
+            "temperature": api_client._effective_temperature(0.7),
+            "stream": False,
+            **sampling_extra,
+        }
+        TestLogger.log_request(
+            test_logger,
+            payload["messages"],
+            {
+                "tools": [t["function"]["name"] for t in K26_TOOLS],
+                "tool_choice": "auto",
+                "max_tokens": K26_MAX_TOKENS,
+                "temperature": payload["temperature"],
+                "top_p": payload.get("top_p", "(不注入)"),
+                "seed": payload.get("seed", "(不注入)"),
+                "stream": False,
+                "step": (
+                    "非流式请求（负向前瞻 pattern 工具，grammar 编"
+                    "译错误修复验证）"
+                ),
+            },
+        )
+        started = time.time()
+        try:
+            response = api_client._post_with_retry(
+                url, payload, stream=False
+            )
+        except Exception as e:
+            pytest.fail(f"非流式请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+        # 模型真实响应断言前打印（失败时同样可见）
+        test_logger.info(
+            f"非流式真实响应: HTTP {response.status_code}, "
+            f"elapsed={elapsed:.1f}s, body={response.text[:800]!r}"
+        )
+        # 断言1（核心）：负向前瞻 pattern 工具请求应被兼容放行——
+        # 修复前报 400（Failed to compile structural_tag grammar:
+        # Lookahead is not supported yet），报错复现即 FAIL
+        assert response.status_code == 200, (
+            f"客户问题复现失败：含负向前瞻 pattern 工具的非流式请求"
+            f"应被兼容放行，实际 HTTP {response.status_code}（客户原"
+            f"始报错：Failed to compile structural_tag grammar——"
+            f"Regex parsing error: Lookahead is not supported yet；"
+            f"修复应将生成约束工具副本置 strict=false 绕过强制编"
+            f"译）: {response.text[:400]}"
+        )
+        try:
+            result = response.json()
+        except (json.JSONDecodeError, ValueError) as e:
+            pytest.fail(
+                f"非流式响应不是合法 JSON: {e}. "
+                f"响应体: {response.text[:300]}"
+            )
+        # 断言2：choices 存在且非空 + message 结构存在
+        choices = result.get("choices") or []
+        assert choices, (
+            f"非流式响应缺少 choices: "
+            f"{json.dumps(result, ensure_ascii=False)[:500]}"
+        )
+        message = choices[0].get("message")
+        assert isinstance(message, dict), (
+            f"非流式响应 message 结构缺失: "
+            f"{json.dumps(result, ensure_ascii=False)[:500]}"
+        )
+        TestLogger.log_response(
+            test_logger, result, "K26-非流式响应"
+        )
+        content = message.get("content") or ""
+        tool_calls = message.get("tool_calls")
+        finish = choices[0].get("finish_reason")
+        usage = result.get("usage") or {}
+        test_logger.info(
+            f"非流式 HTTP 200, elapsed={elapsed:.1f}s, "
+            f"finish={finish}, content_len={len(content)}, "
+            f"tool_calls={'有' if tool_calls else '无'}, usage="
+            f"{json.dumps(usage, ensure_ascii=False)}"
+        )
+
+        # ---- 流式请求（核心断言：provider_unavailable 修复）----
+        stream_payload = {**payload, "stream": True}
+        TestLogger.log_request(
+            test_logger,
+            stream_payload["messages"],
+            {
+                "tools": [t["function"]["name"] for t in K26_TOOLS],
+                "tool_choice": "auto",
+                "max_tokens": K26_MAX_TOKENS,
+                "temperature": stream_payload["temperature"],
+                "top_p": stream_payload.get("top_p", "(不注入)"),
+                "seed": stream_payload.get("seed", "(不注入)"),
+                "stream": True,
+                "step": (
+                    "流式请求（负向前瞻 pattern 工具，"
+                    "provider_unavailable 修复验证）"
+                ),
+            },
+        )
+        started_s = time.time()
+        try:
+            response_s = api_client.session.post(
+                url,
+                json=stream_payload,
+                timeout=api_client.timeout,
+                stream=True,
+            )
+        except Exception as e:
+            pytest.fail(f"流式请求发送异常（{url}）: {e}")
+        elapsed_s = time.time() - started_s
+        test_logger.info(
+            f"流式真实响应: HTTP {response_s.status_code}, "
+            f"elapsed={elapsed_s:.1f}s"
+        )
+        # 断言3（核心）：流式请求应被兼容放行——修复前报
+        # provider_unavailable（upstream_stream_error；同一
+        # grammar 编译根因），报错复现即 FAIL
+        assert response_s.status_code == 200, (
+            f"客户问题复现失败：含负向前瞻 pattern 工具的流式请求应"
+            f"被兼容放行，实际 HTTP {response_s.status_code}（客户原"
+            f"始报错：The upstream provider is unavailable——"
+            f"upstream_stream_error；同一 grammar 编译根因）: "
+            f"{response_s.text[:400]}"
+        )
+        # 解析 SSE：统计事件数/含 choices 事件数，合并正文增量与
+        # 工具调用增量（响应形态宽松——正文或工具调用均可，留日志）
+        events = 0
+        choice_events = 0
+        content_s = ""
+        tool_call_events = 0
+        finish_s = None
+        usage_s: Dict[str, Any] = {}
+        for line in response_s.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8")
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            events += 1
+            evt_choices = event.get("choices") or []
+            if not evt_choices:
+                evt_usage = event.get("usage")
+                if evt_usage:
+                    usage_s.update(evt_usage)
+                continue
+            choice_events += 1
+            delta = evt_choices[0].get("delta") or {}
+            if delta.get("content"):
+                content_s += delta["content"]
+            if delta.get("tool_calls"):
+                tool_call_events += 1
+            if evt_choices[0].get("finish_reason"):
+                finish_s = evt_choices[0].get("finish_reason")
+            evt_usage = event.get("usage")
+            if evt_usage:
+                usage_s.update(evt_usage)
+        # 断言4：SSE 事件非空且至少一个含 choices 的数据块
+        assert events > 0, (
+            "客户问题复现失败：流式请求 HTTP 200 但未返回任何 SSE "
+            "事件"
+        )
+        assert choice_events > 0, (
+            f"客户问题复现失败：流式请求 SSE 事件中无 choices 数据块"
+            f"（events={events}）"
+        )
+        test_logger.info(
+            f"流式 HTTP 200, elapsed={elapsed_s:.1f}s, events="
+            f"{events}, choice_events={choice_events}, finish="
+            f"{finish_s}, content_len={len(content_s)}, "
+            f"tool_call_events={tool_call_events}, usage="
+            f"{json.dumps(usage_s, ensure_ascii=False)}"
+        )
+
+        test_logger.info(
+            "客户问题复现通过: 工具 schema 负向前瞻正则（^(?!...)）"
+            "已被兼容放行——非流式 HTTP 200 且正常生成、流式 HTTP "
+            "200 且 SSE 正常（生成约束工具副本置 strict=false 绕过"
+            "强制编译，原始 schema/工具描述/格式约束保留）"
         )
