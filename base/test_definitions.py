@@ -1272,6 +1272,31 @@ TEST_CATEGORIES = {
                 "dual_protocol_zero_delta_tool_call",
                 "P0",
             ),
+            (
+                "K30",
+                "/v1/responses 校验码输出与 token 计数核验",
+                "客户问题（合成短文本 Token 对照测试，/v1/responses "
+                "接口）：probe 三项断言未通过——请求明确要求只输出 "
+                "SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 "
+                "'4b69a88e6b'（模型未遵守指令）；input_tokens=52 超"
+                "基准 43 ±3%（区间 41.71-44.29——整数取值 42/43/"
+                "44）；output_tokens 报告 295 而实际可见输出仅 10 "
+                "字符且 reasoning_tokens=0（计数与实际文本量明显不"
+                "成比例，存在统计口径或隐藏推理未计入疑点）。按客户"
+                "原始 curl 还原：POST {base}/v1/responses"
+                "（Responses API），input 两消息（content 均 "
+                "input_text 类型）、stream=true、max_output_tokens="
+                "1024 原样，模型名由环境注入，采样参数原始未指定—"
+                "—保持不注入。断言（任一失败即整体失败）：HTTP 200 "
+                "且流式结构完整；终态事件 status == completed"
+                "（failed/incomplete/cancelled 或无终态事件即失"
+                "败）；合并正文严格等于校验码；usage.input_tokens∈"
+                "[42,44]；output_tokens 满足 reasoning_tokens ≤ "
+                "output ≤ reasoning + len(正文)（总计=思考+正文，1 "
+                "token/字符宽松上界）",
+                "responses_api_marker_output_usage",
+                "P0",
+            ),
         ],
     },
 }

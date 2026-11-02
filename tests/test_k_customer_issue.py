@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K29
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -570,6 +570,24 @@ K. 客户问题复现测试
   名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；
   temperature/top_p 原始未指定——按用户指定保持不指定（不注
   入）。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
+- K30: /v1/responses 校验码输出与 token 计数核验 [P0]
+  客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：
+  probe 三项断言未通过——请求明确要求只输出
+  SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 '4b69a88e6b'（模型
+  未遵守指令）；input_tokens=52 超基准 43 ±3%（区间
+  41.71-44.29——整数取值 42/43/44）；output_tokens 报告 295 而
+  实际可见输出仅 10 字符且 reasoning_tokens=0（计数与实际文本
+  量明显不成比例）。按客户原始 curl 还原：POST {base}/
+  v1/responses（Responses API），input 两消息（content 均
+  input_text 类型）、stream=true、max_output_tokens=1024 原样，
+  模型名由环境注入，采样参数原始未指定——保持不注入。硬断言
+  （任一失败即整体失败）：HTTP 200 且流式结构完整；终态事件
+  status == completed（failed/incomplete/cancelled 或无终态事
+  件即失败）；合并正文严格等于校验码；usage.input_tokens∈
+  [42,44]；output_tokens 满足 reasoning_tokens ≤ output ≤
+  reasoning + len(正文)（总计=思考+正文，1 token/字符宽松上
+  界——缺陷形态 295 tok vs 10 字符远超）。GLM-5.3 专用。（不
+  进 smoke 集：新用例首跑观察期）
 """
 
 import base64
@@ -8538,4 +8556,255 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"客户问题复现通过: 双协议核验三项判据全部符合——两协议"
             f"有效请求均 {K29_N}/{K29_N}、零增量均 0、返回工具调用均"
             f" {K29_N}/{K29_N}（100%），raw 目录: {raw_dir}"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_responses_api_marker_output_usage(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K30 [P0]: 客户问题 - /v1/responses 校验码输出与 token 计数核验
+
+        客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：
+        probe 三项断言未通过——①严重：请求明确要求只输出
+        SYNTHETIC_SHORT_TEXT_MARKER，实际正文输出 '4b69a88e6b'（与
+        要求完全无关，模型侧未遵守指令）；②中等：input_tokens=52，
+        超出基准 43 的 ±3% 区间（约 41.7-44.3）——可能为分词器或
+        消息包装差异；③轻微：output_tokens 报告 295，实际可见输出
+        文本仅 10 个字符且 output_tokens_details.reasoning_tokens
+        为 0——计数与实际文本量明显不成比例，存在统计口径或隐藏推
+        理未计入的疑点。
+        测试断言点（用户指定，任一失败即整体失败）：
+        1. 按请求明确要求的输出原样输出指定内容（无任何额外解
+           释——合并正文严格等于校验码）
+        2. input_tokens 以 43 为基准，超 ±3% 即失败（区间
+           41.71-44.29——整数取值 42/43/44）
+        3. 输出正文和思考消耗的 tokens 要计算正确——总输出
+           tokens ≈ 正文 + 思考（可执行口径：reasoning_tokens ≤
+           output_tokens ≤ reasoning_tokens + len(正文)，1 token/
+           字符为宽松上界——正常文本 2-6 字符/token，缺陷形态
+           295 tok vs 10 字符远超此界）
+        本用例按客户原始 curl 还原：POST {base}/v1/responses
+        （Responses API，非 chat/completions），input 两条消息
+        （system "只输出指定校验码，不要解释。" + user "这是 合成
+        短文本 Token 对照测试。请只输出
+        SYNTHETIC_SHORT_TEXT_MARKER。"——content 均 input_text 类
+        型），stream=true、max_output_tokens=1024 原样；模型名由
+        环境注入；原始请求未指定 temperature/top_p/seed——保持不
+        指定（不注入）。流式解析 Responses API 事件：
+        response.output_text.delta 合并正文、response.completed 取
+        usage（兼容事件级 usage 兜底）。
+        硬断言：
+        1. HTTP 200 且流式结构完整（含 output_text 增量与 usage）
+        2. 终态事件 status == completed（failed/incomplete/
+           cancelled 或无终态事件均为非正常结束，即失败）
+        3. 合并正文严格等于 "SYNTHETIC_SHORT_TEXT_MARKER"（校验
+           码原样输出，多一个字符即失败）
+        4. usage.input_tokens ∈ [42, 44]（基准 43 ±3%）
+        5. usage.output_tokens 满足 reasoning_tokens ≤ output_tokens
+           ≤ reasoning_tokens + len(正文)（总计=思考+正文；缺陷形
+           态 output_tokens 远超正文+思考即失败）
+        GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
+        """
+        K30_MARKER = "SYNTHETIC_SHORT_TEXT_MARKER"
+        # K30: 基准 input_tokens 与 ±3% 容差（41.71-44.29——整数取
+        # 值 42/43/44）
+        K30_INPUT_BASE = 43
+        K30_INPUT_MIN = 42
+        K30_INPUT_MAX = 44
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - /v1/responses 校验码输出与 "
+            "token 计数核验（判据：正文严格等于校验码 / input_tokens"
+            "∈[42,44] / output=思考+正文）==="
+        )
+
+        url = f"{api_client.api_prefix}/responses"
+        # K30: 按客户原始 curl 还原请求体（input 两消息、stream、
+        # max_output_tokens 原样；模型名由环境注入；原始请求未指定
+        # 采样参数——保持不指定、不注入）
+        payload: Dict[str, Any] = {
+            "input": [
+                {
+                    "role": "system",
+                    "type": "message",
+                    "content": [
+                        {
+                            "text": "只输出指定校验码，不要解释。",
+                            "type": "input_text",
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": [
+                        {
+                            "text": (
+                                "这是 合成短文本 Token 对照测试。请只"
+                                "输出 SYNTHETIC_SHORT_TEXT_MARKER。"
+                            ),
+                            "type": "input_text",
+                        }
+                    ],
+                }
+            ],
+            "model": api_client.model_name,
+            "stream": True,
+            "max_output_tokens": 1024,
+        }
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "system",
+                    "content": "只输出指定校验码，不要解释。",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "这是 合成短文本 Token 对照测试。请只输出 "
+                        "SYNTHETIC_SHORT_TEXT_MARKER。"
+                    ),
+                },
+            ],
+            {
+                "endpoint": "/v1/responses",
+                "stream": True,
+                "max_output_tokens": 1024,
+                "temperature": "(原始未指定——不注入)",
+                "top_p": "(原始未指定——不注入)",
+                "seed": "(原始未指定——不注入)",
+            },
+        )
+
+        started = time.time()
+        try:
+            response = api_client.session.post(
+                url,
+                json=payload,
+                timeout=api_client.timeout,
+                stream=True,
+            )
+        except Exception as e:
+            pytest.fail(f"请求发送异常（{url}）: {e}")
+        elapsed = time.time() - started
+        # 模型真实响应断言前打印（失败时同样可见）
+        test_logger.info(
+            f"真实响应: HTTP {response.status_code}, "
+            f"elapsed={elapsed:.1f}s, body={response.text[:800]!r}"
+        )
+        # 断言1a：请求应成功（/v1/responses 端点可用为前提）
+        assert response.status_code == 200, (
+            f"/v1/responses 请求失败：实际 HTTP "
+            f"{response.status_code}: {response.text[:400]}"
+        )
+
+        # 解析 Responses API SSE 事件：output_text.delta 合并正文、
+        # 终态事件（response.completed/failed/incomplete/cancelled）
+        # 取结束状态与 usage（兼容事件级 usage 兜底）
+        text_parts: List[str] = []
+        usage: Dict[str, Any] = {}
+        end_status = None
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8", errors="replace")
+            if not line.startswith("data: "):
+                continue
+            s = line[6:].strip()
+            if s == "[DONE]":
+                break
+            try:
+                event = json.loads(s)
+            except json.JSONDecodeError:
+                continue
+            etype = event.get("type") or ""
+            if etype.endswith("output_text.delta"):
+                text_parts.append(event.get("delta") or "")
+            if etype in (
+                "response.completed",
+                "response.failed",
+                "response.incomplete",
+                "response.cancelled",
+            ):
+                resp_obj = event.get("response") or {}
+                end_status = (
+                    resp_obj.get("status") or etype.split(".")[-1]
+                )
+                if not usage and resp_obj.get("usage"):
+                    usage = resp_obj["usage"]
+            if not usage and event.get("usage"):
+                usage = event["usage"]
+        text = "".join(text_parts).strip()
+        test_logger.info(
+            f"合并正文（{len(text)} 字符）: {text[:300]!r}；end_status="
+            f"{end_status}, usage={json.dumps(usage, ensure_ascii=False)}"
+        )
+        # 断言1b：流式结构完整（含正文增量与 usage）
+        assert text_parts, "流式响应未收到任何 output_text 增量"
+        assert usage, "流式响应未收到 usage（response.completed 缺失）"
+        # 断言2（结束状态）：终态事件 status 必须为 completed——
+        # failed/incomplete/cancelled 或无终态事件均为非正常结束
+        assert end_status == "completed", (
+            f"结束状态异常：response.status={end_status!r}（期望 "
+            f"'completed'；failed/incomplete/cancelled 或无终态事件均"
+            f"为非正常结束）"
+        )
+
+        # 断言2（校验码原样输出）：合并正文严格等于指定校验码——请
+        # 求明确要求只输出该校验码、不要任何额外解释（客户缺陷形
+        # 态：实际输出 '4b69a88e6b' 与要求完全无关）
+        assert text == K30_MARKER, (
+            f"校验码原样输出失败：请求要求只输出 {K30_MARKER!r}，实际"
+            f"合并正文 {text[:200]!r}（模型侧未遵守指令/含额外内容）"
+        )
+
+        # 断言3（input_tokens 基准）：43 ±3%（区间 41.71-44.29——
+        # 整数取值 42/43/44；客户缺陷形态：input_tokens=52）
+        input_tokens = usage.get("input_tokens")
+        assert isinstance(input_tokens, int), (
+            f"usage.input_tokens 缺失或非整数: {input_tokens!r}"
+        )
+        assert K30_INPUT_MIN <= input_tokens <= K30_INPUT_MAX, (
+            f"input_tokens 超出基准区间：实际 {input_tokens}，基准 "
+            f"{K30_INPUT_BASE} ±3%（{K30_INPUT_MIN}-{K30_INPUT_MAX}；"
+            f"可能为分词器或消息包装差异）"
+        )
+
+        # 断言4（输出计数=思考+正文）：reasoning_tokens ≤
+        # output_tokens ≤ reasoning_tokens + len(正文)——1 token/字
+        # 符为宽松上界（正常文本 2-6 字符/token；客户缺陷形态：
+        # output_tokens=295 vs 实际 10 字符且 reasoning=0，远超此
+        # 界）
+        output_tokens = usage.get("output_tokens")
+        assert isinstance(output_tokens, int), (
+            f"usage.output_tokens 缺失或非整数: {output_tokens!r}"
+        )
+        reasoning_tokens = (
+            (usage.get("output_tokens_details") or {}).get(
+                "reasoning_tokens"
+            )
+            or 0
+        )
+        assert output_tokens >= reasoning_tokens, (
+            f"输出计数结构异常：output_tokens={output_tokens} < "
+            f"reasoning_tokens={reasoning_tokens}（总输出不得小于思考"
+            f"部分）"
+        )
+        bound = reasoning_tokens + max(len(text), 1)
+        assert output_tokens <= bound, (
+            f"输出计数与实际文本量不成比例：output_tokens="
+            f"{output_tokens}，正文 {len(text)} 字符（≈{len(text)} "
+            f"token 上界）+ reasoning_tokens={reasoning_tokens}，合计"
+            f"上界 {bound}——总输出 tokens 应 ≈ 正文 + 思考（存在统"
+            f"计口径或隐藏推理未计入疑点）"
+        )
+        test_logger.info(
+            f"客户问题复现通过: 校验码原样输出（{K30_MARKER}）、"
+            f"input_tokens={input_tokens}∈[{K30_INPUT_MIN},"
+            f"{K30_INPUT_MAX}]、output_tokens={output_tokens} ≈ 正文"
+            f"{len(text)} 字符+reasoning={reasoning_tokens}（计数正"
+            f"确），elapsed={elapsed:.1f}s"
         )

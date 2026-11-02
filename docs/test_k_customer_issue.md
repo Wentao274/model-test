@@ -68,6 +68,7 @@
 | K27 | 历史非法 JSON arguments 应被容忍 | 客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型输出的工具调用 arguments 本身非合法 JSON（两处括号错误——"refId": "A"}] 缺 }、40}}}] 处多 }，上游流式日志证实由模型产生）；客户端执行失败、回放全量历史，服务端校验历史 tool_calls 的 arguments 直接 400（Assistant tool call function.arguments must be valid JSON）——纯服务端问题，与 codex 客户端无本质关系；修复：历史无法解析的 arguments 按字符串保留、不再 400、让模型继续纠正；适用 GLM-5.3 | 复刻客户链路（user→assistant(畸形 arguments 调用，保真浓缩版——两处错误形态与关键结构原样、场景自检必非法)→tool(执行失败结果，协议配对必需)→user 追问修正重试，带 MCP 工具定义，非流式，max_tokens=16384（16k——覆盖默认档思考+大尺寸修正输出，low 兜底）），断言 HTTP 200（核心——报错复现即 FAIL）+choices 非空+message 结构存在+模型发起修正工具调用且每条调用 name/id 非空、arguments 为合法 JSON 对象（修正行为——修复目的"让模型继续纠正"）；不断言历史被改写/修复；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；usage 仅日志 | P0 |
 | K28 | 模型输出字段核验（尾裸/回流/工具参数） | 客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通过）；length 截断只记录不判定；适用 GLM-5.3 | 客户探针（scripts/probe_think_tag.py）+ 数据集（requests/AGDC2-24，工单原始参数 stream=true、max_tokens=8192、reasoning_effort=max 原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-24/<model>/<timestamp>/；断言：全部 HTTP 200 且响应体可解析 SSE（空体/非流式结构即无法核验）、T1=0、T2=0、T3=100%——任一不符合即 FAIL；模型名由环境注入；请求体不含 temperature/top_p/seed——按用户指定保持工单原始请求体不变、不注入采样参数；usage 仅日志 | P0 |
 | K29 | 双协议零增量响应与工具调用核验 | 客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一段业务会话报文（195 条消息/19 个工具/stream=true/max_tokens=4096）分别请求 /v1/chat/completions 与 /anthropic/v1/messages——OpenAI 协议 13 次中 5 次零增量响应（HTTP 200、SSE 结构完整但 delta.content/reasoning_content/tool_calls 三类增量均空、usage.completion_tokens>0），工具调用仅 4/13；Anthropic 协议 8/8 返回工具调用、零增量 0/8；适用 GLM-5.3 | 客户探针（scripts/probe_alaya.py）+ 数据集（requests/AGDC2-25 两份协议请求体）纳入框架：两种协议各发 --n 硬编码 10 次（用户指定）流式请求，逐条留存 raw 并统计三项判据——有效请求==10、零增量==0、返回工具调用==100%（10/10），任一不符合即 FAIL；每协议追加 1 次强制工具调用（tool_choice required/any，仅观察不计入）；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-25/<model>/<timestamp>/；模型名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；temperature/top_p 原始未指定——保持不指定（不注入）；usage 仅日志 | P0 |
+| K30 | /v1/responses 校验码输出与 token 计数核验 | 客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：probe 三项断言未通过——请求明确要求只输出 SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 '4b69a88e6b'（模型未遵守指令）；input_tokens=52 超基准 43 ±3%（区间 41.71-44.29——整数取值 42/43/44）；output_tokens 报告 295 而实际可见输出仅 10 字符且 reasoning_tokens=0（计数与实际文本量明显不成比例，存在统计口径或隐藏推理未计入疑点）；适用 GLM-5.3 | 按客户原始 curl 还原：POST {base}/v1/responses（Responses API），input 两消息（content 均 input_text 类型）、stream=true、max_output_tokens=1024 原样，模型名由环境注入，采样参数原始未指定——保持不注入；断言（任一失败即整体失败）：HTTP 200 且流式结构完整（output_text 增量+usage）、终态事件 status == completed（failed/incomplete/cancelled 或无终态事件即失败）、合并正文严格等于校验码（多一个字符即失败）、usage.input_tokens∈[42,44]（基准 43 ±3%）、output_tokens 满足 reasoning_tokens ≤ output ≤ reasoning + len(正文)（总计=思考+正文，1 token/字符宽松上界——缺陷形态 295 tok vs 10 字符远超） | P0 |
 
 ## 运行方式
 
@@ -2200,3 +2201,97 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 - 零增量响应与 reasoning_tokens 高占用的相关性为报告观察现
   象，报告未对因果作结论；本用例按用户指定判据判定（零增量
   ==0），不扩展因果断言
+
+### test_responses_api_marker_output_usage (K30)
+
+**背景**：客户问题（合成短文本 Token 对照测试，`/v1/responses`
+接口——Responses API，非 chat/completions）：probe 三项断言未
+通过：
+1. **严重**：请求明确要求只输出 `SYNTHETIC_SHORT_TEXT_MARKER`，
+   实际正文输出 `'4b69a88e6b'`（与要求完全无关——模型侧未遵守
+   指令，contains 断言失败）
+2. **中等**：`input_tokens=52`，超出基准 43 的 ±3% 区间（约
+   41.7-44.3）——可能为分词器或消息包装差异
+3. **轻微**：`output_tokens` 报告 295，而实际可见输出文本仅 10
+   个字符，且 `output_tokens_details.reasoning_tokens` 为 0——
+   计数与实际文本量明显不成比例，存在统计口径或隐藏推理未计入
+   的疑点
+
+**测试断言点（用户指定——任一失败即整体失败）**：
+1. 按请求明确要求的输出原样输出指定内容（无任何额外解释）
+2. `input_tokens` 以 43 为基准，超 ±3% 即失败
+3. 输出正文和思考消耗的 tokens 要计算正确——总输出 tokens ≈
+   正文 + 思考
+
+**请求构造**（按客户原始 curl 还原，Responses API 流式）：
+- 端点：`{api_prefix}/responses`（`/v1/responses`，版本感知前
+  缀）
+- `input` 两条消息：`system`（"只输出指定校验码，不要解
+  释。"）+ `user`（"这是 合成短文本 Token 对照测试。请只输出
+  SYNTHETIC_SHORT_TEXT_MARKER。"）——`content` 均为
+  `input_text` 类型（Responses API 消息结构）
+- `stream=true`、`max_output_tokens=1024`（原样）
+- 模型名由环境注入（覆盖原值 glm-5.3）
+- 采样参数：原始请求未指定 temperature/top_p/seed——保持不指
+  定（不注入）
+- 流式解析：`response.output_text.delta` 事件合并正文、
+  `response.completed` 事件取 usage（兼容事件级 usage 兜底）
+
+**断言**（硬）：
+1. HTTP 200 且流式结构完整（含 output_text 增量与 usage）
+2. 终态事件 `status == "completed"`（failed/incomplete/cancelled
+   或无终态事件均为非正常结束，即失败）
+3. 合并正文严格等于 `SYNTHETIC_SHORT_TEXT_MARKER`（校验码原样
+   输出，多一个字符即失败——客户缺陷形态：实际输出
+   `'4b69a88e6b'`）
+4. `usage.input_tokens ∈ [42, 44]`（基准 43 ±3%——区间
+   41.71-44.29 的整数取值）
+5. `usage.output_tokens` 满足 `reasoning_tokens ≤ output_tokens
+   ≤ reasoning_tokens + len(正文)`（总计=思考+正文——
+   1 token/字符为宽松上界，正常文本 2-6 字符/token；缺陷形态
+   295 tok vs 10 字符远超此界）
+
+**判定矩阵**：
+- 非 200 → FAIL（端点不可用/请求被拒）
+- 无 output_text 增量或无 usage → FAIL（流式结构不完整，无法核
+  验）
+- 终态 status ≠ completed（failed/incomplete/cancelled/无终态事
+  件）→ FAIL（非正常结束）
+- 正文 ≠ 校验码 → FAIL（模型侧未遵守指令——客户缺陷形态复
+  现）
+- input_tokens ∉ [42,44] → FAIL（超基准 ±3%）
+- output_tokens < reasoning_tokens 或 > reasoning + len(正文)
+  → FAIL（计数异常——统计口径或隐藏推理未计入疑点）
+- 四项全部符合 → PASS
+
+**设计决策记录**：
+- **P0**（按客户 probe 三项断言失败）
+- **Responses API 事件解析**：`response.output_text.delta` 合并
+  正文、终态事件（`response.completed`/`failed`/`incomplete`/
+  `cancelled`）取结束状态与 usage（兼容事件级 usage 兜底，适配
+  不同实现的事件排布）；`decode errors="replace"` 防坏字节
+- **结束状态硬断言**：终态事件 `status` 必须为 `completed`——
+  `failed`/`incomplete`/`cancelled` 均为非正常结束；无终态事件
+  （流被截断）时 `end_status=None` 同样判失败；usage 存在不等于
+  正常结束（usage 可得与结束状态独立判定）
+- **正文严格等值**：请求明确"只输出校验码，不要解释"——任何
+  多余字符（解释/前后缀/其他内容）均判失败，与客户 contains 断
+  言同语义且更强（contains 允许前后杂质，本用例按"只输出"语
+  义严格等值）
+- **input_tokens 容差换算**：43±3% → [41.71, 44.29] → 整数取
+  值 {42, 43, 44}（避免浮点边界歧义）
+- **输出计数可执行口径**：客户端无分词器，采用
+  `reasoning_tokens ≤ output_tokens ≤ reasoning_tokens +
+  len(正文)`——非思考部分不超过 1 token/字符（对 CJK/英文均宽
+  松，正常文本 2-6 字符/token 不会误判）；客户缺陷形态（295
+  tok vs 10 字符）远超此界，判别力充足；`output_tokens ≥
+  reasoning_tokens` 为结构 sanity（总输出不得小于思考部分）
+- **采样参数不注入**：原始 curl 未指定——豁免机制针对 wrapper
+  注入，本用例手工 payload 直发不涉及
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- usage 同时是断言对象（断言 3/4）与日志对象，全量打印
+- marker：`GLM53`（K 套件按模型分组标记；原始请求模型 glm-5.3）
+- 若被测网关未实现 `/v1/responses` 端点，断言 1（HTTP 200）将
+  如实暴露（404/405）
