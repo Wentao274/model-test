@@ -1242,6 +1242,33 @@ TEST_CATEGORIES = {
                 "output_fields_think_tag_probe",
                 "P0",
             ),
+            (
+                "K29",
+                "双协议零增量响应与工具调用核验",
+                "客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一"
+                "段业务会话报文（195 条消息/19 个工具/stream=true/"
+                "max_tokens=4096）分别请求 /v1/chat/completions 与 "
+                "/anthropic/v1/messages——OpenAI 协议 13 次中 5 次零"
+                "增量响应（HTTP 200、SSE 结构完整但 delta.content/"
+                "reasoning_content/tool_calls 三类增量均空、usage."
+                "completion_tokens>0），工具调用仅 4/13；Anthropic "
+                "协议 8/8 返回工具调用、零增量 0/8。客户探针"
+                "（scripts/probe_alaya.py）+ 数据集"
+                "（requests/AGDC2-25 两份协议请求体）纳入框架：两种"
+                "协议各发 --n 硬编码 10 次（用户指定）流式请求，逐条"
+                "留存 raw 并统计三项判据——有效请求 ==10、零增量 "
+                "==0、返回工具调用 ==100%（10/10），任一不符合即 "
+                "FAIL；每协议追加 1 次强制工具调用（tool_choice "
+                "required/any，仅观察不计入）。raw 目录：Jenkins→"
+                "builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-25/"
+                "<model>/（与 allure-report 同级），手动→"
+                "origin_raw/AGDC2-25/<model>/<timestamp>/。模型名由"
+                "环境注入；stream/max_tokens=4096 按脚本口径覆盖；"
+                "temperature/top_p 原始未指定——按用户指定保持不指"
+                "定（不注入）",
+                "dual_protocol_zero_delta_tool_call",
+                "P0",
+            ),
         ],
     },
 }

@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K28
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K29
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -544,6 +544,25 @@ K. 客户问题复现测试
   名由环境注入；请求体不含 temperature/top_p/seed——按用户指定
   保持工单原始请求体不变、不注入采样参数。GLM-5.3 专用。（不
   进 smoke 集：新用例首跑观察期）
+- K29: 双协议零增量响应与工具调用核验 [P0]
+  客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一段业务会
+  话报文（195 条消息/19 个工具/stream=true/max_tokens=4096）分
+  别请求 /v1/chat/completions 与 /anthropic/v1/messages——OpenAI
+  协议 13 次中 5 次零增量响应（HTTP 200、SSE 结构完整但
+  delta.content/reasoning_content/tool_calls 三类增量均空、
+  usage.completion_tokens>0，整条流仅 1 个空 delta chunk），工
+  具调用仅 4/13；Anthropic 协议 8/8 返回工具调用、零增量 0/8。
+  客户探针（scripts/probe_alaya.py）+ 数据集（requests/AGDC2-25
+  两份协议请求体）纳入框架：两种协议各发 --n 硬编码 10 次（用
+  户指定）流式请求，逐条留存 raw 并统计三项判据——有效请求
+  ==10、零增量==0、返回工具调用==100%（10/10），任一不符合即
+  FAIL；每协议追加 1 次强制工具调用（tool_choice required/
+  any，仅观察不计入）。raw 目录：Jenkins→builds/<TESTER>/
+  <BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与 allure-report
+  同级），手动→origin_raw/AGDC2-25/<model>/<timestamp>/。模型
+  名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；
+  temperature/top_p 原始未指定——按用户指定保持不指定（不注
+  入）。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
 """
 
 import base64
@@ -8264,4 +8283,179 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"客户问题复现通过: 模型输出字段核验三项判据全部符合——"
             f"T1 尾裸 0/{total}、T2 字段回流 0/{total}、T3 工具参数"
             f"完整性 {total}/{total}（100%），raw 目录: {raw_dir}"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_dual_protocol_zero_delta_tool_call(
+        self, api_client: ModelAPIClient, test_logger, request
+    ):
+        """K29 [P0]: 客户问题 - 双协议零增量响应与工具调用核验
+
+        客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：客户报告用
+        同一段业务会话报文（195 条消息/19 个工具/stream=true/
+        max_tokens=4096）分别请求 /v1/chat/completions（OpenAI 协
+        议）与 /anthropic/v1/messages（Anthropic 协议）——OpenAI
+        协议 13 次中 5 次出现零增量响应（HTTP 200、SSE 结构完整
+        含 finish_reason/usage/[DONE]，但 delta.content、
+        delta.reasoning_content、delta.tool_calls 三类增量均为空，
+        且 usage.completion_tokens>0——整条流仅 1 个空 delta
+        chunk），工具调用仅 4/13；Anthropic 协议 8/8 返回工具调
+        用、零增量 0/8。
+        本用例将客户探针（scripts/probe_alaya.py——单文件探针，仅
+        调用其 post/parse 并传递参数）与数据集
+        （requests/AGDC2-25 两份协议请求体）纳入框架：两种协议各
+        发 --n 硬编码 10 次（用户指定）流式请求，逐条留存 raw 响
+        应并统计三项判据（用户指定）——有效请求 == 10（HTTP 200
+        且响应可解析）、零增量响应 == 0、返回工具调用 == 100%
+        （10/10）；任一不符合即 FAIL。每协议追加 1 次强制工具调
+        用（tool_choice required/any——与脚本一致的追加用例，仅观
+        察留日志、不计入判据）。raw 输出目录（用户指定）：
+        Jenkins 构建（BUILD_NUMBER 存在）→ builds/<TESTER>/
+        <BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与
+        allure-report 同级）；手动执行 →
+        <repo>/origin_raw/AGDC2-25/<model>/<timestamp>/（年月日_
+        时分秒）；其他需要输出的文件与 raw 同级（本用例无其他输
+        出）。
+        硬断言（按协议逐一判定，任一不符合即 FAIL）：
+        1. 有效请求 == 10（HTTP 200 且响应可解析——协议错误或
+           非 200 即 FAIL）
+        2. 零增量响应 == 0（三类增量均空且 usage.completion_tokens
+           >0 即零增量——客户缺陷形态复现即 FAIL）
+        3. 返回工具调用 == 10（100%）
+        请求体 model 字段由环境注入覆盖；脚本口径 stream=true、
+        max_tokens=4096 覆盖请求体原值；temperature/top_p 原始请
+        求未指定——按用户指定保持不指定（不注入）。GLM-5.3 专
+        用。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K29: 加载客户探针（单文件，scripts/probe_alaya.py）
+        probe_path = (
+            Path(__file__).parent.parent / "scripts" / "probe_alaya.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "probe_alaya", probe_path
+        )
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+        # 模型参数经 Jenkinsfile→pytest 注入（用户指定）：探针的
+        # BASE/KEY 指向被测网关
+        probe.BASE = api_client.base_url
+        probe.KEY = api_client.api_key or ""
+
+        K29_N = 10  # --n 硬编码为 10（用户指定）
+        K29_TICKET = "AGDC2-25"
+        # K29: raw 输出目录（用户指定规则，同 K28 口径）
+        repo_root = Path(__file__).parent.parent
+        build_number = os.environ.get("BUILD_NUMBER", "")
+        tester = (
+            request.config.getoption("--tester", default=None)
+            or os.environ.get("TESTER")
+            or "unknown"
+        )
+        if build_number:
+            raw_dir = (
+                repo_root / "builds" / tester / build_number
+                / "origin_raw" / K29_TICKET / api_client.model_name
+            )
+        else:
+            raw_dir = (
+                repo_root / "origin_raw" / K29_TICKET
+                / api_client.model_name
+                / datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        test_logger.info(
+            f"=== 测试开始: 客户问题 - 双协议零增量响应与工具调用核"
+            f"验（/anthropic/v1/messages 与 /v1/chat/completions 各 "
+            f"{K29_N} 次流式；判据：有效请求=={K29_N} / 零增量==0 / "
+            f"返回工具调用==100%；raw 目录: {raw_dir}）==="
+        )
+
+        stats = {}
+        for proto in ("anthropic", "openai"):
+            path = (
+                "/v1/chat/completions"
+                if proto == "openai"
+                else "/anthropic/v1/messages"
+            )
+            src = (
+                probe.OAI_PAYLOAD if proto == "openai"
+                else probe.ANT_PAYLOAD
+            )
+            with open(src, encoding="utf-8") as f:
+                base_req = json.load(f)
+            # 与探针 run() 一致：stream/max_tokens 由脚本口径固定
+            base_req["stream"] = True
+            base_req["max_tokens"] = 4096
+            # 模型名由环境注入（覆盖请求体原值）；temperature/top_p
+            # 原始请求未指定——按用户指定保持不指定（不注入）
+            base_req["model"] = api_client.model_name
+            auth = "bearer" if proto == "openai" else "x-api-key"
+            valid = zero = tools_n = 0
+            for i in range(1, K29_N + 1):
+                raw_path = raw_dir / f"{proto}_{i:02d}.raw"
+                started = time.time()
+                st, txt = probe.post(path, base_req, str(raw_path), auth)
+                elapsed = time.time() - started
+                r = probe.parse(txt, proto)
+                is_valid = (st == 200) and not r["err"]
+                if is_valid:
+                    valid += 1
+                    if r["empty"]:
+                        zero += 1
+                    if r["tools"]:
+                        tools_n += 1
+                test_logger.info(
+                    f"{proto} #{i}: HTTP {st}, chunks={r['chunks']}, "
+                    f"正文={r['text']}, 思考={r['think']}, 输出tok="
+                    f"{r['out']}, reasoning={r['reason']}, 工具调用="
+                    f"{','.join(r['tools']) or '-'}, 判定={r.get('verdict')}"
+                    + (f"（错误: {r['err']}）" if r["err"] else "")
+                    + f", elapsed={elapsed:.1f}s"
+                )
+            # 强制工具调用（与脚本一致的追加用例——仅观察留日志，
+            # 不计入判据）
+            forced = json.loads(json.dumps(base_req))
+            forced["tool_choice"] = (
+                "required" if proto == "openai" else {"type": "any"}
+            )
+            st_f, txt_f = probe.post(
+                path, forced, str(raw_dir / f"{proto}_forced.raw"), auth
+            )
+            rf = probe.parse(txt_f, proto)
+            test_logger.info(
+                f"{proto} 强制调用（观察）: HTTP {st_f}, 工具调用="
+                f"{','.join(rf['tools']) or '-'}, 判定={rf.get('verdict')}"
+            )
+            stats[proto] = (valid, zero, tools_n)
+            test_logger.info(
+                f"{proto} 小计: 有效请求 {valid}/{K29_N}（判据 =="
+                f"{K29_N}）, 零增量 {zero}（判据 0）, 返回工具调用 "
+                f"{tools_n}/{K29_N}（判据 100%）"
+            )
+
+        # 硬断言（按协议逐一判定，任一不符合即 FAIL）
+        for proto in ("anthropic", "openai"):
+            valid, zero, tools_n = stats[proto]
+            assert valid == K29_N, (
+                f"{proto} 判据不符合：有效请求 {valid}/{K29_N}（判据 "
+                f"=={K29_N}——存在协议错误或非标 200 响应，raw 目录: "
+                f"{raw_dir}）"
+            )
+            assert zero == 0, (
+                f"{proto} 判据不符合：零增量响应 {zero}/{K29_N}（判据 "
+                f"0——客户缺陷形态复现：HTTP 200 且结构完整但三类增"
+                f"量均空、usage.completion_tokens>0，raw 目录: "
+                f"{raw_dir}）"
+            )
+            assert tools_n == K29_N, (
+                f"{proto} 判据不符合：返回工具调用 "
+                f"{tools_n}/{K29_N}（判据 100%，raw 目录: {raw_dir}）"
+            )
+        test_logger.info(
+            f"客户问题复现通过: 双协议核验三项判据全部符合——两协议"
+            f"有效请求均 {K29_N}/{K29_N}、零增量均 0、返回工具调用均"
+            f" {K29_N}/{K29_N}（100%），raw 目录: {raw_dir}"
         )

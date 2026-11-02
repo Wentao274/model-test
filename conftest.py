@@ -87,6 +87,7 @@ RAW_SAMPLING_PARAM_TESTS = {
     # K26（test_negative_lookahead_tool_pattern_accepted）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     # K27（test_invalid_arguments_history_tolerated）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
     # K28（test_output_fields_think_tag_probe）不在此名单：请求体不含采样参数，按用户指定保持工单原始请求体不变（不注入 temperature/top_p/seed——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
+    # K29（test_dual_protocol_zero_delta_tool_call）不在此名单：原始请求未指定 temperature/top_p，按用户指定保持不指定（不注入——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
 }
 
 
