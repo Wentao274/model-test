@@ -182,8 +182,9 @@ K. 客户问题复现测试
   文在停止词处截断、不含停止词），实际输出 ">苹果、香蕉、"——被截
   断正文前面多输出了一个 ">" 符号。原始请求体（glm-5.3-flash）：
   stream=true、thinking={"type": "enabled"}、reasoning_effort=
-  "low"、stop=["橘子"]、其余采样参数不发送（通过 RAW_SAMPLING_
-  PARAM_TESTS 豁免全局覆盖）；KimiK3 环境不传 thinking/
+  "low"、stop=["橘子"]、其余采样参数不发送（不在豁免名单——测
+  试逻辑与采样参数无关，用户规则；手工 payload 直发，全局覆盖
+  不涉及）；KimiK3 环境不传 thinking/
   reasoning_effort（按 K5 口径），断言完全一致。硬断言：SSE 解析
   成功且有正文增量；finish_reason=="stop"；合并正文严格等于
   "苹果、香蕉、"（多余前缀/停止词泄漏/未截断均 FAIL）；正文不含
@@ -194,8 +195,9 @@ K. 客户问题复现测试
   网关应校验并返回 400 Bad Request；实际返回 200 放行，模型把孤儿
   tool 消息当普通上下文推理。按客户原始请求体还原（user "今天天
   气怎么样？" 后直接跟 tool tool_call_id="call_abc123" content=
-  "{\"weather\":\"晴\"}"，stream=true，无 tools/thinking/采样参
-  数——通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。硬断言：
+  "{\"weather\":\"晴\"}\"，stream=true，无 tools/thinking/采样参
+  数——不在豁免名单（测试逻辑与采样参数无关——用户规则）；
+  手工 payload 直发，全局覆盖不涉及）。硬断言：
   HTTP 400；若 200 放行（缺陷形态）：取样若干 SSE 事件留证后
   FAIL。GLM-5.3 与 GLM-5.3-Flash 断言完全一致。响应体与 usage
   仅日志。（不进 smoke 集：新用例首跑观察期）
@@ -211,8 +213,9 @@ K. 客户问题复现测试
   （低于最小粒度不应缓存）。cached_tokens 取 usage.
   prompt_tokens_details.cached_tokens（兼容 usage.cached_tokens）。
   GLM-5.3 与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数
-  （通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。（不进 smoke
-  集：新用例首跑观察期）
+  （不在豁免名单——测试逻辑与采样参数无关，用户规则；手工
+  payload 直发，全局覆盖不涉及）。（不进 smoke 集：新用例首跑
+  观察期）
 - K16: 固定前缀/多轮上下文缓存命中率达标 [P0]
   客户问题（平台原始验证信息）：短文本缓存命中率不达标——修复前
   每轮固定前缀缓存命中 7680/输入 8693（88.35%）、多轮上下文
@@ -223,10 +226,10 @@ K. 客户问题复现测试
   请求 [system 共享长前缀(~8192 token)，user 每轮唯一问题
   (~501 token)]；模式2 多轮上下文——单会话 history 逐轮追加，
   共享前缀随轮增长。两模式均排除第 1 轮预热、实测 9 轮，断言
-  cached_tokens 总和/prompt_tokens 总和 ≥90%。GLM-5.3 与
-  GLM-5.3-Flash 断言  一致，非流式、不发送采样参数（通过
-  RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。（不进 smoke 集：
-  新用例首跑观察期）
+  cached_tokens 总和/prompt_tokens 总和 ≥90%。  GLM-5.3 与
+  GLM-5.3-Flash 断言  一致，非流式、不发送采样参数（不在豁免
+  名单——测试逻辑与采样参数无关，用户规则；手工 payload 直
+  发，全局覆盖不涉及）。（不进 smoke 集：新用例首跑观察期）
 - K17: stop 停止符（换行符）在推理阶段生效 [P0]
   客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用
   于推理（reasoning）输出——推理里出现的第一个换行即触发停止，
@@ -235,7 +238,8 @@ K. 客户问题复现测试
   thinking={"type":"enabled"} 显式开启思考（K1 口径）；
   stream=true、stop=["\n"]、
   max_tokens=512 仅作防御性预算（正常应在推理早期触发停止）、其余
-  采样参数不发送——通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。
+  采样参数不发送——不在豁免名单（测试逻辑与采样参数无关——用
+  户规则）；手工 payload 直发，全局覆盖不涉及。
   硬断言：SSE 解析成功有事件；合并正文为空（stop 在推理阶段触
   发、正文未生成——核心断言）；finish_reason=="stop"；合并
   reasoning 不含 "\n"（stop 语义：输出在停止符前截断、停止符不泄
@@ -291,7 +295,8 @@ K. 客户问题复现测试
   200）；错误信息含 "at most 16 image"（大小写不敏感）——超限
   被正确拒绝且信息恰当则 PASS；200 放行（限额未生效）或错误信
   息不含该模式（信息不恰当）均 FAIL。GLM-5.3-Flash 专用；不发
-  送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）。
+  送采样参数（不在豁免名单——测试逻辑与采样参数无关，用户规
+  则；手工 payload 直发，全局覆盖不涉及）。
   原始失败详情截图未收到，断言口径以用户给定的参考信息为准；
   恰好 16 张的正向对照轮未纳入（用户测试要点仅两条，且避免回
   归中重度视觉计算）。模型真实响应（状态码/响应体全文）断言前
@@ -419,7 +424,9 @@ K. 客户问题复现测试
   user"根据工具返回的数据，用一句话告诉我天气。"]、
   max_tokens=200、非流式、无 tools/thinking）。硬断言：①HTTP 200
   （核心——原始 400 拦截形态复现即 FAIL）；②响应合法 JSON 且
-  choices 非空；③message 有效输出（content 或 tool_calls 非空）。
+  choices 非空；③message 有效输出（content 或 tool_calls 非空；
+  思考耗光无输出+finish=length 以 reasoning_effort=low 回退重发
+  ——K24/K25/K27 口径，双强度均未产出即 FAIL）。
   官方行为细节（输出/推理引用工具数据要素）软校验仅日志；
   finish/usage 仅日志。采样参数不豁免（默认口径——未明确指定加入
   豁免名单）：由全局 SAMPLING_PARAMS 覆盖——temperature 无覆盖时
@@ -598,7 +605,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    @pytest.mark.smoke
     def test_pydantic_schema_tool_call_stream(
         self, api_client: ModelAPIClient, test_logger
     ):
@@ -901,7 +907,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    @pytest.mark.smoke
     def test_repeated_request_stability(
         self, api_client: ModelAPIClient, test_logger
     ):
@@ -1055,7 +1060,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM52
     @pytest.mark.p0
-    @pytest.mark.smoke
     def test_anthropic_prompt_cache_creation(
         self, api_client: ModelAPIClient, test_logger
     ):
@@ -1487,7 +1491,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    @pytest.mark.smoke
     def test_thinking_disabled_suppresses_reasoning(
         self, api_client: ModelAPIClient, test_logger
     ):
@@ -1707,7 +1710,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    @pytest.mark.smoke
     def test_thinking_temperature_tier(
         self, api_client: ModelAPIClient, test_logger
     ):
@@ -2351,7 +2353,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             label: str, thinking_type: str, temperature: float,
             max_tokens: int,
         ) -> None:
-            """K8 单轮：required+有工具意图，断言必须调用工具且预算不被吃满"""
+            """K8 单轮：required+无工具意图闲聊，断言必须调用工具且预算不被吃满"""
             TestLogger.log_request(
                 test_logger,
                 [{"role": "user", "content": K8_USER_PROMPT}],
@@ -3527,8 +3529,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         止词的某个字符/片段泄漏到了正文开头）。
         本用例按客户原始请求体还原（glm-5.3-flash：stream=true、
         thinking={"type": "enabled"}、reasoning_effort="low"、
-        stop=["橘子"]、其余采样参数不发送——客户原始请求体即如此，
-        通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖），KimiK3 环境
+        stop=["橘子"]、其余采样参数不发送——客户原始请求体即如此；
+        不在豁免名单（测试逻辑与采样参数无关——用户规则），手工
+        payload 直发，全局覆盖不涉及），KimiK3 环境
         不传 thinking/reasoning_effort/temperature（按 K5 口径），
         断言完全一致。硬断言：
         1. SSE 解析成功且有正文增量（收到 content delta）
@@ -4201,8 +4204,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         - stream=true、stop=["\n"]、max_tokens=512（防御性预算——
           正常应在推理早期几十个 token 内触发停止，仅防缺陷形态下
           无界生成）
-        - 其余采样参数不发送（通过 RAW_SAMPLING_PARAM_TESTS 豁免
-          全局覆盖）
+        - 其余采样参数不发送（不在豁免名单——测试逻辑与采样参数
+          无关，用户规则；手工 payload 直发，全局覆盖不涉及）
         硬断言：
         1. SSE 解析成功（收到事件）
         2. 合并正文为空（stop 在推理阶段触发，正文未生成——核心：
@@ -4787,10 +4790,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
             test_logger.info(
                 "客户问题复现通过: 两步流程完成——第一个请求输出 JSON "
-                "到临时文件、工具读取成功、上次输出 JSON（含空占位调"
-                "用/缺 \"{\" 的 bash arguments/reasoning 双字段的 "
-                "assistant 历史）已被接受为下次请求的输入上下文，正常"
-                "生成响应"
+                "到临时文件、工具读取成功、上次输出 JSON（含缺 \"{\" "
+                "的 bash arguments/reasoning 双字段的 assistant 历史"
+                "——空占位调用已按用户指定移除）已被接受为下次请求的"
+                "输入上下文，正常生成响应"
             )
 
             # ---- 第三个请求：根因断言——模型不得返回空 function ----
@@ -4959,8 +4962,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         原始失败详情截图未收到，断言口径以用户给定的参考信息为准。
         恰好 16 张的正向对照轮未纳入（用户测试要点仅两条，且避免回
         归中重度视觉计算）。max_tokens=32 防御性预算（应在生成前
-        被拒绝）。不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS
-        豁免全局覆盖）。模型真实响应（状态码/响应体全文）在断言前
+        被拒绝）。不发送采样参数（不在豁免名单——测试逻辑与采样
+        参数无关，用户规则；手工 payload 直发，全局覆盖不涉及）。
+        模型真实响应（状态码/响应体全文）在断言前
         打印到日志（失败时同样可见，便于诊断）。usage/响应体仅日
         志。（不进 smoke 集：新用例首跑观察期）
         """
@@ -6429,6 +6433,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         2. 响应合法 JSON 且 choices 非空
         3. message 有效输出（content 或 tool_calls 非空——官方形
            态为正常答句，工具调用响应亦为成功形态）
+        耗光回退（K24/K25/K27 口径）：无输出+finish=length 为
+        max_tokens=200 预算被思考耗尽形态（GLM-5.3 恒开思考）——
+        非契约违约（HTTP 200 已达成）；以 reasoning_effort=low 重
+        发（构造不变仅加顶层字段），断言相同；双强度均未产出即
+        FAIL（留证交开发）。
         官方行为细节（输出/推理引用工具数据要素）为软校验仅日志；
         finish/usage 仅日志。采样参数不豁免（默认口径——未明确指定
         加入豁免名单）：由全局 SAMPLING_PARAMS 覆盖——temperature
@@ -6569,6 +6578,70 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
         finish = choices[0].get("finish_reason")
+        # 耗光回退（K24/K25/K27 口径）：无输出+finish=length 为
+        # max_tokens=200 预算被思考耗尽形态（GLM-5.3 恒开思考）——
+        # 非契约违约（接受性契约 HTTP 200 已达成）；以
+        # reasoning_effort=low 重发（构造不变仅加顶层字段），断言相
+        # 同；双强度均未产出即 FAIL（留证交开发）
+        if not content and not tool_calls and finish == "length":
+            test_logger.info(
+                "第 1 次请求思考耗光预算（无输出 + finish=length——"
+                "HTTP 200 核心契约已达成），按 K24/K25/K27 口径以 "
+                "reasoning_effort=low 回退重发（构造不变仅加顶层 "
+                "reasoning_effort 字段）"
+            )
+            retry_payload = {**payload, "reasoning_effort": "low"}
+            TestLogger.log_request(
+                test_logger,
+                K23_MESSAGES,
+                {
+                    "max_tokens": K23_MAX_TOKENS,
+                    "tools": "(未定义)",
+                    "thinking": "(不传，工单原始请求体口径)",
+                    "stream": "(不传——默认非流式)",
+                    "temperature": retry_payload["temperature"],
+                    "top_p": retry_payload.get("top_p", "(未注入)"),
+                    "seed": retry_payload.get("seed", "(未注入)"),
+                    "reasoning_effort": "low",
+                },
+            )
+            started_r = time.time()
+            try:
+                response_r = api_client._post_with_retry(
+                    url, retry_payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"low 回退重发异常（{url}）: {e}")
+            elapsed_r = time.time() - started_r
+            test_logger.info(
+                f"low 回退真实响应: HTTP {response_r.status_code}, "
+                f"elapsed={elapsed_r:.1f}s, "
+                f"body={response_r.text[:800]!r}"
+            )
+            assert response_r.status_code == 200, (
+                f"low 回退重发失败：实际 HTTP "
+                f"{response_r.status_code}: {response_r.text[:400]}"
+            )
+            try:
+                body = response_r.json()
+            except ValueError as e:
+                pytest.fail(
+                    f"low 回退响应不是合法 JSON: {e}. "
+                    f"响应体已记录于测试日志"
+                )
+            choices = body.get("choices") or []
+            assert choices, (
+                "low 回退响应 choices 为空——响应体已记录于测试日志"
+            )
+            message = choices[0].get("message") or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls") or []
+            finish = choices[0].get("finish_reason")
+            if not content and not tool_calls and finish == "length":
+                pytest.fail(
+                    "low 回退重发后仍无产出（默认与 low 双强度思考均"
+                    "耗光预算——留证交开发）"
+                )
         budget_note = (
             "（finish=length：max_tokens=200 预算被思考耗尽的空正文"
             "形态——与 400 拦截形态区分，需评估官方对齐下的预算口"
@@ -7781,8 +7854,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
            用 name 非空、id 非空、arguments 为合法 JSON 对象（修
            正后的参数必须合法）
         明确不断言：历史畸形 arguments 被改写/修复为合法 JSON
-        （修复是按字符串保留，不改写历史）。        耗光回退（K24/K25 口
-        径）：预算 16k（max_tokens=16384——覆盖默认档思考+大尺
+        （修复是按字符串保留，不改写历史）。
+        耗光回退（K24/K25 口径）：预算 16k（max_tokens=16384——覆
+        盖默认档思考+大尺
         寸修正输出；工单未载 max_tokens），默认档思考仍可能耗尽
         预算（无正文无调用+finish=length——首跑实测 2048 预算
         reasoning_tokens 全耗）——该形态以
@@ -8157,7 +8231,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         <repo>/origin_raw/AGDC2-24/<model>/<timestamp>/（年月日_
         时分秒）。除 raw 文件外不输出其他额外文件。
         硬断言（任一不符合即 FAIL）：
-        1. 全部请求 HTTP 200（探针无法核验即 FAIL）
+        1. 全部请求 HTTP 200 且响应体为可解析 SSE（空体/非流式结
+           构时 analyse 返回全零值会误判 T1/T2/T3 全通过——无法核
+           验即 FAIL）
         2. T1 尾裸出现次数 == 0
         3. T2 字段回流出现次数 == 0（字段切换序列含 content→
            reasoning 即命中）
@@ -8237,7 +8313,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 elapsed = time.time() - started
                 a = probe.analyse(txt)
                 total += 1
-                if st != 200:
+                # 可核验门槛：非 200 或响应体非可解析 SSE（空体/非
+                # 流式结构——analyse 对非 SSE 体返回全零值，T1/T2/T3
+                # 会被误判为全部通过）均视为无法核验
+                if st != 200 or "data: " not in txt:
                     http_errors += 1
                 if a["bare"]:
                     t1_bare += 1
@@ -8263,7 +8342,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 硬断言：任一判据不符合即 FAIL
         assert http_errors == 0, (
             f"模型输出字段核验失败：{http_errors}/{total} 次请求非 "
-            f"200——探针无法完整核验（raw 目录: {raw_dir}）"
+            f"200 或响应体非可解析 SSE——探针无法核验（raw 目录: "
+            f"{raw_dir}）"
         )
         assert t1_bare == 0, (
             f"T1 判据不符合：content 尾部裸 </think> 出现 "

@@ -84,6 +84,9 @@ RAW_SAMPLING_PARAM_TESTS = {
     # K18（test_output_json_as_input_context）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     # K20（test_1m_context_request_supported）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     # K21（test_system_message_embedded_tools_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
+    # K22（test_cross_protocol_prefix_cache_parity）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
+    # K23（test_orphan_tool_message_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
+    # K25（test_duplicate_reasoning_content_history_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
     # K26（test_negative_lookahead_tool_pattern_accepted）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
     # K27（test_invalid_arguments_history_tolerated）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
     # K28（test_output_fields_think_tag_probe）不在此名单：请求体不含采样参数，按用户指定保持工单原始请求体不变（不注入 temperature/top_p/seed——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
@@ -360,7 +363,9 @@ def api_client(
         timeout=config["global"]["timeout"],
         config=model_config,
         reasoning_effort=cmd_reasoning_effort,
-        seed=cmd_seed,
+        temperature=global_temperature,
+        top_p=global_top_p,
+        seed=global_seed,
         retry_times=config["global"].get("retry_times", 3),
     )
 

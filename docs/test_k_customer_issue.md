@@ -61,12 +61,12 @@
 | K20 | 1M 上下文请求应被正常支持 | 客户问题：请求报错 "Input length (918451 tokens) exceeds the maximum allowed length (781754 tokens). Use a shorter input or enable --allow-auto-truncate."（invalid_request_error——网关透传 serving 侧上下文长度校验拒绝；当时最大允许 781754，未按 1M 上下文契约配置）；契约：模型需支持 1M 上下文请求——1M 量级输入应正常响应；适用 GLM-5.3 | 1M=输入+输出（用户口径），总量略小于 1M：探针自校准（重复单元 ×2000 从 usage.prompt_tokens 精确计量）后按目标生成主请求：输入 960,000 tokens + 输出预算 max_tokens 覆盖思考+正文，两轮思考档位（用户指定补 max 场景）——low 轮（1024）常规、max 轮（4096）最大思考负载，输出侧同步压窗口（总消耗 ≈961K/964K，两种 1M 口径均满足），单条 user 消息非流式提交（采样参数不豁免——用户指定：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入；跑必冷仅 low 轮——用户加固：low 轮（含探针）材料头部置每次请求唯一 nonce（时间戳+uuid，可含中文），前缀必不命中 KV 缓存，真 1M 冷 prefill；max 轮取消唯一前缀——输出侧验证不受缓存影响，允许命中历史缓存加速），断言探针 200 且有 usage、每轮主请求 HTTP 200、choices/content 非空、每轮主响应 prompt_tokens（如有）>781,754（规模 sanity） | P0 |
 | K21 | system 消息内嵌 tools 的非标请求结构应被接受 | 客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system 且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具），服务端反序列化报 400 invalid_request_error/json_parse_error（"messages[2]: data did not match any variant of untagged enum MessageContent"）——结构虽非 OpenAI 协议标准形态（tools 应为顶层参数），但客户业务实际在用；契约：宽容解析并正常响应（预期 200）；适用 Kimi-K3 | 按工单原始请求体原样重放（模型名由环境注入，其余字段不改动；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始报错形态复现即 FAIL）、choices 存在、message 有效输出（content 或 tool_calls 非空）；模型真实响应（状态码/响应体全文）断言前打印；运行日志不含具体模型名（系统提示词正文含模型自我介绍，仅记字符数概要） | P0 |
 | K22 | /v1/messages 缓存命中率应与 /v1/chat/completions 基本一致 | 客户问题：相同请求下 Anthropic 协议（/anthropic/v1/messages）前缀缓存命中率始终低于 chat 协议（"缓存始终上不去"）——根因：该链路 system 头部携带 x-anthropic-billing-header: 逐请求动态计费行（字符串/块数组两种 system 形态），前缀缓存要求从位置 0 连续匹配，头部逐请求变化导致整个前缀永不命中；chat 协议无此行、前缀稳定（K15/K16 已验证 ≥90%）；开发修复：入引擎前条件剥离——system 开头是 x-anthropic-billing-header: 行即去掉、其余内容原样保留；适用 GLM-5.3 | 测试要点（用户口径）：同轮等价请求逐轮交替发送两协议（同轮同问；前缀头部渠道标记行不同——用户指定：剥离计费行后两协议前缀仍从位置 0 分叉，互不命中对方缓存条目，各自建条目/各自命中，messages 冷轮为真冷），统计二者缓存命中率并逐轮比较——冷轮不参与比较（需热轮才能统计命中率），组级判定（用户指定）：单组失败不中断后续组，5 组中至少 4 组该组全部热轮差值 ≤3 个百分点（用户指定容差）即 PASS、不足 4 组 FAIL；热轮 messages 全量 miss（read=0 且 creation=0）时同轮重发一次鉴别（用户指定）：重发命中→WARN 留痕继续（偶发——疑似多实例路由/条目可见性问题）；仍 miss→该组不符合预期（剥离失效形态，判别力不变）；每请求在 system 头部构造逐请求变化的计费行；循环 5 次比对（用户口径：每次循环的请求消息尽量不一样）：2 组中文、2 组英文、1 组中英混合，整请求长度尽量超过 8k tokens；覆盖两条剥离代码路径（块数组断点挂 system 块——K3 口径；字符串断点挂 user 首块）；每次循环每协议 1 冷轮 + 2 热轮（用户口径；冷轮不参与比较），共 5 次循环 × 2 协议 × 3 轮 = 30 请求，组间间隔 3 秒（用户指定）；硬断言：①组级判定（用户指定）——单组失败不中断后续组，5 组中至少 4 组该组全部热轮差值 ≤3 个百分点即 PASS、不足 4 组 FAIL；②每请求 HTTP 200 且响应正常；缺陷形态 messages ≈0% vs chat ≈94%（五组全不符合→FAIL）、修复后两协议每热轮均 ≈94%（五组全符合→PASS）；热轮 cache_creation>0（剥离失效直接信号）与双低形态仅日志留痕；运行日志不含具体模型名 | P0 |
-| K23 | 孤儿 tool 消息应对齐官方放行并正常消费 | 客户问题（新工单，官方对齐口径）：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），平台返回 400（"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool calls'."——type: alaya code error、code: invalid text request——网关层白加的校验）；智谱官方源对同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」且模型在 reasoning 中实际引用 tool 数据（工具数据被正常消费）；新契约（客户指定）：预期结果同官方一致——此类消息序列不做校验、正常出结果；与 K14 关系：K14 为当时工单口径原始契约（保持不变——用户指令），二者输入同类预期相反，平台采纳官方对齐修复后 K14 将 FAIL、其保留/退役由用户决定；适用 GLM-5.3 | 按客户新工单原始请求体还原（messages=[user"查一下北京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文本无 tool_calls——孤儿条件）、tool tool_call_id="call_weather_001" content={"city":"北京","temp_c":18,"condition":"晴"}、user"根据工具返回的数据，用一句话告诉我天气。"]、max_tokens=200、非流式、无 tools/thinking；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始 400 拦截形态复现即 FAIL）、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空——官方形态为正常答句）；官方行为细节（输出/推理引用工具数据要素）软校验仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
+| K23 | 孤儿 tool 消息应对齐官方放行并正常消费 | 客户问题（新工单，官方对齐口径）：tool 角色消息前无带 tool_calls 的 assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），平台返回 400（"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool calls'."——type: alaya code error、code: invalid text request——网关层白加的校验）；智谱官方源对同一请求 HTTP 200 正常应答「北京今天天气晴朗，气温18℃」且模型在 reasoning 中实际引用 tool 数据（工具数据被正常消费）；新契约（客户指定）：预期结果同官方一致——此类消息序列不做校验、正常出结果；与 K14 关系：K14 为当时工单口径原始契约（保持不变——用户指令），二者输入同类预期相反，平台采纳官方对齐修复后 K14 将 FAIL、其保留/退役由用户决定；适用 GLM-5.3 | 按客户新工单原始请求体还原（messages=[user"查一下北京天气"、assistant"好的，我来为您查询北京天气数据。"（纯文本无 tool_calls——孤儿条件）、tool tool_call_id="call_weather_001" content={"city":"北京","temp_c":18,"condition":"晴"}、user"根据工具返回的数据，用一句话告诉我天气。"]、max_tokens=200、非流式、无 tools/thinking；采样参数不豁免——默认口径：全局 SAMPLING_PARAMS 覆盖），单次请求（确定性行为，无需连发），断言 HTTP 200（核心——原始 400 拦截形态复现即 FAIL）、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空——官方形态为正常答句；思考耗光无输出+finish=length 以 reasoning_effort=low 回退重发——K24/K25/K27 口径，双强度均未产出即 FAIL）；官方行为细节（输出/推理引用工具数据要素）软校验仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 | K24 | 双请求正常响应（思考耗尽预算 low 强度回退） | 客户问题（新工单）：客户两个请求（中文同音词与言部汉字写作题、英文数学题），temperature=0.0、max_completion_tokens=32768（工单原始字段名）、非流式，期望均正常响应并返回正文；风险形态（用户指定）：默认 max 思考强度下思考可能耗光预算（正文空+finish=length）；适用 GLM-5.3 | 按工单原始请求体还原两请求直发（采样参数豁免——用户指定：两请求体均显式 temperature=0.0，工单体为唯一口径，通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖，top_p/seed 不注入）；第 1 轮默认 max 思考强度（不带 reasoning_effort），有正常正文即通过，断言 HTTP 200、响应合法 JSON 且 choices 非空、message 有效输出（content 或 tool_calls 非空）；耗光形态（正文空+finish=length）按用户指定契约转 reasoning_effort=low（GLM 顶层思考强度参数，K20 口径）重发且仅重测耗光请求（已通过不重测），断言相同；正文空且 finish≠length 直接 FAIL；low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；finish/usage 仅日志；模型真实响应（状态码/响应体全文）断言前打印 | P0 |
 | K25 | assistant 历史重复 reasoning_content 字段应被兼容接受 | 客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条消息携带两个 reasoning_content 字段（两轮历史思考未去重地拼接成同键重复）与上一次请求的正文；客户原始工单还曾因思考内容含 They're/I'm/It's 等英文撇号导致 JSON 破损——正文与思考可能含单引号/双引号/换行等字符，须兼容处理、不影响请求格式（用户指定）；契约（用户指定）：预期不报错、正常响应，第一个 reasoning_content 被第二个覆盖（宽松解析保留最后一个值，K18 修复口径）；适用 GLM-5.3 | 共发三次请求（用户指定，JSON 链式回填——第 1/2 次响应 JSON 作为下一请求输入、思考随历史一并回填；提示词为测试自行设计，工单未携带具体提示词——用户口径仅要求结构）：第 1 次 user 单轮流式要求仅输出 JSON——采集第 1 段思考+第 1 次正文（JSON，作为第 2 次请求输入回填）；第 2 次流式回填第 1 次历史 messages=[assistant(content=第 1 次正文（JSON）, reasoning_content=第 1 次思考), user 追问]（单键经 dict 表达——K18 口径）并要求仅输出 JSON——采集第 2 段思考+第 2 次正文（JSON，作为第 3 次请求输入回填）；第 3 次流式回填 messages=[assistant(content=第 2 次正文（JSON）, reasoning_content=第 1 次思考, reasoning_content=第 2 次思考), user 追问]——重复键无法经 dict 表达，手工拼接 JSON 文本直发，动态值一律 json.dumps 全转义，发送前三重自检（合法 JSON、reasoning_content 键出现次数==2、转义回读值一致）；硬断言第 1/2 次思考与正文均非空（构造数据源）且正文为合法 JSON（JSON 链断裂即场景无法构造 FAIL；容忍 markdown 代码块围栏）、第 3 次 HTTP 200（核心——被拒绝即 FAIL）+ SSE 事件非空 + 合并正文非空 + finish_reason 合法；耗光回退（K24 口径）：max_tokens=8192 下默认 max 档思考可能耗尽预算（正文空+finish=length）——该形态以 reasoning_effort=low 仅重发耗光请求（第 3 次重发构造不变仅加顶层 reasoning_effort 字段——HTTP 200 核心契约首次请求已达成），断言相同，正文空且 finish≠length 直接 FAIL，low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；引号覆盖度软观察（三个回填值均无引号/换行字符时 record_warning，不判失败）；采样参数不豁免（默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入）；max_tokens=8192 工单口径三次一致；usage 仅日志；模型真实响应断言前打印 | P0 |
 | K26 | 工具 schema 负向前瞻正则应被兼容放行 | 客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前瞻正则——后端编译为 structural_tag 生成约束时底层语法编译器不支持 lookahead：非流式报 400（Failed to compile structural_tag grammar——Lookahead is not supported yet，request id 2026102616110264231215776333070）、流式报 provider_unavailable（upstream_stream_error）；修复（frontend 预处理兼容，非编译器新增 lookahead 支持）：GLM-5.3+glm47 解析器+SGLang、tool_choice=auto、工具未显式 strict、schema 含 ^(?! 开头正则时命中——仅将生成约束工具副本置 strict=false 绕过强制编译，原始 schema/工具描述/格式约束保留；该路径不再由 grammar 强制保证参数满足完整 schema；适用 GLM-5.3 | 按触发形态构造：path 参数 pattern 以 ^(?! 开头（禁止路径穿越 ^(?!.*\.\.).+$）、不显式 strict、tool_choice=auto，user 消息自然诱导 write_workspace_file 调用，非流式+流式各发一次；断言：非流式 HTTP 200（核心——grammar 编译错误复现即 FAIL）+choices 非空+message 结构存在，流式 HTTP 200（核心——provider_unavailable 复现即 FAIL）+SSE 事件非空+至少一个含 choices 数据块；不断言工具被调用与参数满足 pattern（兼容绕过明确口径）、响应形态宽松留日志；采样参数不豁免（用户指定——不进豁免名单，全局 SAMPLING_PARAMS 覆盖）；usage 仅日志 | P0 |
 | K27 | 历史非法 JSON arguments 应被容忍 | 客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型输出的工具调用 arguments 本身非合法 JSON（两处括号错误——"refId": "A"}] 缺 }、40}}}] 处多 }，上游流式日志证实由模型产生）；客户端执行失败、回放全量历史，服务端校验历史 tool_calls 的 arguments 直接 400（Assistant tool call function.arguments must be valid JSON）——纯服务端问题，与 codex 客户端无本质关系；修复：历史无法解析的 arguments 按字符串保留、不再 400、让模型继续纠正；适用 GLM-5.3 | 复刻客户链路（user→assistant(畸形 arguments 调用，保真浓缩版——两处错误形态与关键结构原样、场景自检必非法)→tool(执行失败结果，协议配对必需)→user 追问修正重试，带 MCP 工具定义，非流式，max_tokens=16384（16k——覆盖默认档思考+大尺寸修正输出，low 兜底）），断言 HTTP 200（核心——报错复现即 FAIL）+choices 非空+message 结构存在+模型发起修正工具调用且每条调用 name/id 非空、arguments 为合法 JSON 对象（修正行为——修复目的"让模型继续纠正"）；不断言历史被改写/修复；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；usage 仅日志 | P0 |
-| K28 | 模型输出字段核验（尾裸/回流/工具参数） | 客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通过）；length 截断只记录不判定；适用 GLM-5.3 | 客户探针（scripts/probe_think_tag.py）+ 数据集（requests/AGDC2-24，工单原始参数 stream=true、max_tokens=8192、reasoning_effort=max 原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-24/<model>/<timestamp>/；断言：全部 HTTP 200、T1=0、T2=0、T3=100%——任一不符合即 FAIL；模型名由环境注入；请求体不含 temperature/top_p/seed——按用户指定保持工单原始请求体不变、不注入采样参数；usage 仅日志 | P0 |
+| K28 | 模型输出字段核验（尾裸/回流/工具参数） | 客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通过）；length 截断只记录不判定；适用 GLM-5.3 | 客户探针（scripts/probe_think_tag.py）+ 数据集（requests/AGDC2-24，工单原始参数 stream=true、max_tokens=8192、reasoning_effort=max 原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-24/<model>/<timestamp>/；断言：全部 HTTP 200 且响应体可解析 SSE（空体/非流式结构即无法核验）、T1=0、T2=0、T3=100%——任一不符合即 FAIL；模型名由环境注入；请求体不含 temperature/top_p/seed——按用户指定保持工单原始请求体不变、不注入采样参数；usage 仅日志 | P0 |
 | K29 | 双协议零增量响应与工具调用核验 | 客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一段业务会话报文（195 条消息/19 个工具/stream=true/max_tokens=4096）分别请求 /v1/chat/completions 与 /anthropic/v1/messages——OpenAI 协议 13 次中 5 次零增量响应（HTTP 200、SSE 结构完整但 delta.content/reasoning_content/tool_calls 三类增量均空、usage.completion_tokens>0），工具调用仅 4/13；Anthropic 协议 8/8 返回工具调用、零增量 0/8；适用 GLM-5.3 | 客户探针（scripts/probe_alaya.py）+ 数据集（requests/AGDC2-25 两份协议请求体）纳入框架：两种协议各发 --n 硬编码 10 次（用户指定）流式请求，逐条留存 raw 并统计三项判据——有效请求==10、零增量==0、返回工具调用==100%（10/10），任一不符合即 FAIL；每协议追加 1 次强制工具调用（tool_choice required/any，仅观察不计入）；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-25/<model>/<timestamp>/；模型名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；temperature/top_p 原始未指定——保持不指定（不注入）；usage 仅日志 | P0 |
 
 ## 运行方式
@@ -115,8 +115,9 @@ pytest tests/test_k_customer_issue.py -m p0 -v
 - `collect_stream_tool_calls`（用例内嵌套函数）：OpenAI 流式协议中
   tool_calls 以增量片段下发（按 index 分片，`function.arguments` 逐段
   追加），需按 index 聚合成完整调用后才能做 JSON 合法性与必填项校验
-- 客户原始 `temperature=0.1` 通过 `RAW_SAMPLING_PARAM_TESTS` 豁免保留，
-  不被全局采样参数覆盖
+- 客户原始 `temperature=0.1` 不在豁免名单（测试逻辑与采样参数无
+  关——用户规则），由全局 SAMPLING_PARAMS 覆盖
+- 不进 smoke 集（K 类用例均不进——用户指定）
 
 ### test_repeated_request_stability (K2)
 
@@ -149,8 +150,9 @@ pytest tests/test_k_customer_issue.py -m p0 -v
 **实现要点**：
 - 相邻请求间隔 3s（`K2_REQUEST_INTERVAL_SECONDS`，末次后不等待），
   模拟客户循环执行 curl 的节奏，用例总时长增加约 12s
-- 客户原始 `temperature=1` 等采样参数通过 `RAW_SAMPLING_PARAM_TESTS`
-  豁免保留，不被全局采样参数覆盖
+- 客户原始 `temperature=1` 等采样参数不在豁免名单（测试逻辑与采
+  样参数无关——用户规则），由全局 SAMPLING_PARAMS 覆盖
+- 不进 smoke 集（K 类用例均不进——用户指定）
 
 **关于 `user` 字段**（`"user": "a74685ef..."`）：
 OpenAI Chat Completions 协议的标准可选字段——**终端用户唯一标识符**，供
@@ -215,6 +217,7 @@ OpenAI Chat Completions 协议的标准可选字段——**终端用户唯一标
   需加大 `K3_PREFIX_TARGET_CHARS`）；`< 100000` 时提示低于客户场景规模
 - 前缀规模与实际 tokens 的换算依赖部署的 tokenizer（中文约 1.3~1.7
   字符/token），实际值以响应的 `input_tokens` 为准
+- 不进 smoke 集（K 类用例均不进——用户指定）
 
 ### test_negative_frequency_penalty_treated_as_zero (K4)
 
@@ -262,8 +265,8 @@ fp<0 按出现次数**奖励**已出现 token，形成无饱和正反馈：循�
 - 连发 3 次（消息各异）：单次调用可能无法严谨验证问题，3 次全部正常
   结束才 PASS，任一次失败报告第几次
 - 不进 smoke 集：未修复时最坏耗时约 3×`K4_RESPONSE_BUDGET_SECONDS`
-  （360s），避免拖慢冒烟套件（K1-K3 均 smoke，K4 为首个非 smoke 的
-  K 类用例）
+  （360s），避免拖慢冒烟套件（K 类用例均不进 smoke 集——用户指
+  定）
 - 对照场景（fp=0 不传 max_tokens）按决策跳过：修复契约明确后无需对照隔离，
   单一场景即可判定
 - 若平台未来将契约改为 400 拒绝（而非钳制），本用例会在"请求失败
@@ -315,7 +318,8 @@ fp<0 按出现次数**奖励**已出现 token，形成无饱和正反馈：循�
   thinking 对象）；与本框架 B2 类的 `enable_thinking` /
   `chat_template_kwargs` 参数面不同——B2 在后端直连部署上通过不代表网关
   此路径正确，故需独立复现
-- 进 smoke 集：单次数秒内返回（无 K4 的长预算风险），与 K1-K3 一致
+- 不进 smoke 集（K 类用例均不进——用户指定；单次数秒内返回，
+  无 K4 的长预算风险）
 
 **注意事项**：
 - 修复方向应为网关将 `thinking.type=disabled` 落实到后端思考开关；
@@ -368,8 +372,8 @@ fp<0 按出现次数**奖励**已出现 token，形成无饱和正反馈：循�
 - **错误文案采用子串匹配而非全等**：官方文案可能随版本微调前后缀，
   核心语义（`only 0.6 is allowed` / `only 1 is allowed`）稳定；忽略
   大小写避免大小写风格差异误报
-- **进 smoke 集**：4 次请求均为数秒级（2 次生成 + 2 次快速 400），无
-  K4 的长预算风险
+- **不进 smoke 集**（K 类用例均不进——用户指定；4 次请求均为数
+  秒级（2 次生成 + 2 次快速 400），无 K4 的长预算风险）
 
 ### test_thinking_effort_reasoning_length (K7)
 
@@ -759,7 +763,8 @@ reasoning_effort 放在顶层还是嵌套在 chat_template_kwargs 里，
 - KimiK3：不传 thinking/reasoning_effort（按 K5 口径：网关对
   thinking 参数兼容性未知，缺陷本身与其无关）
 - 其余采样参数（temperature/top_p/seed）不发送（客户原始请求体
-  即如此；通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+  即如此；不在豁免名单——测试逻辑与采样参数无关，用户规则；
+  手工 payload 直发，全局覆盖不涉及）
 
 **断言**（硬）：
 1. SSE 解析成功且有正文增量（收到 content delta）
@@ -808,7 +813,8 @@ assistant 消息（孤儿 tool 消息，且请求未定义任何 tools），属�
   （`tool_call_id="call_abc123"`、`content="{\"weather\":\"晴\"}"`），
   中间无 assistant tool_calls
 - `stream=true`；不定义 `tools`；不传 thinking/采样参数（客户原
-  始请求体即如此；通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+  始请求体即如此；不在豁免名单——测试逻辑与采样参数无关，用
+  户规则；手工 payload 直发，全局覆盖不涉及）
 - GLM-5.3 与 GLM-5.3-Flash 请求完全一致（原始请求体无模型专属字
   段，仅 model 名不同）
 
@@ -852,8 +858,8 @@ unit 64` / vLLM 对应参数调小，单一缓存块内补充更细粒度的缓�
   64 < N < 640 区间中部，两侧留裕量）
 - 测试点2 内容：K15_SHORT_CONTENT（"请简要介绍北京的历史文化背景
   与著名景点。"）≈ 21 字符（含对话模板开销 < 64 tok）
-- `max_tokens=16`；不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS
-  豁免全局覆盖）
+- `max_tokens=16`；不发送采样参数（不在豁免名单——测试逻辑与
+  采样参数无关，用户规则；手工 payload 直发，全局覆盖不涉及）
 - 每个测试点相同请求连发两次（第 1 次建缓存、第 2 次测命中）
 
 **断言**（硬）：
@@ -910,8 +916,8 @@ cached_tokens`（OpenAI 标准位置），兼容 `usage.cached_tokens` 拼
   问答 + 新问题），问题带 "本轮请仅回复：收到。"（控制 assistant
   回复极短、不放大每轮新增 token），assistant 回复取实际响应
   content
-- `max_tokens=16`；不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS
-  豁免全局覆盖）
+- `max_tokens=16`；不发送采样参数（不在豁免名单——测试逻辑与
+  采样参数无关，用户规则；手工 payload 直发，全局覆盖不涉及）
 
 **断言**（硬）：
 1. 固定前缀模式：Σcached_tokens / Σprompt_tokens（实测 9 轮）
@@ -958,7 +964,8 @@ cached_tokens`（OpenAI 标准位置），兼容 `usage.cached_tokens` 拼
 - `thinking={"type":"enabled"}` 显式开启思考（K1 口径）
 - `max_tokens=512` 防御性预算（正常应在推理早期几十个 token 内触
   发停止，仅防缺陷形态下无界生成）
-- 不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+- 不发送采样参数（不在豁免名单——测试逻辑与采样参数无关，用
+  户规则；手工 payload 直发，全局覆盖不涉及）
 
 **断言**（硬）：
 1. SSE 解析成功（收到事件）
@@ -1208,7 +1215,8 @@ call in the preceding assistant message`。完整根因链（开发确
 - 单条 user 消息 content 数组：1 个 text part + 17 个
   `image_url` part（单次请求/单次会话超过 16 图）
 - `max_tokens=32` 防御性预算（应在生成前被拒绝）
-- 不发送采样参数（通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖）
+- 不发送采样参数（不在豁免名单——测试逻辑与采样参数无关，用
+  户规则；手工 payload 直发，全局覆盖不涉及）
 
 **断言**（硬）：
 1. 响应失败（HTTP 非 200——超限应被拒绝；200 放行即限额未生
@@ -1580,9 +1588,17 @@ tool 消息里的数据（工具数据被模型正常消费）。
 3. message 有效输出（content 或 tool_calls 非空——官方形态为正
    常答句，工具调用响应亦为成功形态）
 
+**耗光回退**（K24/K25/K27 口径）：无输出+finish=length 为
+max_tokens=200 预算被思考耗尽形态（GLM-5.3 恒开思考）——非契
+约违约（HTTP 200 已达成）；以 `reasoning_effort=low` 重发（构
+造不变仅加顶层字段，首次请求预算保持工单值 200 不偏离），断
+言相同；双强度均未产出即 FAIL（留证交开发）。
+
 **判定矩阵**：
 - 修复前（网关白加校验拦截）：400 → FAIL（断言 1，报文标注缺陷
   形态精确复现）
+- 无输出+finish=length（思考耗光）→ low 回退重发，断言相同；
+  回退后仍无产出 → FAIL（双强度均未产出——留证交开发）
 - 修复后（官方对齐）：200 + 有效输出 → PASS
 
 **设计决策记录**：
@@ -1593,9 +1609,10 @@ tool 消息里的数据（工具数据被模型正常消费）。
 - **工单原始请求体原样重放**：assistant 纯文本消息 + tool 消息
   （无 tool_calls 关联）+ 未定义 tools——孤儿条件最小充分；模型
   名由环境注入
-- **max_tokens=200 保持工单值**：官方同参数下正常答句；若平台出
-  现 finish=length 空正文（思考耗尽预算），与 400 拦截形态区分
-  并在报文提示评估预算口径——不自行改预算偏离工单
+- **max_tokens=200 保持工单值**：官方同参数下正常答句；首次请
+  求预算保持工单值不偏离，思考耗尽（finish=length 空正文）形
+  态以 reasoning_effort=low 回退重发（K24/K25/K27 口径，构造不
+  变仅加顶层字段）——与 400 拦截形态区分
 - **官方行为细节软校验**：输出/推理引用工具数据要素（北京/18/
   晴）= 工具数据被模型正常消费的信号——生成措辞自由，仅日志，
   不作硬断言
@@ -2037,7 +2054,9 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 - 除 raw 文件外不输出其他额外文件
 
 **断言**（硬——任一不符合即 FAIL）：
-1. 全部请求 HTTP 200（探针无法核验即 FAIL）
+1. 全部请求 HTTP 200 且响应体为可解析 SSE（空体/非流式结构时
+   analyse 返回全零值，T1/T2/T3 会被误判全部通过——无法核验即
+   FAIL）
 2. T1 尾裸出现次数 == 0
 3. T2 字段回流出现次数 == 0（字段切换序列含 content→reasoning
    即命中）
@@ -2045,7 +2064,9 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
    reasoning 无原生标记）
 
 **判定矩阵**：
-- 任一请求非 200 → FAIL（探针无法完整核验）
+- 任一请求非 200 或响应体非可解析 SSE → FAIL（探针无法完整核
+  验——空体/非流式结构时 analyse 返回全零值，T1/T2/T3 会被误
+  判全部通过）
 - T1 ≥ 1 → FAIL（content 尾部裸标记残留——原始报告缺陷形态复
   现）
 - T2 ≥ 1 → FAIL（字段回流——content→reasoning 切换异常）
@@ -2072,6 +2093,11 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
   builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/
   （与 allure-report 同级——BUILD_OUTPUT_DIR 下）；手动落
   origin_raw/AGDC2-24/<model>/<timestamp>/（用户指定）
+- **可核验门槛（200+可解析 SSE 双要素）**：analyse 对非 SSE 响
+  应体返回全零值（bare=False、seq=""、args_ok=True、native=0）
+  ——仅判 HTTP 200 会让"200 空流/非流式结构"缺陷形态误判
+  T1/T2/T3 全部通过；故与非 200 一并计入无法核验（K29 同款门
+  槛对齐）
 - **T2 判定口径**：字段切换序列（delta 侧 content/reasoning
   出现顺序压缩）含 `C→R`（content 后再次 reasoning）即命中—
   —对齐报告 `reasoning_reentry_candidate` 判据
