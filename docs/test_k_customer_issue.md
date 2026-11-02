@@ -66,6 +66,7 @@
 | K25 | assistant 历史重复 reasoning_content 字段应被兼容接受 | 客户问题（工单跟进）：多轮对话回填 assistant 历史时，同一条消息携带两个 reasoning_content 字段（两轮历史思考未去重地拼接成同键重复）与上一次请求的正文；客户原始工单还曾因思考内容含 They're/I'm/It's 等英文撇号导致 JSON 破损——正文与思考可能含单引号/双引号/换行等字符，须兼容处理、不影响请求格式（用户指定）；契约（用户指定）：预期不报错、正常响应，第一个 reasoning_content 被第二个覆盖（宽松解析保留最后一个值，K18 修复口径）；适用 GLM-5.3 | 共发三次请求（用户指定，JSON 链式回填——第 1/2 次响应 JSON 作为下一请求输入、思考随历史一并回填；提示词为测试自行设计，工单未携带具体提示词——用户口径仅要求结构）：第 1 次 user 单轮流式要求仅输出 JSON——采集第 1 段思考+第 1 次正文（JSON，作为第 2 次请求输入回填）；第 2 次流式回填第 1 次历史 messages=[assistant(content=第 1 次正文（JSON）, reasoning_content=第 1 次思考), user 追问]（单键经 dict 表达——K18 口径）并要求仅输出 JSON——采集第 2 段思考+第 2 次正文（JSON，作为第 3 次请求输入回填）；第 3 次流式回填 messages=[assistant(content=第 2 次正文（JSON）, reasoning_content=第 1 次思考, reasoning_content=第 2 次思考), user 追问]——重复键无法经 dict 表达，手工拼接 JSON 文本直发，动态值一律 json.dumps 全转义，发送前三重自检（合法 JSON、reasoning_content 键出现次数==2、转义回读值一致）；硬断言第 1/2 次思考与正文均非空（构造数据源）且正文为合法 JSON（JSON 链断裂即场景无法构造 FAIL；容忍 markdown 代码块围栏）、第 3 次 HTTP 200（核心——被拒绝即 FAIL）+ SSE 事件非空 + 合并正文非空 + finish_reason 合法；耗光回退（K24 口径）：max_tokens=8192 下默认 max 档思考可能耗尽预算（正文空+finish=length）——该形态以 reasoning_effort=low 仅重发耗光请求（第 3 次重发构造不变仅加顶层 reasoning_effort 字段——HTTP 200 核心契约首次请求已达成），断言相同，正文空且 finish≠length 直接 FAIL，low 回退仍无正文即 FAIL（双强度均未产出——留证交开发）；引号覆盖度软观察（三个回填值均无引号/换行字符时 record_warning，不判失败）；采样参数不豁免（默认口径：全局 SAMPLING_PARAMS 覆盖，temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入）；max_tokens=8192 工单口径三次一致；usage 仅日志；模型真实响应断言前打印 | P0 |
 | K26 | 工具 schema 负向前瞻正则应被兼容放行 | 客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前瞻正则——后端编译为 structural_tag 生成约束时底层语法编译器不支持 lookahead：非流式报 400（Failed to compile structural_tag grammar——Lookahead is not supported yet，request id 2026102616110264231215776333070）、流式报 provider_unavailable（upstream_stream_error）；修复（frontend 预处理兼容，非编译器新增 lookahead 支持）：GLM-5.3+glm47 解析器+SGLang、tool_choice=auto、工具未显式 strict、schema 含 ^(?! 开头正则时命中——仅将生成约束工具副本置 strict=false 绕过强制编译，原始 schema/工具描述/格式约束保留；该路径不再由 grammar 强制保证参数满足完整 schema；适用 GLM-5.3 | 按触发形态构造：path 参数 pattern 以 ^(?! 开头（禁止路径穿越 ^(?!.*\.\.).+$）、不显式 strict、tool_choice=auto，user 消息自然诱导 write_workspace_file 调用，非流式+流式各发一次；断言：非流式 HTTP 200（核心——grammar 编译错误复现即 FAIL）+choices 非空+message 结构存在，流式 HTTP 200（核心——provider_unavailable 复现即 FAIL）+SSE 事件非空+至少一个含 choices 数据块；不断言工具被调用与参数满足 pattern（兼容绕过明确口径）、响应形态宽松留日志；采样参数不豁免（用户指定——不进豁免名单，全局 SAMPLING_PARAMS 覆盖）；usage 仅日志 | P0 |
 | K27 | 历史非法 JSON arguments 应被容忍 | 客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型输出的工具调用 arguments 本身非合法 JSON（两处括号错误——"refId": "A"}] 缺 }、40}}}] 处多 }，上游流式日志证实由模型产生）；客户端执行失败、回放全量历史，服务端校验历史 tool_calls 的 arguments 直接 400（Assistant tool call function.arguments must be valid JSON）——纯服务端问题，与 codex 客户端无本质关系；修复：历史无法解析的 arguments 按字符串保留、不再 400、让模型继续纠正；适用 GLM-5.3 | 复刻客户链路（user→assistant(畸形 arguments 调用，保真浓缩版——两处错误形态与关键结构原样、场景自检必非法)→tool(执行失败结果，协议配对必需)→user 追问修正重试，带 MCP 工具定义，非流式，max_tokens=16384（16k——覆盖默认档思考+大尺寸修正输出，low 兜底）），断言 HTTP 200（核心——报错复现即 FAIL）+choices 非空+message 结构存在+模型发起修正工具调用且每条调用 name/id 非空、arguments 为合法 JSON 对象（修正行为——修复目的"让模型继续纠正"）；不断言历史被改写/修复；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；usage 仅日志 | P0 |
+| K28 | 模型输出字段核验（尾裸/回流/工具参数） | 客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通过）；length 截断只记录不判定；适用 GLM-5.3 | 客户探针（scripts/probe_think_tag.py）+ 数据集（requests/AGDC2-24，工单原始参数 stream=true、max_tokens=8192、reasoning_effort=max 原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-24/<model>/<timestamp>/；断言：全部 HTTP 200、T1=0、T2=0、T3=100%——任一不符合即 FAIL；模型名由环境注入；请求体不含 temperature/top_p/seed——按用户指定保持工单原始请求体不变、不注入采样参数；usage 仅日志 | P0 |
 
 ## 运行方式
 
@@ -1993,3 +1994,96 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 - K18 第二个请求的 bash arguments 亦为非合法 JSON（缺 `{`）—
   —若 serving 层该校验在配对校验之后生效，K18 可能同路径触发
   本用例覆盖的报错形态（两次运行的先后顺序可揭示校验层级）
+
+### test_output_fields_think_tag_probe (K28)
+
+**背景**：客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字
+段核验）：客户探针报告对被测平台与对照平台（智谱官方）各 3 用
+例×5 次流式请求做输出字段核验，三项判据均取自实测报告已给出
+判定的标注项：
+
+| # | 测试项 | 判据 | 对应报告标注 |
+|---|--------|------|--------------|
+| T1 | `content` 尾部裸标记残留 | `content` 是否以裸 `</think>` 结尾；**0 次为通过**（被测平台曾 2/15 不通过） | `trailing_closing_marker_candidate` |
+| T2 | 字段回流 | 字段切换序列中是否出现 `content → reasoning`；**0 次为通过** | `reasoning_reentry_candidate` |
+| T3 | 工具参数完整性 | `arguments` 合法完整 JSON，且 `reasoning` 内无 `<arg_key>/<arg_value>/</tool_call>`；**100% 为通过** | `tool_parameter_error` |
+| 观察 | `length` 截断 | 只记录，不判定 | `length_limited` |
+
+工单原始参数：`stream: true`、`max_tokens 8192`、
+`reasoning_effort: max`。
+
+**请求构造**（OpenAI 协议 `/v1/chat/completions` 流式）：
+- 数据集 `requests/AGDC2-24/` 三个用例请求体原样加载
+  （`artifact_python_target` / `minimal_template_escaped` /
+  `PTB-0083_seq406`），工单原始参数 `stream=true`、
+  `max_tokens=8192`、`reasoning_effort=max`、`stream_options.
+  include_usage` 原样保留
+- 模型名由环境注入（覆盖请求体 `model` 字段原值）
+- 请求体不含 temperature/top_p/seed（三个用例顶层字段已逐一核
+  验：model/messages/tools/reasoning_effort/max_tokens/stream/
+  stream_options）——按用户指定保持工单原始请求体不变，不注入
+  采样参数（豁免机制针对 wrapper 注入，本用例经探针直发不涉
+  及；仅 model 字段按框架约定由环境覆盖）
+- 每用例 5 次（`--runs` 硬编码 5，用户指定），共 15 次
+- 只评被测平台（用户指定——不设置 CONTROL_BASE/CONTROL_KEY，
+  不跑对照平台）
+- 探针：`scripts/probe_think_tag.py`（客户单文件探针引入，用例
+  仅调用其 `call`/`analyse`/`CASES` 并传递参数）
+- raw 输出目录（用户指定规则）：Jenkins 构建（BUILD_NUMBER 存
+  在）→ `builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/
+  <model>/`（与 allure-report 同级）；手动执行 →
+  `origin_raw/AGDC2-24/<model>/<timestamp>/`（`%Y%m%d_%H%M%S`）
+- 除 raw 文件外不输出其他额外文件
+
+**断言**（硬——任一不符合即 FAIL）：
+1. 全部请求 HTTP 200（探针无法核验即 FAIL）
+2. T1 尾裸出现次数 == 0
+3. T2 字段回流出现次数 == 0（字段切换序列含 content→reasoning
+   即命中）
+4. T3 工具参数完整性 100%（每次 arguments 合法 JSON 且
+   reasoning 无原生标记）
+
+**判定矩阵**：
+- 任一请求非 200 → FAIL（探针无法完整核验）
+- T1 ≥ 1 → FAIL（content 尾部裸标记残留——原始报告缺陷形态复
+  现）
+- T2 ≥ 1 → FAIL（字段回流——content→reasoning 切换异常）
+- T3 < 100% → FAIL（arguments 非法 JSON 或 reasoning 含原生标
+  记）
+- 三项全部符合 → PASS
+
+**设计决策记录**：
+- **P0**（按客户工单，AGDC2-24）
+- **客户探针单文件引入**：`scripts/probe_think_tag.py` 与原始
+  探针逻辑一致（仅请求体目录指向仓库 requests/AGDC2-24，可用
+  `PROBE_REQ_DIR` 覆盖）；用例调用其 `call`/`analyse`/`CASES`
+  并传递参数（用户指定集成方式）——核验口径与客户报告完全一
+  致
+- **只评被测平台**：不设置 CONTROL_BASE/CONTROL_KEY（探针原生
+  机制——不设则跳过对照），用例不跑对照平台（用户指定）
+- **请求体原样不注入采样参数（用户指定）**：三个用例顶层均不
+  含 temperature/top_p/seed——保持工单原始请求体不变（仅
+  model 字段按框架约定由环境覆盖）；豁免名单机制针对 wrapper
+  注入，本用例经探针直发不涉及
+- **`--runs` 硬编码 5**：对齐客户报告口径（每用例 5 次，共 15
+  条——T1 曾 2/15 命中的样本量）
+- **raw 目录双规则**：Jenkins 以 BUILD_NUMBER 判定并落
+  builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/
+  （与 allure-report 同级——BUILD_OUTPUT_DIR 下）；手动落
+  origin_raw/AGDC2-24/<model>/<timestamp>/（用户指定）
+- **T2 判定口径**：字段切换序列（delta 侧 content/reasoning
+  出现顺序压缩）含 `C→R`（content 后再次 reasoning）即命中—
+  —对齐报告 `reasoning_reentry_candidate` 判据
+- **T3 双要素**：arguments 串拼接后 json.loads 合法 **且**
+  reasoning 不含 `<arg_key>`/`<arg_value>`/`</tool_call>` 原生
+  标记（二者任一不满足即该次不完整）——对齐报告判据
+- **length 截断只记录**：finish=length 不影响三项判据（报告明
+  确只观察不判定）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 探针 `call()` 逐条落盘 raw（含错误响应体）——原始响应逐字
+  节留存对齐客户报告 `origin_raw/` 口径
+- marker：`GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
+- 探针的 `run_base`/`replay` 函数本用例未使用（保留供命令行
+  独立运行/离线复算）

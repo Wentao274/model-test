@@ -2,7 +2,7 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K27
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K28
 为 P0（任何失败应阻断发布），K8/K9 为 P1。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
@@ -526,15 +526,36 @@ K. 客户问题复现测试
   ——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
   0.7、top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
   首跑观察期）
+- K28: 模型输出字段核验（尾裸/回流/工具参数） [P0]
+  客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：
+  客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次
+  为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→
+  reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完
+  整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生
+  标记，100% 为通过）；length 截断只记录不判定。将客户探针
+  （scripts/probe_think_tag.py）与数据集（requests/AGDC2-24，工
+  单原始参数 stream=true、max_tokens=8192、reasoning_effort=max
+  原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）
+  流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三
+  项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/
+  origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→
+  origin_raw/AGDC2-24/<model>/<timestamp>/。硬断言：
+  全部 HTTP 200、T1=0、T2=0、T3=100%——任一不符合即 FAIL。模型
+  名由环境注入；请求体不含 temperature/top_p/seed——按用户指定
+  保持工单原始请求体不变、不注入采样参数。GLM-5.3 专用。（不
+  进 smoke 集：新用例首跑观察期）
 """
 
 import base64
+import importlib.util
 import json
 import math
+import os
 import struct
 import time
 import uuid
 import zlib
+from datetime import datetime
 import pytest
 import requests
 from pathlib import Path
@@ -8086,4 +8107,161 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（arguments 均为合法 JSON 对象），elapsed="
             f"{elapsed:.1f}s, usage="
             f"{json.dumps(usage, ensure_ascii=False)}"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_output_fields_think_tag_probe(
+        self, api_client: ModelAPIClient, test_logger, request
+    ):
+        """K28 [P0]: 客户问题 - 模型输出字段核验（尾裸/回流/工具参数）
+
+        客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核
+        验）：客户探针报告对被测平台与对照平台各 3 用例×5 次流式
+        请求做输出字段核验，判据三项——T1 content 尾部裸 `</think>`
+        标记残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回
+        流（字段切换序列出现 content→reasoning，0 次为通过）、T3
+        工具参数完整性（arguments 合法完整 JSON 且 reasoning 内无
+        <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通
+        过）；length 截断只记录不判定。
+        本用例将客户探针（scripts/probe_think_tag.py——单文件探
+        针，仅调用其 call/analyse/CASES 并传递参数）与数据集
+        （requests/AGDC2-24 三个用例请求体，工单原始参数
+        stream=true、max_tokens=8192、reasoning_effort=max 原样保
+        留）纳入框架：3 用例 × 5 次（--runs 硬编码 5，用户指定）
+        流式请求，只评被测平台（用户指定——不跑对照平台），逐条
+        留存 raw 响应并统计三项判据。raw 输出目录（用户指定）：
+        Jenkins 构建（BUILD_NUMBER 存在）→
+        builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/
+        <model>/（与 allure-report 同级）；手动执行 →
+        <repo>/origin_raw/AGDC2-24/<model>/<timestamp>/（年月日_
+        时分秒）。除 raw 文件外不输出其他额外文件。
+        硬断言（任一不符合即 FAIL）：
+        1. 全部请求 HTTP 200（探针无法核验即 FAIL）
+        2. T1 尾裸出现次数 == 0
+        3. T2 字段回流出现次数 == 0（字段切换序列含 content→
+           reasoning 即命中）
+        4. T3 工具参数完整性 100%（每次 arguments 合法 JSON 且
+           reasoning 无原生标记）
+        模型名由环境注入（请求体 model 字段覆盖）；请求体不含
+        temperature/top_p/seed——按用户指定保持工单原始请求体不
+        变、不注入采样参数（豁免机制针对 wrapper 注入，本用例经探
+        针直发不涉及）；reasoning_effort/max_tokens/stream 为工单
+        场景参数原样保留。GLM-5.3 专用。（不进 smoke 集：新用例
+        首跑观察期）
+        """
+        # K28: 加载客户探针（单文件，scripts/probe_think_tag.py）
+        probe_path = (
+            Path(__file__).parent.parent / "scripts" / "probe_think_tag.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "probe_think_tag", probe_path
+        )
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+
+        K28_RUNS = 5  # --runs 硬编码为 5（用户指定）
+        K28_TICKET = "AGDC2-24"
+        # K28: raw 输出目录（用户指定规则）
+        repo_root = Path(__file__).parent.parent
+        build_number = os.environ.get("BUILD_NUMBER", "")
+        tester = (
+            request.config.getoption("--tester", default=None)
+            or os.environ.get("TESTER")
+            or "unknown"
+        )
+        if build_number:
+            raw_dir = (
+                repo_root / "builds" / tester / build_number
+                / "origin_raw" / K28_TICKET / api_client.model_name
+            )
+        else:
+            raw_dir = (
+                repo_root / "origin_raw" / K28_TICKET
+                / api_client.model_name
+                / datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        test_logger.info(
+            f"=== 测试开始: 客户问题 - 模型输出字段核验（3 用例 × "
+            f"{K28_RUNS} 次流式，判据：T1 尾裸=0 / T2 字段回流=0 / "
+            f"T3 工具参数完整性=100%；只评被测平台；raw 目录: "
+            f"{raw_dir}）==="
+        )
+
+        # 请求体不含 temperature/top_p/seed（三个用例顶层字段已逐
+        # 一核验：model/messages/tools/reasoning_effort/max_tokens/
+        # stream/stream_options）——按用户指定保持工单原始请求体不
+        # 变，不注入采样参数（豁免机制针对 wrapper 注入，本用例经
+        # 探针直发不涉及；仅 model 字段按框架约定由环境覆盖）
+        t1_bare = t2_reentry = t3_bad = http_errors = total = 0
+        for case in probe.CASES:
+            case_file = Path(probe.REQ) / f"{case}.json"
+            with open(case_file, encoding="utf-8") as f:
+                payload = json.load(f)
+            payload.pop("url", None)
+            # 模型名由环境注入（覆盖请求体原值）；其余字段一律保
+            # 持工单原始请求体不变（不注入 temperature/top_p/seed）
+            payload["model"] = api_client.model_name
+            for i in range(1, K28_RUNS + 1):
+                raw_path = raw_dir / f"{case}_r{i}.raw"
+                started = time.time()
+                st, txt = probe.call(
+                    api_client.base_url,
+                    api_client.api_key,
+                    payload,
+                    str(raw_path),
+                    "/v1/chat/completions",
+                )
+                elapsed = time.time() - started
+                a = probe.analyse(txt)
+                total += 1
+                if st != 200:
+                    http_errors += 1
+                if a["bare"]:
+                    t1_bare += 1
+                if "C→R" in a["seq"]:
+                    t2_reentry += 1
+                if (not a["args_ok"]) or a["native"]:
+                    t3_bad += 1
+                test_logger.info(
+                    f"{case} #{i}: HTTP {st}, content={a['c']} 字符, "
+                    f"reasoning={a['r']} 字符, 字段切换="
+                    f"{a['seq'] or '-'}, T1尾裸={'是' if a['bare'] else '否'}, "
+                    f"工具调用={','.join(a['tools']) or '-'}, "
+                    f"finish={a['finish']}, 参数JSON="
+                    f"{'合法' if a['args_ok'] else '非法'}, 原生标记="
+                    f"{a['native']}, elapsed={elapsed:.1f}s"
+                )
+
+        test_logger.info(
+            f"K28 汇总: 共 {total} 次, T1 尾裸={t1_bare}（判据 0）, "
+            f"T2 字段回流={t2_reentry}（判据 0）, T3 参数不完整="
+            f"{t3_bad}（判据 100% 完整）, HTTP 错误={http_errors}"
+        )
+        # 硬断言：任一判据不符合即 FAIL
+        assert http_errors == 0, (
+            f"模型输出字段核验失败：{http_errors}/{total} 次请求非 "
+            f"200——探针无法完整核验（raw 目录: {raw_dir}）"
+        )
+        assert t1_bare == 0, (
+            f"T1 判据不符合：content 尾部裸 </think> 出现 "
+            f"{t1_bare}/{total} 次（判据 0 次——被测平台原始报告即 "
+            f"2/15 不通过，raw 目录: {raw_dir}）"
+        )
+        assert t2_reentry == 0, (
+            f"T2 判据不符合：字段回流（content→reasoning）出现 "
+            f"{t2_reentry}/{total} 次（判据 0 次，raw 目录: {raw_dir}）"
+        )
+        assert t3_bad == 0, (
+            f"T3 判据不符合：工具参数不完整 {t3_bad}/{total} 次（判"
+            f"据 100% 完整——arguments 非法 JSON 或 reasoning 含原生"
+            f"标记，raw 目录: {raw_dir}）"
+        )
+        test_logger.info(
+            f"客户问题复现通过: 模型输出字段核验三项判据全部符合——"
+            f"T1 尾裸 0/{total}、T2 字段回流 0/{total}、T3 工具参数"
+            f"完整性 {total}/{total}（100%），raw 目录: {raw_dir}"
         )

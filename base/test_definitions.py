@@ -1217,6 +1217,31 @@ TEST_CATEGORIES = {
                 "invalid_arguments_history_tolerated",
                 "P0",
             ),
+            (
+                "K28",
+                "模型输出字段核验（尾裸/回流/工具参数）",
+                "客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字"
+                "段核验）：客户探针报告三项判据——T1 content 尾部裸 "
+                "</think> 残留（0 次为通过，被测平台曾 2/15 不通"
+                "过）、T2 字段回流（content→reasoning，0 次为通"
+                "过）、T3 工具参数完整性（arguments 合法完整 JSON 且 "
+                "reasoning 无 <arg_key>/<arg_value>/</tool_call> 原"
+                "生标记，100% 为通过）；length 截断只记录不判定。将"
+                "客户探针（scripts/probe_think_tag.py）与数据集"
+                "（requests/AGDC2-24，工单原始参数 stream=true、"
+                "max_tokens=8192、reasoning_effort=max 原样保留）纳"
+                "入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流"
+                "式请求，只评被测平台（不跑对照），逐条留存 raw 并"
+                "统计三项；raw 目录：Jenkins→builds/<TESTER>/"
+                "<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 "
+                "allure-report 同级），手动→origin_raw/AGDC2-24/"
+                "<model>/<timestamp>/。断言：全部 HTTP 200、T1=0、"
+                "T2=0、T3=100%——任一不符合即 FAIL。模型名由环境注"
+                "入；请求体不含 temperature/top_p/seed——按用户指定"
+                "保持工单原始请求体不变、不注入采样参数",
+                "output_fields_think_tag_probe",
+                "P0",
+            ),
         ],
     },
 }

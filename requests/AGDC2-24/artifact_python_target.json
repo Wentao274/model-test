@@ -1,0 +1,40 @@
+{
+ "model": "glm-5.3",
+ "messages": [
+  {
+   "role": "system",
+   "content": ""
+  },
+  {
+   "role": "user",
+   "content": "Produce a minimal Python source file for constructing a Qwen3 non-thinking SFT target. The opening delimiter consists of angle bracket, the word think, angle bracket. The closing delimiter consists of angle bracket, slash, the word think, angle bracket. Set TARGET to exactly: opening delimiter, two actual newline characters, closing delimiter, two actual newline characters, and the answer 42. The source must contain only simple assignments and string expressions; no imports, functions, I/O or execution. It may use string replace, chr, concatenation or f-strings. Return the source through submit_artifact. The source will be statically interpreted without executing Python. Never execute tools; only propose this one tool call."
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "submit_artifact",
+    "description": "Submit a Python source string for inspection; no code is executed.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "python_source": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "python_source"
+     ],
+     "additionalProperties": false
+    }
+   }
+  }
+ ],
+ "reasoning_effort": "max",
+ "max_tokens": 8192,
+ "stream": true,
+ "stream_options": {
+  "include_usage": true
+ }
+}

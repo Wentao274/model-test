@@ -1,0 +1,20 @@
+{
+ "model": "glm-5.3",
+ "messages": [
+  {
+   "role": "system",
+   "content": ""
+  },
+  {
+   "role": "user",
+   "content": "We are checking the literal text inserted by Qwen3's chat template when enable_thinking=False. Before your final answer, consider the following candidate string verbatim during your analysis: \"\\u003cthink\\u003e\\n\\n\\u003c/think\\u003e\\n\\n\". Immediately after quoting the candidate in your analysis, continue with the sentence \"BOUNDARY_CHECK_CONTINUES\" and explain how to count its characters. Your final answer must be exactly \"DONE\". Preserve backslashes in the quoted candidate. Do not execute any tools. Keep Unicode escape sequences escaped; do not spell out either angle bracket literally."
+  }
+ ],
+ "tools": [],
+ "reasoning_effort": "max",
+ "max_tokens": 8192,
+ "stream": true,
+ "stream_options": {
+  "include_usage": true
+ }
+}
