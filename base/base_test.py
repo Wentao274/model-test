@@ -644,13 +644,24 @@ class StreamingTestMixin:
     def _assert_stream_finish_reason(self, result: Dict[str, Any]) -> str:
         """断言流式响应最后 chunk 的 finish_reason 合法并返回其值
 
+        取最后一个 choices 非空的 chunk 校验 finish_reason：服务端可能
+        在 [DONE] 前追加 usage-only 尾包（形如 {"choices": [], "usage":
+        {...}}），该 chunk 的 choices 为空列表，不可直接取 [0]。
+
         Args:
             result: collect_stream_chunks 返回的字典
         """
         chunks = result.get("chunks", [])
         assert len(chunks) > 0, "No streaming chunks received"
-        last_chunk = chunks[-1]
-        finish_reason = last_chunk.get("choices", [{}])[0].get("finish_reason")
+        last_choice_chunk = None
+        for chunk in reversed(chunks):
+            if chunk.get("choices"):
+                last_choice_chunk = chunk
+                break
+        assert last_choice_chunk is not None, (
+            "No streaming chunk with non-empty choices"
+        )
+        finish_reason = last_choice_chunk["choices"][0].get("finish_reason")
         assert finish_reason in self.VALID_STREAM_FINISH_REASONS, (
             f"Last chunk finish_reason should be one of "
             f"{self.VALID_STREAM_FINISH_REASONS}, got '{finish_reason}'"

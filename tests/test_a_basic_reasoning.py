@@ -285,8 +285,8 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         )
 
         first_chunk = result["chunks"][0]
-        assert first_chunk.get("choices") is not None, (
-            "First chunk should have 'choices' field"
+        assert first_chunk.get("choices"), (
+            "First chunk should have non-empty 'choices' field"
         )
         first_delta = first_chunk["choices"][0].get("delta", {})
         assert (
@@ -302,7 +302,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         # 至少一个 chunk 应有 delta.content 或 delta.reasoning
         has_content_delta = False
         for chunk in result["chunks"]:
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
             if (
                 delta.get("content")
                 or delta.get("reasoning")
@@ -314,12 +314,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
             "At least one chunk should have delta.content or delta.reasoning"
         )
 
-        last_chunk = result["chunks"][-1]
-        last_finish = last_chunk.get("choices", [{}])[0].get("finish_reason")
-        assert last_finish in self.VALID_STREAM_FINISH_REASONS, (
-            f"Last chunk finish_reason should be one of "
-            f"{self.VALID_STREAM_FINISH_REASONS}, got '{last_finish}'"
-        )
+        last_finish = self._assert_stream_finish_reason(result)
 
         # 检测流式响应是否被服务端积攒后一次性返回（软告警）
         is_buffered, duplicate_groups, stats = self.detect_buffered_streaming(result)
