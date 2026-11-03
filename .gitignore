@@ -218,3 +218,6 @@ test_reports/
 logs/
 allure-report/
 allure-results/
+
+# 探针原始响应输出（K28/K29 等手动运行时写至仓库根 origin_raw/ 下）
+origin_raw/
