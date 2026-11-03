@@ -1364,7 +1364,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（连发 {len(K4_USER_PROMPTS)} 次，消息各异）==="
         )
 
-        # 专用预算客户端（F8 先例）：短超时 + retry_times=0，保证未修复时
+        # 专用预算客户端（E8 先例）：短超时 + retry_times=0，保证未修复时
         # 单次最坏耗时 = 单次预算而非预算×(重试+1)；构造时只透传鉴权与
         # 模型，不携带全局采样参数，保持客户原始参数面
         budget_client = ModelAPIClient(

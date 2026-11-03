@@ -314,7 +314,7 @@ class BaseTest(ABC):
         - 连接重置/超时
 
         注意：此方法也将读取超时（timeout/timed out）归为"超限"，这在
-        边界探测场景（D2/D3/F2 等超大输入测试）是合理的——超时往往意味
+        边界探测场景（D2/D3/E2 等超大输入测试）是合理的——超时往往意味
         着模型无法在合理时间内处理该规模输入。但在多策略回退场景
         （_chat_with_thinking_fallback）中，超时应由 _is_read_timeout
         单独处理以避免误跳过。

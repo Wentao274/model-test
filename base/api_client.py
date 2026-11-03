@@ -117,7 +117,7 @@ class ModelAPIClient:
         # 全局采样参数覆盖（来自 --sampling-params，由 conftest 注入）：
         # - temperature：非 None 时强制覆盖每次请求的 temperature（优先于调用方
         #   显式传参）。受限模型仅允许特定采样参数取值，必须统一改写，否则请求
-        #   会被 400 拒绝；参数行为类用例（A6/A7/A10/F3/H2 等）的豁免在
+        #   会被 400 拒绝；参数行为类用例（A6/A7/A10/E3/G2 等）的豁免在
         #   conftest 层完成——不向 client 传入全局值，按用例自身参数执行。
         # - top_p：非 None 时注入（仅当调用方未显式指定）。
         self.temperature = float(temperature) if temperature is not None else None

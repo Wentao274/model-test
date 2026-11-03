@@ -110,12 +110,6 @@ test_config:
     long_context_tokens: 128000
     max_output_tokens: 8000
 
-  # E. 性能测试配置
-  performance:
-    concurrency_levels: [1, 10, 50, 100, 200]
-    benchmark_iterations: 100
-    percentiles: [50, 95, 99]
-
 # 报告配置
 reporting:
   format: [html, json, junit]

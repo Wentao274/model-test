@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（11 大类 × 140 个测试点）
+## 二、测试点总览（9 大类 × 116 个测试点）
 
 ### 分类概览
 
@@ -31,12 +31,10 @@
 | B. 高级生成功能    | 11   | 思考模式、工具调用、结构化输出、reasoning_effort 等    |
 | C. 多模态能力     | 12   | 图片理解、视频理解、OCR、代码截图、多模态工具调用     |
 | D. 长上下文处理    | 12   | 长文本输入/输出、大海捞针、上下文边界、超长上下文验证 |
-| E. 性能指标      | 12   | 延迟、吞吐、并发、显存         |
-| F. 稳定性与边界    | 8    | 异常输入、OOM 恢复、长时间运行   |
-| G. API 兼容性   | 6    | OpenAI 兼容、参数一致性     |
-| H. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
-| I. Completions API 质量评估 | 13   | Completions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
-| J. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
+| E. 稳定性与边界    | 8    | 异常输入、OOM 恢复、长时间运行   |
+| F. API 兼容性   | 7    | OpenAI 兼容（含 /v1/responses 新一代接口）、参数一致性     |
+| G. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
+| H. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
 | K. 客户问题复现 | 30   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验），P0 为主持续追加 |
 
 ---
@@ -123,120 +121,81 @@
 
 ---
 
-### E. 性能指标（12 项）
-
-| #   | 测试点                | 测试内容                              | 测试方法                         | 优先级 |
-|-----|--------------------|-----------------------------------|------------------------------|-----|
-| E1  | TTFT（首 Token 延迟）   | 从请求发出到收到第一个 token 的时间             | benchmark_serving.py / 自定义脚本 | P0  |
-| E2  | TPOT（每 Token 生成时间） | Decode 阶段平均每个 token 耗时            | 统计流式输出 token 间隔              | P0  |
-| E3  | ITL P50/P95/P99    | Token 间延迟的分位数统计                   | 多轮测试取分位数                     | P0  |
-| E4  | 端到端延迟              | 从请求到完整响应的总时间                      | 非流式请求测量                      | P0  |
-| E5  | 吞吐量（tokens/s）      | 单位时间生成的 token 总数                  | 并发压测                         | P0  |
-| E6  | 请求吞吐（req/s）        | 单位时间完成的请求数                        | 固定 QPS 压测                    | P0  |
-| E7  | 并发扩展性              | 并发 1→10→50→100→200 时指标变化          | 阶梯加压测试                       | P0  |
-| E8  | 显存占用               | 不同并发/序列长度下的 GPU 显存消耗              | nvidia-smi 监控                | P0  |
-| E9  | GPU 利用率            | 推理时 GPU 计算单元利用率                   | nvidia-smi / nvtop           | P1  |
-| E10 | 预热时间               | 首次推理 vs 稳态推理的延迟差异                 | 对比前 5 次和稳态                   | P1  |
-| E11 | Prefill 速度         | 不同输入长度（1K/4K/16K/64K）的 prefill 耗时 | 固定短输出，变输入长度                  | P1  |
-| E12 | 突发流量恢复             | 瞬间 100 并发后恢复到正常响应时间               | burst 模式压测                   | P1  |
-
-
----
-
-### F. 稳定性与边界（8 项）
+### E. 稳定性与边界（8 项）
 
 | #   | 测试点    | 测试内容                           | 预期行为              | 优先级 |
 |-----|--------|--------------------------------|-------------------|-----|
-| F1  | 空输入    | 发送空 prompt 或空 messages         | 返回错误提示，不崩溃        | P0  |
-| F2  | 超大输入   | 超过 max_model_len 的输入           | 截断或返回 413 错误      | P1  |
-| F3  | 非法参数   | temperature=-1, max_tokens=0 等 | 返回 400 参数错误       | P2  |
-| F4  | 特殊字符注入 | SQL 注入、Prompt 注入、XSS payload   | 不执行恶意指令，正常回复      | P0  |
-| F5  | 并发稳定性  | 200+ 并发持续运行 1 小时               | 无 crash、无内存泄漏     | P1  |
-| F6  | OOM 恢复 | 显存耗尽后的服务行为                     | 拒绝新请求但不崩溃，显存释放后恢复 | P1  |
-| F7  | 长时间运行  | 连续服务 24 小时                     | 性能不退化，无内存泄漏       | P1  |
-| F8  | 请求超时处理 | 客户端超时断开                        | 服务端正确释放资源         | P1  |
+| E1  | 空输入    | 发送空 prompt 或空 messages         | 返回错误提示，不崩溃        | P0  |
+| E2  | 超大输入   | 超过 max_model_len 的输入           | 截断或返回 413 错误      | P1  |
+| E3  | 非法参数   | temperature=-1, max_tokens=0 等 | 返回 400 参数错误       | P2  |
+| E4  | 特殊字符注入 | SQL 注入、Prompt 注入、XSS payload   | 不执行恶意指令，正常回复      | P0  |
+| E5  | 并发稳定性  | 200+ 并发持续运行 1 小时               | 无 crash、无内存泄漏     | P1  |
+| E6  | OOM 恢复 | 显存耗尽后的服务行为                     | 拒绝新请求但不崩溃，显存释放后恢复 | P1  |
+| E7  | 长时间运行  | 连续服务 24 小时                     | 性能不退化，无内存泄漏       | P1  |
+| E8  | 请求超时处理 | 客户端超时断开                        | 服务端正确释放资源         | P1  |
 
 ---
 
-### G. API 兼容性（6 项）
+### F. API 兼容性（7 项）
 
 
 | #   | 测试点                     | 测试内容                           | 验证要点                                 | 优先级 |
 |-----|-------------------------|--------------------------------|--------------------------------------|-----|
-| G1  | OpenAI Chat Completions | /v1/chat/completions 接口兼容      | 请求格式、返回格式完全兼容                        | P0  |
-| G2  | OpenAI Completions      | /v1/completions 接口兼容           | 传统 completion 格式支持、max_tokens 超限处理     | P1  |
-| G3  | 模型列表                    | /v1/models 返回可用模型              | 正确返回模型 ID 和元信息，当前模型在列表中              | P0  |
-| G4  | Usage 统计                | 返回中 usage 字段准确                 | prompt_tokens + completion_tokens 准确 | P0  |
-| G5  | 错误码规范                   | 401/400/404 错误码               | 符合 OpenAI 错误格式                       | P1  |
-| G6  | 客户端 SDK 兼容              | Python openai                 | 无需修改代码直接调用                           | P0  |
+| F1  | OpenAI Chat Completions | /v1/chat/completions 接口兼容      | 请求格式、返回格式完全兼容                        | P0  |
+| F2  | OpenAI Completions      | /v1/completions 接口兼容           | 传统 completion 格式支持、max_tokens 超限处理     | P1  |
+| F3  | 模型列表                    | /v1/models 返回可用模型              | 正确返回模型 ID 和元信息，当前模型在列表中              | P0  |
+| F4  | Usage 统计                | 返回中 usage 字段准确                 | prompt_tokens + completion_tokens 准确 | P0  |
+| F5  | 错误码规范                   | 401/400/404 错误码               | 符合 OpenAI 错误格式                       | P1  |
+| F6  | 客户端 SDK 兼容              | Python openai                 | 无需修改代码直接调用                           | P0  |
+| F7  | OpenAI Responses API      | /v1/responses 新一代接口兼容      | object=="response"、status==completed、output/output_text 结构、input_tokens/output_tokens 字段名 | P0  |
 
-> **注意**：response_format（json_object/json_schema）测试见 B8/B9，stream 参数测试见 A4，G 类不重复测试。
+> **注意**：response_format（json_object/json_schema）测试见 B8/B9，stream 参数测试见 A4，F 类不重复测试。
 
 
 ---
 
-### H. Chat Completions API 质量评估与回答相关性（13 项）
+### G. Chat Completions API 质量评估与回答相关性（13 项）
 
 | #   | 测试点    | 测试内容                     | 评估方法                      | 优先级 |
 |-----|--------|--------------------------|---------------------------|-----|
-| H1  | 量化质量损失 | Chat Completions API FP16 vs INT4/INT8 输出质量对比 | 相同 prompt 对比，人工评分 + 自动化指标 | P0  |
-| H2  | 生成一致性  | Chat Completions API 相同输入多次生成的稳定性             | seed 固定后比较输出              | P1  |
-| H3  | 幻觉率    | Chat Completions API 生成内容中事实错误的比例             | RAG 场景下对比原文验证             | P1  |
-| H4  | 指令遵循度  | Chat Completions API 复杂指令（格式、长度、角色）遵循程度       | IFBench / 自定义指令集          | P0  |
-| H5  | 响应相关性  | Chat Completions API 问答相关性评估                  | 使用不同领域的问题，检查是否包含相关关键词     | P0  |
-| H6  | 编程领域相关性 | Chat Completions API 验证编程问题的回答相关性             | 检查回答是否包含编程领域关键词           | P0  |
-| H7  | 数学领域相关性 | Chat Completions API 验证数学问题的回答相关性             | 检查回答是否包含数学领域关键词           | P0  |
-| H8  | 科学领域相关性 | Chat Completions API 验证科学问题的回答相关性             | 检查回答是否包含科学领域关键词           | P0  |
-| H9  | 乱码检测   | Chat Completions API 检测输出是否为乱码或无效字符           | 正则检测控制字符、纯符号、异常编码等        | P0  |
-| H10 | 无意义回答检测 | Chat Completions API 检测回答是否与问题完全不相关           | 关键词重叠度分析、trivial response检测 | P1  |
-| H11 | 跨领域相关性 | Chat Completions API 天气/烹饪等领域相关性验证            | 跨领域关键词匹配检测                | P1  |
-| H12 | 上下文一致性 | Chat Completions API 多轮对话中验证上下文一致性            | 多轮记忆验证（记住之前提到的内容）         | P0  |
-| H13 | 回答具体性  | Chat Completions API 确保回答不是泛泛而谈               | 长度+关键词详细度检测               | P2  |
+| G1  | 量化质量损失 | Chat Completions API FP16 vs INT4/INT8 输出质量对比 | 相同 prompt 对比，人工评分 + 自动化指标 | P0  |
+| G2  | 生成一致性  | Chat Completions API 相同输入多次生成的稳定性             | seed 固定后比较输出              | P1  |
+| G3  | 幻觉率    | Chat Completions API 生成内容中事实错误的比例             | RAG 场景下对比原文验证             | P1  |
+| G4  | 指令遵循度  | Chat Completions API 复杂指令（格式、长度、角色）遵循程度       | IFBench / 自定义指令集          | P0  |
+| G5  | 响应相关性  | Chat Completions API 问答相关性评估                  | 使用不同领域的问题，检查是否包含相关关键词     | P0  |
+| G6  | 编程领域相关性 | Chat Completions API 验证编程问题的回答相关性             | 检查回答是否包含编程领域关键词           | P0  |
+| G7  | 数学领域相关性 | Chat Completions API 验证数学问题的回答相关性             | 检查回答是否包含数学领域关键词           | P0  |
+| G8  | 科学领域相关性 | Chat Completions API 验证科学问题的回答相关性             | 检查回答是否包含科学领域关键词           | P0  |
+| G9  | 乱码检测   | Chat Completions API 检测输出是否为乱码或无效字符           | 正则检测控制字符、纯符号、异常编码等        | P0  |
+| G10 | 无意义回答检测 | Chat Completions API 检测回答是否与问题完全不相关           | 关键词重叠度分析、trivial response检测 | P1  |
+| G11 | 跨领域相关性 | Chat Completions API 天气/烹饪等领域相关性验证            | 跨领域关键词匹配检测                | P1  |
+| G12 | 上下文一致性 | Chat Completions API 多轮对话中验证上下文一致性            | 多轮记忆验证（记住之前提到的内容）         | P0  |
+| G13 | 回答具体性  | Chat Completions API 确保回答不是泛泛而谈               | 长度+关键词详细度检测               | P2  |
 
 ---
 
-### I. Completions API 质量评估与回答相关性（13 项）
-
-| #   | 测试点    | 测试内容                     | 评估方法                      | 优先级 |
-|-----|--------|--------------------------|---------------------------|-----|
-| I1  | 生成质量 | Completions API 输出质量对比 | 相同 prompt 对比，自动检测长度与关键词 | P1  |
-| I2  | 生成一致性  | 相同输入多次生成的稳定性             | temperature=0 比较输出一致性         | P1  |
-| I3  | 幻觉率    | Completions API 事实错误检测       | 简单事实性问题验证             | P1  |
-| I4  | 指令遵循度  | 复杂指令（格式、长度、角色）遵循程度       | JSON 格式指令验证          | P1  |
-| I5  | 响应相关性  | Completions API 问答相关性评估      | 使用不同领域的问题，检查是否包含相关关键词     | P1  |
-| I6  | 编程领域相关性 | Completions API 验证编程问题的回答相关性 | 检查回答是否包含编程领域关键词           | P1  |
-| I7  | 数学领域相关性 | Completions API 验证数学问题的回答相关性 | 检查回答是否包含数学领域关键词           | P1  |
-| I8  | 科学领域相关性 | Completions API 验证科学问题的回答相关性 | 检查回答是否包含科学领域关键词           | P1  |
-| I9  | 乱码检测   | Completions API 检测输出是否为乱码或无效字符 | 正则检测控制字符、纯符号、异常编码等        | P1  |
-| I10 | 无意义回答检测 | Completions API 检测回答是否与问题完全不相关 | 关键词重叠度分析、trivial response检测 | P1  |
-| I11 | 跨领域相关性 | Completions API 天气/烹饪等领域相关性验证 | 跨领域关键词匹配检测                | P1  |
-| I12 | 上下文一致性 | Completions API 多轮对话中验证上下文一致性（通过拼接 prompt 模拟） | 多轮记忆验证（记住之前提到的内容）         | P1  |
-| I13 | 回答具体性  | Completions API 确保回答不是泛泛而谈               | 长度+关键词详细度检测               | P2  |
-
----
-
-### J. clear_thinking 参数行为（11 项）
+### H. clear_thinking 参数行为（11 项）
 
 验证 `chat_template_kwargs.clear_thinking` 在多轮对话场景下对历史 assistant 思考内容
 （open-think ... close-think 块）的清除/保留行为，以及与 `enable_thinking` 的正交性。
-仅在多轮对话场景下有意义，单轮请求无效果。J6/J7/J8 覆盖 GLM-5.3 chat_template 的
+仅在多轮对话场景下有意义，单轮请求无效果。H6/H7/H8 覆盖 GLM-5.3 chat_template 的
 `reasoning_content` 独立字段分支、`reasoning_effort` 参数组合、多 assistant 边界逻辑；
-J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、last_user 之后 assistant
+H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、last_user 之后 assistant
 思考保留边界。
 
 | #    | 测试点                                 | 测试内容                                                            | 验证方法                                                | 优先级 |
 |------|------------------------------------|-------------------------------------------------------------------|-----------------------------------------------------|-----|
-| J1   | clear_thinking=true 多轮              | 显式清除历史 thinking，验证多轮请求成功且无 thinking 泄漏到后续上下文                      | 多轮 messages 含历史 think 块，断言响应成功且最终回答可基于历史最终答案推论     | P1  |
-| J2   | clear_thinking=false 多轮             | 显式保留历史 thinking，验证多轮请求成功（此时历史思考被服务端保留并送入上下文）                       | 同 J1 历史，断言响应成功且最终回答可基于历史最终答案推论                     | P1  |
-| J3   | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异                  | 同一组多轮 messages 分别以 true/false 发送，pt_false > pt_true 时 PASS；未生效（相等）时 record_warning + SKIP | P2  |
-| J4   | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | enable_thinking=True 的两个组合必须通过；enable_thinking=False 的组合若检测到模型强制开启思考则 SKIP + WARNING | P1  |
-| J5   | clear_thinking deployment 能力探测       | 探测服务端是否真实实现 clear_thinking（pt_false > pt_true），未生效时记录 WARNING      | 探测未生效时 WARNING + record_warning（不 SKIP，始终报告 deployment 能力）；J3 在此基础上做行为验证 | P1  |
-| J6   | clear_thinking 对 reasoning_content 独立字段的处理 | assistant 以 reasoning_content 独立字段承载思考时验证 clear_thinking 行为（GLM-5.3 模版 L137-138） | 对比 true/false 的 prompt_tokens，相等时 record_warning（不 FAIL） | P1  |
-| J7   | clear_thinking 与 reasoning_effort 组合 | GLM-5.3 核心参数组合，验证参数正交性                            | 四种组合 (clear × effort) 至少 2 个通过；极端组合 pt 相等则 record_warning | P1  |
-| J8   | 多 assistant 边界测试 | 多条历史 assistant 消息下 last_user_index 边界条件（模版 L143，剥除分支）          | user1→assistant1→user2→assistant2→user3，对比 true/false 的 prompt_tokens | P2  |
-| J9   | clear_thinking 默认行为探测 | 不传 clear_thinking 时的服务端默认值验证（Qwen3 预期默认 true） | 不传 vs 显式 true/false 三次请求对比 prompt_tokens，默认 false 或不等则 record_warning | P2  |
-| J10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
-| J11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（J8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
+| H1   | clear_thinking=true 多轮              | 显式清除历史 thinking，验证多轮请求成功且无 thinking 泄漏到后续上下文                      | 多轮 messages 含历史 think 块，断言响应成功且最终回答可基于历史最终答案推论     | P1  |
+| H2   | clear_thinking=false 多轮             | 显式保留历史 thinking，验证多轮请求成功（此时历史思考被服务端保留并送入上下文）                       | 同 H1 历史，断言响应成功且最终回答可基于历史最终答案推论                     | P1  |
+| H3   | clear_thinking 对 prompt_tokens 的影响  | 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异                  | 同一组多轮 messages 分别以 true/false 发送，pt_false > pt_true 时 PASS；未生效（相等）时 record_warning + SKIP | P2  |
+| H4   | clear_thinking 与 enable_thinking 组合 | 四种 (enable_thinking, clear_thinking) 组合均可被服务端接受                    | enable_thinking=True 的两个组合必须通过；enable_thinking=False 的组合若检测到模型强制开启思考则 SKIP + WARNING | P1  |
+| H5   | clear_thinking deployment 能力探测       | 探测服务端是否真实实现 clear_thinking（pt_false > pt_true），未生效时记录 WARNING      | 探测未生效时 WARNING + record_warning（不 SKIP，始终报告 deployment 能力）；H3 在此基础上做行为验证 | P1  |
+| H6   | clear_thinking 对 reasoning_content 独立字段的处理 | assistant 以 reasoning_content 独立字段承载思考时验证 clear_thinking 行为（GLM-5.3 模版 L137-138） | 对比 true/false 的 prompt_tokens，相等时 record_warning（不 FAIL） | P1  |
+| H7   | clear_thinking 与 reasoning_effort 组合 | GLM-5.3 核心参数组合，验证参数正交性                            | 四种组合 (clear × effort) 至少 2 个通过；极端组合 pt 相等则 record_warning | P1  |
+| H8   | 多 assistant 边界测试 | 多条历史 assistant 消息下 last_user_index 边界条件（模版 L143，剥除分支）          | user1→assistant1→user2→assistant2→user3，对比 true/false 的 prompt_tokens | P2  |
+| H9   | clear_thinking 默认行为探测 | 不传 clear_thinking 时的服务端默认值验证（Qwen3 预期默认 true） | 不传 vs 显式 true/false 三次请求对比 prompt_tokens，默认 false 或不等则 record_warning | P2  |
+| H10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
+| H11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（H8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
 ### K. 客户问题复现（30 项）
 
@@ -323,7 +282,7 @@ J9/J10/J11 为补充用例，分别覆盖默认行为探测、行为级验证、
 
 ## 五、测试执行优先级建议
 
-### P0（上线必测，64 项）
+### P0（上线必测，56 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -331,41 +290,36 @@ B1, B4           高级功能 2 项（B1 思考模式、B4 单工具调用）
 B8, B9           结构化输出 2 项
                      多模态 0 项（C 类已降为 P1/P2，仅视觉模型按需评估）
 D1, D4, D5, D12  上下文处理 4 项（D4 超长上下文升至 P0，D2/D3/D11 降为 P1）
-E1-E8            性能指标 8 项
-F1, F4           稳定性 2 项（F1 空输入、F4 特殊字符注入；F2/F3/F5 降为 P1/P2）
-G1, G3, G4, G6   API 兼容 4 项（G3 模型列表升至 P0）
-H1, H4, H5, H6, H7, H8, H9, H12  Chat Completions API 质量评估 8 项（H2 降为 P1，H8 升至 P0）
-                     Completions API 质量评估 0 项（I 类全部降为 P1，仅做选测）
-                     clear_thinking 参数行为 0 项（J 类全部降为 P1/P2，仅做选测）
+E1, E4           稳定性 2 项（E1 空输入、E4 特殊字符注入；E2/E3/E5 降为 P1/P2）
+F1, F3, F4, F6, F7   API 兼容 5 项（F3 模型列表升至 P0，F7 Responses API 新增）
+G1, G4, G5, G6, G7, G8, G9, G12  Chat Completions API 质量评估 8 项（G2 降为 P1，G8 升至 P0）
+                     clear_thinking 参数行为 0 项（H 类全部降为 P1/P2，仅做选测）
 K1-K7, K10-K30  客户问题复现 28 项（均 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 8 + 2 + 4 + 8 + 0 + 0 + 28 = 64 项。
+总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 28 = 57 项。
 
-### P1（选测，60 项）
+### P1（选测，44 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
 B2, B3, B5, B7, B11         高级功能 5 项
 C1, C2, C4, C8, C9, C11     多模态 6 项
 D2, D3, D6-D11              上下文处理 8 项
-E9-E12                       性能指标 4 项
-F2, F5-F8                    稳定性 5 项
-G2, G5                       API 兼容 2 项
-H2, H3, H10, H11            Chat Completions API 质量评估 4 项
-I1-I12                       Completions API 质量评估 12 项
-J1, J2, J4, J5, J6, J7       clear_thinking 参数行为 6 项
-K8, K9                       客户问题复现 2 项（required 工具调用，按客户工单 P1）
+E2, E5-E8                   稳定性 5 项
+F2, F5                      API 兼容 2 项
+G2, G3, G10, G11            Chat Completions API 质量评估 4 项
+H1, H2, H4, H5, H6, H7      clear_thinking 参数行为 6 项
+K8, K9                      客户问题复现 2 项（required 工具调用，按客户工单 P1）
 ```
 
-### P2（低优，16 项）
+### P2（低优，15 项）
 
 ```
 B6, B10                     高级功能 2 项
 C3, C5-C7, C10, C12         多模态 6 项
-F3                          稳定性 1 项
-                            API 兼容 0 项（G7/G8 已移除，response_format 见 B8/B9，stream 见 A4）
-H13                         Chat Completions API 质量评估 1 项
-I13                         Completions API 质量评估 1 项
-J3, J8, J9, J10, J11        clear_thinking 参数行为 5 项
+E3                          稳定性 1 项
+                            API 兼容 0 项（早期移除的 response_format/stream 项分别见 B8/B9、A4；F7 为新增 /v1/responses 接口兼容，P0）
+G13                         Chat Completions API 质量评估 1 项
+H3, H8, H9, H10, H11        clear_thinking 参数行为 5 项
 ```

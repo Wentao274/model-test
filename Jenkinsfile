@@ -4,12 +4,10 @@ def selectedMarkerList() {
         ['MARKER_B_ADVANCED', 'b_advanced'],
         ['MARKER_C_MULTIMODAL', 'c_multimodal'],
         ['MARKER_D_LONG_CONTEXT', 'd_long_context'],
-        ['MARKER_E_PERFORMANCE', 'e_performance'],
-        ['MARKER_F_STABILITY', 'f_stability'],
-        ['MARKER_G_API', 'g_api'],
-        ['MARKER_H_QUALITY_CHAT_COMPLETIONS', 'h_quality_chat_completions'],
-        ['MARKER_I_QUALITY_COMPLETIONS', 'i_quality_completions'],
-        ['MARKER_J_CLEAR_THINKING', 'j_clear_thinking'],
+        ['MARKER_E_STABILITY', 'e_stability'],
+        ['MARKER_F_API', 'f_api'],
+        ['MARKER_G_QUALITY_CHAT_COMPLETIONS', 'g_quality_chat_completions'],
+        ['MARKER_H_CLEAR_THINKING', 'h_clear_thinking'],
         ['MARKER_K_CUSTOMER_ISSUE', 'k_customer_issue'],
         ['MARKER_GLM52', 'GLM52'],
         ['MARKER_GLM53', 'GLM53'],
@@ -53,18 +51,16 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": 1.0, "top_p": 0.95, "seed": ""}', description: '全局采样参数(JSON)。字段默认: temperature=1.0, top_p=0.95, seed=空(不发送)；字段设为null表示不覆盖该参数；整体留空表示全部不覆盖(框架原有行为)。参数行为用例(A6/A7/A10/F3/H2)始终按自身参数执行')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": 1.0, "top_p": 0.95, "seed": ""}', description: '全局采样参数(JSON)。字段默认: temperature=1.0, top_p=0.95, seed=空(不发送)；字段设为null表示不覆盖该参数；整体留空表示全部不覆盖(框架原有行为)。参数行为用例(A6/A7/A10/E3/G2)始终按自身参数执行')
         booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
         booleanParam(name: 'MARKER_C_MULTIMODAL', defaultValue: false, description: 'C类测试 - 多模态能力')
         booleanParam(name: 'MARKER_D_LONG_CONTEXT', defaultValue: false, description: 'D类测试 - 长上下文处理')
-        booleanParam(name: 'MARKER_E_PERFORMANCE', defaultValue: false, description: 'E类测试 - 性能指标')
-        booleanParam(name: 'MARKER_F_STABILITY', defaultValue: false, description: 'F类测试 - 稳定性与边界')
-        booleanParam(name: 'MARKER_G_API', defaultValue: false, description: 'G类测试 - API兼容性')
-        booleanParam(name: 'MARKER_H_QUALITY_CHAT_COMPLETIONS', defaultValue: false, description: 'H类测试 - Chat Completions API质量评估')
-        booleanParam(name: 'MARKER_I_QUALITY_COMPLETIONS', defaultValue: false, description: 'I类测试 - Completions API质量评估')
-        booleanParam(name: 'MARKER_J_CLEAR_THINKING', defaultValue: false, description: 'J类测试 - clear_thinking 参数行为')
+        booleanParam(name: 'MARKER_E_STABILITY', defaultValue: false, description: 'E类测试 - 稳定性与边界')
+        booleanParam(name: 'MARKER_F_API', defaultValue: false, description: 'F类测试 - API兼容性')
+        booleanParam(name: 'MARKER_G_QUALITY_CHAT_COMPLETIONS', defaultValue: false, description: 'G类测试 - Chat Completions API质量评估')
+        booleanParam(name: 'MARKER_H_CLEAR_THINKING', defaultValue: false, description: 'H类测试 - clear_thinking 参数行为')
         booleanParam(name: 'MARKER_K_CUSTOMER_ISSUE', defaultValue: false, description: 'K类测试 - 客户问题复现')
         booleanParam(name: 'MARKER_GLM52', defaultValue: false, description: 'GLM-5.2 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_GLM53', defaultValue: false, description: 'GLM-5.3 模型缺陷相关用例（K套件按模型分组标记）')
@@ -124,44 +120,45 @@ pipeline {
             'tests/test_d_long_context.py::TestLongContext::test_super_long_context_stream',
             'tests/test_d_long_context.py::TestLongContext::test_context_boundary_exact_limit',
             'tests/test_d_long_context.py::TestLongContext::test_reasoning_content_in_long_context',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_empty_input',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_oversized_input',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_invalid_parameters',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_special_character_injection',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_concurrent_stability',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_oom_recovery',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_long_running_service',
-            'tests/test_f_stability.py::TestStabilityAndBoundary::test_request_timeout_handling',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_chat_completions_api',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_completions_api',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_models_list',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_usage_statistics',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_error_codes',
-            'tests/test_g_api_compatibility.py::TestAPICompatibility::test_client_sdk_compatibility',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_consistency',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_hallucination_detection',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_instruction_following',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_programming',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_math',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_science',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_garbled_text_detection',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_nonsensical_response_detection',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_cross_domain_relevance',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_conversation_context_consistency',
-            'tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_response_specificity_check',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_true_multi_turn',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_false_multi_turn',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_prompt_tokens_difference',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_enable_combinations',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_deployment_probe',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_reasoning_field',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_with_reasoning_effort',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_multi_assistant_boundary',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_default_behavior',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_behavioral_verification',
-            'tests/test_j_clear_thinking.py::TestClearThinking::test_clear_thinking_after_last_user_boundary',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_empty_input',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_oversized_input',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_invalid_parameters',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_special_character_injection',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_concurrent_stability',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_oom_recovery',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_long_running_service',
+            'tests/test_e_stability.py::TestStabilityAndBoundary::test_request_timeout_handling',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_chat_completions_api',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_completions_api',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_models_list',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_usage_statistics',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_error_codes',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_client_sdk_compatibility',
+            'tests/test_f_api_compatibility.py::TestAPICompatibility::test_responses_api',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_generation_consistency',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_hallucination_detection',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_instruction_following',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_programming',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_math',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_response_relevance_science',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_garbled_text_detection',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_nonsensical_response_detection',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_cross_domain_relevance',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_conversation_context_consistency',
+            'tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_response_specificity_check',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_true_multi_turn',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_false_multi_turn',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_prompt_tokens_difference',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_enable_combinations',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_deployment_probe',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_reasoning_field',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_with_reasoning_effort',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_multi_assistant_boundary',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_default_behavior',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_behavioral_verification',
+            'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_after_last_user_boundary',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_pydantic_schema_tool_call_stream',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_repeated_request_stability',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_anthropic_prompt_cache_creation',

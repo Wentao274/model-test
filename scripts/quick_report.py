@@ -71,17 +71,13 @@ def main():
                     elif test_id.startswith("D"):
                         marker = "d_long_context"
                     elif test_id.startswith("E"):
-                        marker = "e_performance"
+                        marker = "e_stability"
                     elif test_id.startswith("F"):
-                        marker = "f_stability"
+                        marker = "f_api"
                     elif test_id.startswith("G"):
-                        marker = "g_api"
+                        marker = "g_quality_chat_completions"
                     elif test_id.startswith("H"):
-                        marker = "h_quality_chat_completions"
-                    elif test_id.startswith("I"):
-                        marker = "i_quality_completions"
-                    elif test_id.startswith("J"):
-                        marker = "j_clear_thinking"
+                        marker = "h_clear_thinking"
                     elif test_id.startswith("K"):
                         marker = "k_customer_issue"
                     else:

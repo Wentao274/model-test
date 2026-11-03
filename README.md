@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 11 大类共 140 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 116 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -29,15 +29,13 @@
 | B. 高级生成功能 | `b_advanced` | 11 | 思考模式、工具调用、JSON Mode、reasoning_effort |
 | C. 多模态能力 | `c_multimodal` | 12 | 图片/视频理解、OCR、代码截图、多模态工具调用 |
 | D. 长上下文处理 | `d_long_context` | 12 | 长文本、大海捞针、超长上下文验证 |
-| E. 性能指标 | `e_performance` | 12 | 延迟、吞吐、并发（**已默认禁用**） |
-| F. 稳定性与边界 | `f_stability` | 8 | 异常输入、OOM 恢复 |
-| G. API 兼容性 | `g_api` | 6 | OpenAI 接口兼容 |
-| H. Chat Completions API 质量评估 | `h_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
-| I. Completions API 质量评估 | `i_quality_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测（**已默认禁用**） |
-| J. clear_thinking 参数行为 | `j_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
+| E. 稳定性与边界 | `e_stability` | 8 | 异常输入、OOM 恢复 |
+| F. API 兼容性 | `f_api` | 7 | OpenAI 接口兼容（Chat/Completions/Models/SDK/错误码，含 /v1/responses 新一代接口） |
+| G. Chat Completions API 质量评估 | `g_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
+| H. clear_thinking 参数行为 | `h_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
 | K. 客户问题复现 | `k_customer_issue` | 30 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验），P0 为主持续追加 |
 
-> 总计：140 个测试点（P0: 64 / P1: 60 / P2: 16）
+> 总计：116 个测试点（P0: 57 / P1: 44 / P2: 15）
 
 ---
 
@@ -229,20 +227,17 @@ pytest -m a_basic -v                        # 基础推理能力
 pytest -m b_advanced -v                     # 高级生成功能
 pytest -m c_multimodal -v                   # 多模态能力
 pytest -m d_long_context -v                 # 长上下文处理
-pytest -m f_stability -v                    # 稳定性与边界
-pytest -m g_api -v                          # API 兼容性
-pytest -m h_quality_chat_completions -v     # Chat Completions API 质量评估
-pytest -m i_quality_completions -v          # Completions API 质量评估（已禁用）
-pytest -m j_clear_thinking -v               # clear_thinking 参数行为
-pytest -m k_customer_issue -v              # 客户问题复现（全部 P0）
+pytest -m e_stability -v                    # 稳定性与边界
+pytest -m f_api -v                          # API 兼容性
+pytest -m g_quality_chat_completions -v     # Chat Completions API 质量评估
+pytest -m h_clear_thinking -v               # clear_thinking 参数行为
+pytest -m k_customer_issue -v              # 客户问题复现
 pytest -m p0 -v                             # P0 优先级测试
 pytest -m p1 -v                             # P1 优先级测试
 pytest -m p2 -v                             # P2 优先级测试
 pytest -m smoke -v                          # 冒烟测试（核心功能快速验证）
 pytest -m slow -v                           # 慢速测试
 ```
-
-> E 类（`e_performance`）和 I 类（`i_quality_completions`）测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
 
 ### 参数说明
 
@@ -281,7 +276,7 @@ pytest -m slow -v                           # 慢速测试
 - **temperature：强制覆盖**——优先于用例显式传参，保证受限模型下所有请求统一携带允许值
 - **top_p / seed：注入式覆盖**——仅当请求未显式携带该参数时注入
 
-豁免机制：以下用例显式指定采样参数且断言逻辑与参数行为相关，全局覆盖对其**不生效**，始终按用例自身参数执行——A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、F3 `test_invalid_parameters`、H2/I2 `test_generation_consistency`、K1 `test_pydantic_schema_tool_call_stream`（豁免名单见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
+豁免机制：以下用例显式指定采样参数且断言逻辑与参数行为相关，全局覆盖对其**不生效**，始终按用例自身参数执行——A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`、K1 `test_pydantic_schema_tool_call_stream`（豁免名单见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
 > 注意：受限模型上豁免用例携带非允许值（如 `temperature=0`）的请求会 400 失败，反映的是模型真实能力限制，非误报。
 
@@ -369,9 +364,9 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `SAMPLING_PARAMS` | string | `{"temperature": 1.0, "top_p": 0.95, "seed": ""}` | 全局采样参数（JSON）。字段默认：`temperature=1.0`、`top_p=0.95`、`seed` 空（不发送）；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（框架原有行为）。参数行为用例（A6/A7/A10/F3/H2）始终按自身参数执行，详见[全局采样参数覆盖](#全局采样参数覆盖) |
+| `SAMPLING_PARAMS` | string | `{"temperature": 1.0, "top_p": 0.95, "seed": ""}` | 全局采样参数（JSON）。字段默认：`temperature=1.0`、`top_p=0.95`、`seed` 空（不发送）；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（框架原有行为）。参数行为用例（A6/A7/A10/E3/G2）始终按自身参数执行，详见[全局采样参数覆盖](#全局采样参数覆盖) |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
-| `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_k（跳过 test_e、test_i）下的所有具体测试函数 |
+| `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_h 与 test_k 下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |
 | `RECIPIENTS` | text | `liwt@zetyun.com` | 测试报告邮件接收者（逗号分隔） |
 | `WORK_DIR` | string | `/dingofs/data2/.../model-test` | 远程测试仓库目录（请勿改动） |
@@ -381,7 +376,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | 值 | 含义 |
 |----|------|
 | `all` | 全部测试（不传 `-m`） |
-| `a_basic` ~ `k_customer_issue` | 按 A~K 分类运行 |
+| 9 大分类 marker（`a_basic` ~ `h_clear_thinking`、`k_customer_issue`） | 按 A~H、K 分类运行 |
 | `p0` / `p1` / `p2` | 按优先级运行 |
 | `smoke` | 冒烟测试 |
 | `slow` | 慢速测试 |
@@ -429,7 +424,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 
 1. **测试概要** — 构建编号、模型描述、测试人员、芯片/模型/框架/PD 模式/测试标记/指定用例/思考模式/ReasoningEffort/SamplingParams、执行时间、构建状态
 2. **统计汇总** — 总测试点数、通过/未通过/部分通过/未测试数量及占比、通过率
-3. **分类统计** — 按 11 大分类的通过率统计
+3. **分类统计** — 按 9 大分类的通过率统计
 4. **跳过用例说明** — 列出所有跳过用例的原因。整类全部跳过时仅显示一行汇总（如"C 类多模态能力：全部 12 个用例跳过：Model does not support multimodal input"），部分跳过时逐条列出（如"B10 Prefix/Suffix约束：API不支持prefix参数"）
 5. **测试结论** — 按用例优先级（P0/P1/P2）自动判定（详见[测试结论判定](#测试结论判定)）
 
@@ -457,7 +452,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | P1 | 重要 | 推荐指标，失败建议修复 |
 | P2 | 一般 | 增强指标，失败可酌情接受 |
 
-每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 130 项）：P0 = 54，P1 = 60，P2 = 16。
+每个测试用例的优先级在 `base/test_definitions.py` 中配置（合计 116 项）：P0 = 57，P1 = 44，P2 = 15。
 
 ### 判定规则
 
@@ -472,7 +467,7 @@ builds/{TESTER}/{BUILD_NUMBER}/
 | ✅ 通过 | 已运行用例全部通过且无警告 | 测试结果可接受 |
 
 > **关于未运行（SKIPPED）用例**：未运行的用例**不参与**结论判定，既不计入失败，也不计入通过。在统计汇总中，`通过率 = 通过 / (通过 + 未通过)`，`未测试` 单独展示但不参与分母。跳过原因会记录在报告的"跳过用例说明"区域，区分以下场景：
-> - **整类全部跳过**：如 C 类多模态（模型不支持多模态输入）、E 类性能/I 类 Completions（已禁用），仅显示一行汇总原因
+> - **整类全部跳过**：如 C 类多模态（模型不支持多模态输入），仅显示一行汇总原因
 > - **个别用例跳过**：如 B10 Prefix/Suffix（API 不支持 prefix 参数）、B11 reasoning_effort（模型不支持该参数），逐条列出跳过原因
 
 ### 结论展示内容
@@ -537,12 +532,10 @@ model-test/
 - [B 类测试说明](docs/test_b_advanced_generation.md)
 - [C 类测试说明](docs/test_c_multimodal.md)
 - [D 类测试说明](docs/test_d_long_context.md)
-- [E 类测试说明](docs/test_e_performance.md)
-- [F 类测试说明](docs/test_f_stability.md)
-- [G 类测试说明](docs/test_g_api_compatibility.md)
-- [H 类测试说明](docs/test_h_quality_chat_completions.md)
-- [I 类测试说明](docs/test_i_quality_completions.md)
-- [J 类测试说明](docs/test_j_clear_thinking.md)
+- [E 类测试说明](docs/test_e_stability.md)
+- [F 类测试说明](docs/test_f_api_compatibility.md)
+- [G 类测试说明](docs/test_g_quality_chat_completions.md)
+- [H 类测试说明](docs/test_h_clear_thinking.md)
 - [K 类测试说明](docs/test_k_customer_issue.md)
 
 ---
@@ -553,6 +546,5 @@ model-test/
 2. `--base-url` 无需带 `/v1` 后缀，框架会自动拼接；若误带也会自动去除。
 3. 芯片名称自动转小写（如 `NVIDIA-H100` → `nvidia-h100`）。
 4. `thinking_mode` 不指定时使用 `config.yaml` 中的模型配置；命令行 `--thinking-mode` / `--no-thinking-mode` 优先级最高。
-5. E 类性能测试和 I 类 Completions 质量测试已默认禁用（`conftest.py` 中自动 skip）。
-6. Jenkins 构建中"运行测试"阶段失败不会中断流水线，后续报告生成与邮件发送仍会执行（构建结果置为 UNSTABLE）。
-7. Jenkins 远程构建保留最近 20 次产物，更早的自动清理。
+5. Jenkins 构建中"运行测试"阶段失败不会中断流水线，后续报告生成与邮件发送仍会执行（构建结果置为 UNSTABLE）。
+6. Jenkins 远程构建保留最近 20 次产物，更早的自动清理。

@@ -1,5 +1,5 @@
 """
-J. clear_thinking 参数行为测试
+H. clear_thinking 参数行为测试
 
 本测试类专门验证 chat_template_kwargs.clear_thinking 参数在多轮对话中的行为。
 clear_thinking 仅在多轮对话场景下有意义：控制历史 assistant 消息中的思考内容
@@ -7,35 +7,35 @@ clear_thinking 仅在多轮对话场景下有意义：控制历史 assistant 消
 是否被清除。
 
 测试点：
-- J1: clear_thinking=true 多轮 - 显式清除历史 thinking，验证多轮请求成功且无泄漏 [P1]
-- J2: clear_thinking=false 多轮 - 显式保留历史 thinking，验证多轮请求成功 [P1]
-- J3: clear_thinking 对 prompt_tokens 的影响 - 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异 [P2]
-- J4: clear_thinking 与 enable_thinking 组合 - 四种组合均可被服务端接受 [P1]
-- J5: clear_thinking deployment 能力探测 - 探测服务端是否真实实现 clear_thinking [P1]
-- J6: clear_thinking 对 reasoning_content 独立字段的处理 - 验证 assistant 消息
+- H1: clear_thinking=true 多轮 - 显式清除历史 thinking，验证多轮请求成功且无泄漏 [P1]
+- H2: clear_thinking=false 多轮 - 显式保留历史 thinking，验证多轮请求成功 [P1]
+- H3: clear_thinking 对 prompt_tokens 的影响 - 对比 true/false 在含历史 thinking 的请求下 prompt_tokens 差异 [P2]
+- H4: clear_thinking 与 enable_thinking 组合 - 四种组合均可被服务端接受 [P1]
+- H5: clear_thinking deployment 能力探测 - 探测服务端是否真实实现 clear_thinking [P1]
+- H6: clear_thinking 对 reasoning_content 独立字段的处理 - 验证 assistant 消息
   以 reasoning_content 字段承载思考内容时 clear_thinking 的剥除/保留行为 [P1]
-- J7: clear_thinking 与 reasoning_effort 组合 - GLM-5.3 等模型的核心参数组合 [P1]
-- J8: 多 assistant 边界测试 - 多条历史 assistant 消息下 last_user_index 边界条件 [P2]
-- J9: clear_thinking 默认行为探测 - 不传 clear_thinking 时的服务端默认值 [P2]
-- J10: clear_thinking 行为级验证 - follow-up 依赖历史思考内容，验证模型是否真的"看到"历史 thinking [P2]
-- J11: last_user 之后 assistant 思考保留边界 - 验证模版 loop.index0 > last_user_index 分支 [P2]
+- H7: clear_thinking 与 reasoning_effort 组合 - GLM-5.3 等模型的核心参数组合 [P1]
+- H8: 多 assistant 边界测试 - 多条历史 assistant 消息下 last_user_index 边界条件 [P2]
+- H9: clear_thinking 默认行为探测 - 不传 clear_thinking 时的服务端默认值 [P2]
+- H10: clear_thinking 行为级验证 - follow-up 依赖历史思考内容，验证模型是否真的"看到"历史 thinking [P2]
+- H11: last_user 之后 assistant 思考保留边界 - 验证模版 loop.index0 > last_user_index 分支 [P2]
 
 说明：
 - 历史 assistant 消息以 content 直接携带 open-think ... close-think 块的方式构造，
   这是 vLLM Qwen3/GLM5 等 chat_template 在服务端渲染时实际处理的对象，与服务端
   chat_template 的 clear_thinking 分支正面对应。
-- J6 额外验证 reasoning_content 作为独立字段（而非 content 内嵌标签）的场景，
+- H6 额外验证 reasoning_content 作为独立字段（而非 content 内嵌标签）的场景，
   覆盖 GLM-5.3 模版 L137-138 的 `m.reasoning_content is string` 分支。
-- J7 验证 clear_thinking 与 reasoning_effort 的组合，覆盖 GLM-5.3 模版同时使用
+- H7 验证 clear_thinking 与 reasoning_effort 的组合，覆盖 GLM-5.3 模版同时使用
   两个核心参数的场景。
-- J8 验证多条 assistant 消息下 clear_thinking 对 last_user_index 之前消息的
+- H8 验证多条 assistant 消息下 clear_thinking 对 last_user_index 之前消息的
   差异化处理（模版 L143: `loop.index0 > ns.last_user_index`）。
-- J9 验证不传 clear_thinking 时的服务端默认行为，对比显式 true/false，
+- H9 验证不传 clear_thinking 时的服务端默认行为，对比显式 true/false，
   确认默认值是否符合预期（Qwen3 默认 true）。
-- J10 与 J1-J8 的 token 数验证互补：follow-up 问题依赖历史思考内容而非最终答案，
+- H10 与 H1-H8 的 token 数验证互补：follow-up 问题依赖历史思考内容而非最终答案，
   验证 clear_thinking=false 时模型能回忆思考细节、true 时不能，提供行为级佐证。
-- J11 验证 last_user 之后的 assistant 消息即使 clear_thinking=true 也保留思考，
-  覆盖模版 `loop.index0 > ns.last_user_index` 的"保留"分支（J8 只覆盖"剥除"分支）。
+- H11 验证 last_user 之后的 assistant 消息即使 clear_thinking=true 也保留思考，
+  覆盖模版 `loop.index0 > ns.last_user_index` 的"保留"分支（H8 只覆盖"剥除"分支）。
 - enable_thinking 通过多种下发格式自动回退（chat_template_kwargs.enable_thinking /
   chat_template_kwargs.thinking / 顶层 enable_thinking / thinking.type），任一成功
   即视为服务端支持，避免对单一 deployment 形态过度耦合。
@@ -91,7 +91,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
     """clear_thinking 参数行为测试类"""
 
     def get_test_category(self) -> str:
-        return "J. clear_thinking 参数行为"
+        return "H. clear_thinking 参数行为"
 
     def _build_multi_turn_messages(
         self, history_content: str = HISTORY_ASSISTANT_CONTENT
@@ -135,11 +135,11 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         Args:
             only_strategy: 若指定（如 "chat_template_kwargs.enable_thinking"），
-                则只尝试该策略，不做回退。J3 用此参数保证 true/false 对比时使用
+                则只尝试该策略，不做回退。H3 用此参数保证 true/false 对比时使用
                 相同下发格式，避免 prompt_tokens 对比受策略差异干扰。
             record_warning: conftest 的 record_warning 回调。若传入，则在所有策略
                 均失败、pytest.skip 之前调用它记录告警，使报告中"模型可能不支持
-                clear_thinking"的信息可追溯。J1/J2/J4 等直接调用方应传入此回调。
+                clear_thinking"的信息可追溯。H1/H2/H4 等直接调用方应传入此回调。
 
         Returns:
             (response, strategy_name) - 响应字典与实际生效的策略名
@@ -348,13 +348,13 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         )
         return effective, strategy_true, pt_true, pt_false
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p1
     @pytest.mark.smoke
     def test_clear_thinking_true_multi_turn(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J1 [P1]: clear_thinking=true 多轮
+        """H1 [P1]: clear_thinking=true 多轮
 
         显式指定 chat_template_kwargs.clear_thinking=true，发送含历史
         thinking 块的多轮请求，验证：
@@ -374,7 +374,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             record_warning=record_warning,
         )
         self.log_full_response(
-            test_logger, response, f"J1-clear_thinking=true [{strategy}]"
+            test_logger, response, f"H1-clear_thinking=true [{strategy}]"
         )
 
         self.assert_response_success(response)
@@ -388,17 +388,17 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             "clear_thinking=true 下第二轮最终回答不应为空"
         )
 
-        self._soft_assert_followup(content_clean, test_logger, "J1")
+        self._soft_assert_followup(content_clean, test_logger, "H1")
         test_logger.info(
             f"clear_thinking=true 多轮用例通过 (策略: {strategy})"
         )
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p1
     def test_clear_thinking_false_multi_turn(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J2 [P1]: clear_thinking=false 多轮
+        """H2 [P1]: clear_thinking=false 多轮
 
         显式指定 chat_template_kwargs.clear_thinking=false，发送含历史
         thinking 块的多轮请求，验证：
@@ -419,7 +419,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             record_warning=record_warning,
         )
         self.log_full_response(
-            test_logger, response, f"J2-clear_thinking=false [{strategy}]"
+            test_logger, response, f"H2-clear_thinking=false [{strategy}]"
         )
 
         self.assert_response_success(response)
@@ -433,17 +433,17 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             "clear_thinking=false 下第二轮最终回答不应为空"
         )
 
-        self._soft_assert_followup(content_clean, test_logger, "J2")
+        self._soft_assert_followup(content_clean, test_logger, "H2")
         test_logger.info(
             f"clear_thinking=false 多轮用例通过 (策略: {strategy})"
         )
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p2
     def test_clear_thinking_prompt_tokens_difference(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J3 [P2]: clear_thinking 对 prompt_tokens 的影响
+        """H3 [P2]: clear_thinking 对 prompt_tokens 的影响
 
         使用同一组多轮 messages 分别以 clear_thinking=true 和
         clear_thinking=false 发送请求，对比两者的 usage.prompt_tokens。
@@ -453,10 +453,10 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         - 服务端未返回 usage 字段时 SKIP（无法判定，不视为失败）。
         - pt_false == pt_true（参数被接受但未生效）时 record_warning + SKIP，
           视为"服务端不支持 clear_thinking 的真实实现"，不判失败——
-          与 J5/J6/J7/J8 的"未生效则告警"策略保持一致。
+          与 H5/H6/H7/H8 的"未生效则告警"策略保持一致。
 
-        与 J5 的关系：J5 是"能力探测"（未生效时 WARNING 但不 SKIP，始终报告
-        deployment 能力），J3 是"行为验证"（未生效时 record_warning + SKIP，
+        与 H5 的关系：H5 是"能力探测"（未生效时 WARNING 但不 SKIP，始终报告
+        deployment 能力），H3 是"行为验证"（未生效时 record_warning + SKIP，
         不在未生效的 deployment 上强行通过）。两者互补。
         """
         test_logger.info("=== 测试开始: clear_thinking 对 prompt_tokens 的影响 ===")
@@ -497,13 +497,13 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             record_warning(warn_msg)
             pytest.skip(warn_msg)
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p1
     @pytest.mark.smoke
     def test_clear_thinking_enable_combinations(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J4 [P1]: clear_thinking 与 enable_thinking 组合
+        """H4 [P1]: clear_thinking 与 enable_thinking 组合
 
         遍历四种 (enable_thinking, clear_thinking) 组合：
 
@@ -513,9 +513,9 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
           - 若服务端尊重参数（响应无思考内容）：必须返回 HTTP 200 且响应非空。
           - 若模型强制开启思考（响应仍含 reasoning_content 或 think 标签）：
             SKIP 该组合并 record_warning，**不视为失败**——这是模型固有特性，
-            不是参数处理 bug。J4 仍可通过（只要 enable_thinking=True 的组合通过）。
+            不是参数处理 bug。H4 仍可通过（只要 enable_thinking=True 的组合通过）。
 
-        这样在强制开启思考的模型（如部分 deepseek/glm 部署）上，J4 不会因为
+        这样在强制开启思考的模型（如部分 deepseek/glm 部署）上，H4 不会因为
         enable_thinking=False 被忽略而误判失败，同时报告会明确标记该特性。
         """
         test_logger.info("=== 测试开始: clear_thinking 与 enable_thinking 组合 ===")
@@ -544,7 +544,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             )
             self.log_full_response(
                 test_logger, response,
-                f"J4-(enable={enable},clear={clear}) [{strategy}]",
+                f"H4-(enable={enable},clear={clear}) [{strategy}]",
             )
             self.assert_response_success(response)
 
@@ -601,28 +601,28 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         test_logger.info("clear_thinking 组合矩阵用例通过")
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p1
     def test_clear_thinking_deployment_probe(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J5 [P1]: clear_thinking deployment 能力探测
+        """H5 [P1]: clear_thinking deployment 能力探测
 
-        在做行为验证（J3）之前，先探测当前 deployment 是否真的实现了
+        在做行为验证（H3）之前，先探测当前 deployment 是否真的实现了
         clear_thinking 对历史 thinking 的剥除/保留行为。这是 deployment 能力
-        的"事实判定"用例，不影响 J3 的判定，但会在报告中明确标记：
+        的"事实判定"用例，不影响 H3 的判定，但会在报告中明确标记：
 
         - 生效：prompt_tokens(false) > prompt_tokens(true)，记录 INFO，
-          提示 J3 应能 PASS
+          提示 H3 应能 PASS
         - 未生效（pt 相等）：记录 WARNING 并调用 record_warning，
           提示运维/算法团队该 deployment 未真实实现 clear_thinking，
           仅"接受参数"但不"处理参数"
         - 探测失败（请求异常 / 无 usage）：SKIP，不视为失败
 
-        与 J3 的关系：J5 是"能力探测"（未生效时 WARNING 但不 SKIP，始终报告
-        deployment 能力），J3 是"行为验证"（未生效时 record_warning + SKIP，
-        不在未生效的 deployment 上强行通过）。两者互补：J5 让报告对 deployment
-        能力可见，J3 在未生效时跳过行为验证。
+        与 H3 的关系：H5 是"能力探测"（未生效时 WARNING 但不 SKIP，始终报告
+        deployment 能力），H3 是"行为验证"（未生效时 record_warning + SKIP，
+        不在未生效的 deployment 上强行通过）。两者互补：H5 让报告对 deployment
+        能力可见，H3 在未生效时跳过行为验证。
         """
         test_logger.info("=== 测试开始: clear_thinking deployment 能力探测 ===")
 
@@ -649,20 +649,20 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             test_logger.info(
                 f"✓ 当前 deployment 真实实现 clear_thinking: "
                 f"false 比 true 多 {pt_false - pt_true} 个 prompt_tokens，"
-                f"J3 行为验证应能 PASS"
+                f"H3 行为验证应能 PASS"
             )
         else:
             warning_msg = (
                 f"✗ 当前 deployment 未真实实现 clear_thinking "
                 f"(pt_true={pt_true} == pt_false={pt_false}, 策略 {strategy}): "
                 f"服务端仅接受参数但不剥除/保留历史 thinking，"
-                f"J3 行为验证将 record_warning + SKIP"
+                f"H3 行为验证将 record_warning + SKIP"
             )
             test_logger.warning(warning_msg)
             record_warning(warning_msg)
 
     # ------------------------------------------------------------------
-    # J6: clear_thinking 对 reasoning_content 独立字段的处理
+    # H6: clear_thinking 对 reasoning_content 独立字段的处理
     # ------------------------------------------------------------------
 
     # 历史 assistant 的思考内容，以 reasoning_content 独立字段方式承载（而非
@@ -698,12 +698,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             {"role": "user", "content": HISTORY_USER_2},
         ]
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p1
     def test_clear_thinking_reasoning_field(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J6 [P1]: clear_thinking 对 reasoning_content 独立字段的处理
+        """H6 [P1]: clear_thinking 对 reasoning_content 独立字段的处理
 
         历史 assistant 消息以 reasoning_content 独立字段承载思考内容
         （而非 content 内嵌 open-think/close-think 块），覆盖 GLM-5.3 模版
@@ -734,7 +734,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         self.log_full_response(
             test_logger, response_true,
-            f"J6-clear_thinking=true [reasoning_field] [{strategy_true}]",
+            f"H6-clear_thinking=true [reasoning_field] [{strategy_true}]",
         )
         self.assert_response_success(response_true)
         self.assert_content_not_empty(response_true)
@@ -742,7 +742,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         content_true = self.get_message_content(
             response_true, strip_thinking=True, strip_reasoning=True
         )
-        self._soft_assert_followup(content_true, test_logger, "J6-true")
+        self._soft_assert_followup(content_true, test_logger, "H6-true")
 
         # 2. clear_thinking=false（使用相同策略保证对比一致性）
         messages_false = self._build_multi_turn_messages_with_reasoning_field()
@@ -756,7 +756,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         self.log_full_response(
             test_logger, response_false,
-            f"J6-clear_thinking=false [reasoning_field] [{strategy_true}]",
+            f"H6-clear_thinking=false [reasoning_field] [{strategy_true}]",
         )
         self.assert_response_success(response_false)
         self.assert_content_not_empty(response_false)
@@ -764,13 +764,13 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         content_false = self.get_message_content(
             response_false, strip_thinking=True, strip_reasoning=True
         )
-        self._soft_assert_followup(content_false, test_logger, "J6-false")
+        self._soft_assert_followup(content_false, test_logger, "H6-false")
 
         # 3. 对比 prompt_tokens
         pt_true = (response_true.get("usage") or {}).get("prompt_tokens")
         pt_false = (response_false.get("usage") or {}).get("prompt_tokens")
         test_logger.info(
-            f"J6 prompt_tokens 对比 (reasoning_field, 策略 {strategy_true}): "
+            f"H6 prompt_tokens 对比 (reasoning_field, 策略 {strategy_true}): "
             f"clear=true -> {pt_true}, clear=false -> {pt_false}"
         )
 
@@ -798,12 +798,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
                 test_logger.warning(warn_msg)
                 record_warning(warn_msg)
         else:
-            test_logger.warning("服务端未返回 prompt_tokens，无法对比 J6 差异")
+            test_logger.warning("服务端未返回 prompt_tokens，无法对比 H6 差异")
 
         test_logger.info("clear_thinking reasoning_content 独立字段用例完成")
 
     # ------------------------------------------------------------------
-    # J7: clear_thinking 与 reasoning_effort 组合
+    # H7: clear_thinking 与 reasoning_effort 组合
     # ------------------------------------------------------------------
 
     def _send_with_clear_thinking_and_effort(
@@ -895,12 +895,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         )
         return None, None
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p1
     def test_clear_thinking_with_reasoning_effort(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J7 [P1]: clear_thinking 与 reasoning_effort 组合
+        """H7 [P1]: clear_thinking 与 reasoning_effort 组合
 
         GLM-5.3 等模型通过 reasoning_effort（low/high/max）控制思考强度，
         通过 clear_thinking 控制历史思考剥除。本用例验证两者组合使用时：
@@ -942,7 +942,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
             self.log_full_response(
                 test_logger, response,
-                f"J7-({key}) [{strategy}]",
+                f"H7-({key}) [{strategy}]",
             )
             self.assert_response_success(response)
             self.assert_content_not_empty(response)
@@ -964,7 +964,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         # 汇总日志
         test_logger.info(
-            f"J7 组合矩阵结果: 通过 {len(results)}/{len(combos)}"
+            f"H7 组合矩阵结果: 通过 {len(results)}/{len(combos)}"
         )
         for key, r in results.items():
             test_logger.info(f"  [PASS] {key} -> 策略 {r['strategy']}")
@@ -991,7 +991,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
                 results[key_false_high]["response"].get("usage") or {}
             ).get("prompt_tokens")
             test_logger.info(
-                f"J7 极端组合 prompt_tokens 对比: "
+                f"H7 极端组合 prompt_tokens 对比: "
                 f"clear=true+low={pt_clear_low}, clear=false+high={pt_false_high}"
             )
             if pt_clear_low is not None and pt_false_high is not None:
@@ -1009,12 +1009,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
                     test_logger.warning(warn_msg)
                     record_warning(warn_msg)
             else:
-                test_logger.warning("服务端未返回 prompt_tokens，无法对比 J7 极端组合")
+                test_logger.warning("服务端未返回 prompt_tokens，无法对比 H7 极端组合")
 
         test_logger.info("clear_thinking 与 reasoning_effort 组合用例完成")
 
     # ------------------------------------------------------------------
-    # J8: 多 assistant 边界测试（last_user_index 逻辑）
+    # H8: 多 assistant 边界测试（last_user_index 逻辑）
     # ------------------------------------------------------------------
 
     # 第三轮 user 的提问，基于前两轮的最终答案
@@ -1050,12 +1050,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         ]
         return messages
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p2
     def test_clear_thinking_multi_assistant_boundary(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J8 [P2]: 多 assistant 边界测试
+        """H8 [P2]: 多 assistant 边界测试
 
         多条历史 assistant 消息（均在 last_user 之前）下，验证 clear_thinking
         对所有历史 assistant 消息的统一处理。
@@ -1087,7 +1087,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         self.log_full_response(
             test_logger, response_true,
-            f"J8-clear_thinking=true [multi-assistant] [{strategy_true}]",
+            f"H8-clear_thinking=true [multi-assistant] [{strategy_true}]",
         )
         self.assert_response_success(response_true)
         self.assert_content_not_empty(response_true)
@@ -1095,13 +1095,13 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         content_true = self.get_message_content(
             response_true, strip_thinking=True, strip_reasoning=True
         )
-        test_logger.info(f"J8 clear=true 最终回答: {content_true[:2000]}...")
+        test_logger.info(f"H8 clear=true 最终回答: {content_true[:2000]}...")
         # 两轮结果 42 + 126 = 168
         if any(kw in content_true for kw in ["168", "42 + 126", "42+126"]):
-            test_logger.info("J8 clear=true 响应包含正确推论 168")
+            test_logger.info("H8 clear=true 响应包含正确推论 168")
         else:
             test_logger.warning(
-                f"J8 clear=true 未命中期望推论 168，响应: {content_true[:500]}"
+                f"H8 clear=true 未命中期望推论 168，响应: {content_true[:500]}"
             )
 
         # 2. clear_thinking=false（相同策略）
@@ -1116,7 +1116,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         self.log_full_response(
             test_logger, response_false,
-            f"J8-clear_thinking=false [multi-assistant] [{strategy_true}]",
+            f"H8-clear_thinking=false [multi-assistant] [{strategy_true}]",
         )
         self.assert_response_success(response_false)
         self.assert_content_not_empty(response_false)
@@ -1124,13 +1124,13 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         content_false = self.get_message_content(
             response_false, strip_thinking=True, strip_reasoning=True
         )
-        test_logger.info(f"J8 clear=false 最终回答: {content_false[:2000]}...")
+        test_logger.info(f"H8 clear=false 最终回答: {content_false[:2000]}...")
 
         # 3. 对比 prompt_tokens（多 assistant 场景差异应更大）
         pt_true = (response_true.get("usage") or {}).get("prompt_tokens")
         pt_false = (response_false.get("usage") or {}).get("prompt_tokens")
         test_logger.info(
-            f"J8 prompt_tokens 对比 (multi-assistant, 策略 {strategy_true}): "
+            f"H8 prompt_tokens 对比 (multi-assistant, 策略 {strategy_true}): "
             f"clear=true -> {pt_true}, clear=false -> {pt_false}"
         )
 
@@ -1157,12 +1157,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
                 test_logger.warning(warn_msg)
                 record_warning(warn_msg)
         else:
-            test_logger.warning("服务端未返回 prompt_tokens，无法对比 J8 差异")
+            test_logger.warning("服务端未返回 prompt_tokens，无法对比 H8 差异")
 
         test_logger.info("多 assistant 边界测试用例完成")
 
     # ------------------------------------------------------------------
-    # J9: clear_thinking 默认行为探测
+    # H9: clear_thinking 默认行为探测
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -1172,7 +1172,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         """根据策略名构造不含 clear_thinking 的 extra_body。
 
         将 _send_with_clear_thinking 的四种策略中 clear_thinking 键移除，
-        用于 J9 对比"不传 clear_thinking"时的默认行为。返回 None 表示策略名
+        用于 H9 对比"不传 clear_thinking"时的默认行为。返回 None 表示策略名
         无法识别。
         """
         mapping = {
@@ -1191,12 +1191,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         }
         return mapping.get(strategy_name)
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p2
     def test_clear_thinking_default_behavior(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J9 [P2]: clear_thinking 默认行为探测
+        """H9 [P2]: clear_thinking 默认行为探测
 
         验证不传 clear_thinking 时的服务端默认行为。三次请求使用相同下发策略
         和相同多轮 messages：
@@ -1258,13 +1258,13 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         TestLogger.log_response(
             test_logger, response_no_param,
-            f"J9-no clear_thinking 响应 (策略={strategy})",
+            f"H9-no clear_thinking 响应 (策略={strategy})",
         )
         self.assert_response_success(response_no_param)
         pt_no_param = (response_no_param.get("usage") or {}).get("prompt_tokens")
 
         test_logger.info(
-            f"J9 prompt_tokens 对比 (策略 {strategy}): "
+            f"H9 prompt_tokens 对比 (策略 {strategy}): "
             f"no_param={pt_no_param}, true={pt_true}, false={pt_false}"
         )
 
@@ -1298,7 +1298,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         test_logger.info("clear_thinking 默认行为探测用例完成")
 
     # ------------------------------------------------------------------
-    # J10: clear_thinking 行为级验证
+    # H10: clear_thinking 行为级验证
     # ------------------------------------------------------------------
 
     # 依赖历史思考内容的 follow-up 问题（而非最终答案），只有读到历史 thinking
@@ -1325,14 +1325,14 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             {"role": "user", "content": self.HISTORY_USER_2_BEHAVIORAL},
         ]
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p2
     def test_clear_thinking_behavioral_verification(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J10 [P2]: clear_thinking 行为级验证
+        """H10 [P2]: clear_thinking 行为级验证
 
-        与 J1-J8 的 token 数验证互补，提供行为级佐证。follow-up 问题
+        与 H1-H8 的 token 数验证互补，提供行为级佐证。follow-up 问题
         "你刚才用了哪两种验证方法？" 只有读到历史 thinking 才能准确回答
         （历史 thinking 提到"分解为 7+7+7..."和"6+6+6..."两种方法）。
 
@@ -1355,14 +1355,14 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             test_logger=test_logger, record_warning=record_warning,
         )
         self.log_full_response(
-            test_logger, response_false, f"J10-clear=false [{strategy}]"
+            test_logger, response_false, f"H10-clear=false [{strategy}]"
         )
         self.assert_response_success(response_false)
 
         content_false = self.get_message_content(
             response_false, strip_thinking=True, strip_reasoning=True
         )
-        test_logger.info(f"J10 clear=false 响应: {content_false[:2000]}...")
+        test_logger.info(f"H10 clear=false 响应: {content_false[:2000]}...")
         false_hits = [
             kw for kw in self.THINKING_EVIDENCE_KEYWORDS
             if kw in content_false
@@ -1375,14 +1375,14 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             record_warning=record_warning,
         )
         self.log_full_response(
-            test_logger, response_true, f"J10-clear=true [{strategy}]"
+            test_logger, response_true, f"H10-clear=true [{strategy}]"
         )
         self.assert_response_success(response_true)
 
         content_true = self.get_message_content(
             response_true, strip_thinking=True, strip_reasoning=True
         )
-        test_logger.info(f"J10 clear=true 响应: {content_true[:2000]}...")
+        test_logger.info(f"H10 clear=true 响应: {content_true[:2000]}...")
         true_hits = [
             kw for kw in self.THINKING_EVIDENCE_KEYWORDS
             if kw in content_true
@@ -1390,7 +1390,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
 
         # 行为级判定（软断言）
         test_logger.info(
-            f"J10 关键词命中: clear=false 命中 {false_hits}, "
+            f"H10 关键词命中: clear=false 命中 {false_hits}, "
             f"clear=true 命中 {true_hits}"
         )
 
@@ -1425,7 +1425,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         test_logger.info("clear_thinking 行为级验证用例完成")
 
     # ------------------------------------------------------------------
-    # J11: last_user 之后 assistant 思考保留边界
+    # H11: last_user 之后 assistant 思考保留边界
     # ------------------------------------------------------------------
 
     # assistant1 的思考（在 last_user 之前，clear_thinking=true 时应被剥除）
@@ -1471,15 +1471,15 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             },
         ]
 
-    @pytest.mark.j_clear_thinking
+    @pytest.mark.h_clear_thinking
     @pytest.mark.p2
     def test_clear_thinking_after_last_user_boundary(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """J11 [P2]: last_user 之后 assistant 思考保留边界
+        """H11 [P2]: last_user 之后 assistant 思考保留边界
 
         验证模版 `loop.index0 > ns.last_user_index` 的"保留"分支
-        （J8 只覆盖"剥除"分支——所有 assistant 均在 last_user 之前）。
+        （H8 只覆盖"剥除"分支——所有 assistant 均在 last_user 之前）。
 
         消息序列: user1 -> assistant1(thinking) -> user2 -> assistant2(thinking)
         - assistant1 在 last_user 之前 → clear_thinking=true 时剥除
@@ -1502,7 +1502,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             test_logger=test_logger, record_warning=record_warning,
         )
         self.log_full_response(
-            test_logger, response_true, f"J11-clear=true [{strategy}]"
+            test_logger, response_true, f"H11-clear=true [{strategy}]"
         )
         self.assert_response_success(response_true)
         pt_true = (response_true.get("usage") or {}).get("prompt_tokens")
@@ -1514,19 +1514,19 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
             record_warning=record_warning,
         )
         self.log_full_response(
-            test_logger, response_false, f"J11-clear=false [{strategy}]"
+            test_logger, response_false, f"H11-clear=false [{strategy}]"
         )
         self.assert_response_success(response_false)
         pt_false = (response_false.get("usage") or {}).get("prompt_tokens")
 
         test_logger.info(
-            f"J11 prompt_tokens 对比 (after-last-user, 策略 {strategy}): "
+            f"H11 prompt_tokens 对比 (after-last-user, 策略 {strategy}): "
             f"clear=true -> {pt_true}, clear=false -> {pt_false}"
         )
 
         if pt_true is None or pt_false is None:
-            test_logger.warning("服务端未返回 prompt_tokens，无法对比 J11 差异")
-            pytest.skip("服务端未返回 prompt_tokens，无法对比 J11 差异")
+            test_logger.warning("服务端未返回 prompt_tokens，无法对比 H11 差异")
+            pytest.skip("服务端未返回 prompt_tokens，无法对比 H11 差异")
 
         if pt_false > pt_true:
             test_logger.info(

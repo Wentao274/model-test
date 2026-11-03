@@ -67,8 +67,8 @@ RAW_SAMPLING_PARAM_TESTS = {
     "test_temperature_control",      # A6: temperature 控制（temp=0/1.0 对比断言）
     "test_top_p_top_k_sampling",     # A7: top_p/top_k 采样（参数化显式传参）
     "test_seed_reproducibility",    # A10: seed 可复现性（seed=42 一致性断言）
-    "test_invalid_parameters",       # F3: 非法参数校验（temperature=-1/5.0）
-    "test_generation_consistency",  # H2/I2: temperature=0 生成一致性断言
+    "test_invalid_parameters",       # E3: 非法参数校验（temperature=-1/5.0）
+    "test_generation_consistency",  # G2: temperature=0 生成一致性断言
     # ---- K 套件（用户规则：仅测试逻辑确实依赖 temperature/top_p/seed 的用例可豁免）----
     "test_thinking_disabled_suppresses_reasoning",  # K5: 客户问题复现（显式 temperature=0.6 为关思考档唯一合法温度——非该值 400，请求可执行性依赖温度）
     "test_thinking_temperature_tier",  # K6: 客户问题复现（测试点即 temperature × thinking 档位联动契约——非法温度 400 断言）
@@ -92,6 +92,7 @@ RAW_SAMPLING_PARAM_TESTS = {
     # K28（test_output_fields_think_tag_probe）不在此名单：请求体不含采样参数，按用户指定保持工单原始请求体不变（不注入 temperature/top_p/seed——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
     # K29（test_dual_protocol_zero_delta_tool_call）不在此名单：原始请求未指定 temperature/top_p，按用户指定保持不指定（不注入——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
     # K30（test_responses_api_marker_output_usage）不在此名单：原始请求未指定 temperature/top_p/seed，保持不指定（不注入——豁免机制针对 wrapper 注入，该用例经手工 payload 直发不涉及）
+    # F7（test_responses_api）不在此名单：经手工 payload 直发 /v1/responses（与 K30 同模式），请求体不含 temperature/top_p/seed，不涉及 wrapper 注入
 }
 
 
@@ -637,17 +638,13 @@ def pytest_collection_modifyitems(config, items):
         elif "test_d_" in item.nodeid:
             item.add_marker(pytest.mark.d_long_context)
         elif "test_e_" in item.nodeid:
-            item.add_marker(pytest.mark.e_performance)
-            item.add_marker(pytest.mark.skip(reason="E类性能测试已禁用"))
+            item.add_marker(pytest.mark.e_stability)
         elif "test_f_" in item.nodeid:
-            item.add_marker(pytest.mark.f_stability)
+            item.add_marker(pytest.mark.f_api)
         elif "test_g_" in item.nodeid:
-            item.add_marker(pytest.mark.g_api)
+            item.add_marker(pytest.mark.g_quality_chat_completions)
         elif "test_h_" in item.nodeid:
-            item.add_marker(pytest.mark.h_quality_chat_completions)
-        elif "test_i_" in item.nodeid:
-            item.add_marker(pytest.mark.i_quality_completions)
-            item.add_marker(pytest.mark.skip(reason="I类Completions质量测试已禁用"))
+            item.add_marker(pytest.mark.h_clear_thinking)
         elif "test_k_customer_" in item.nodeid:
             item.add_marker(pytest.mark.k_customer_issue)
 
@@ -661,24 +658,19 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "b_advanced: B类测试 - 高级生成功能")
     config.addinivalue_line("markers", "c_multimodal: C类测试 - 多模态能力")
     config.addinivalue_line("markers", "d_long_context: D类测试 - 长上下文处理")
-    config.addinivalue_line("markers", "e_performance: E类测试 - 性能指标")
-    config.addinivalue_line("markers", "f_stability: F类测试 - 稳定性与边界")
-    config.addinivalue_line("markers", "g_api: G类测试 - API兼容性")
+    config.addinivalue_line("markers", "e_stability: E类测试 - 稳定性与边界")
+    config.addinivalue_line("markers", "f_api: F类测试 - API兼容性")
     config.addinivalue_line(
         "markers",
-        "h_quality_chat_completions: H类测试 - Chat Completions API质量评估与回答相关性",
+        "g_quality_chat_completions: G类测试 - Chat Completions API质量评估与回答相关性",
     )
     config.addinivalue_line(
         "markers",
-        "i_quality_completions: I类测试 - Completions API质量评估与回答相关性",
+        "h_clear_thinking: H类测试 - clear_thinking 参数行为",
     )
     config.addinivalue_line(
         "markers",
-        "j_clear_thinking: J类测试 - clear_thinking 参数行为",
-    )
-    config.addinivalue_line(
-        "markers",
-        "k_customer_issue: K类测试 - 客户问题复现（全部P0）",
+        "k_customer_issue: K类测试 - 客户问题复现",
     )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
@@ -840,12 +832,10 @@ def _match_test_category(report):
 
     marker_from_file = None
     test_file_basename = test_file.replace("\\", "/").split("/")[-1]
-    if test_file_basename.startswith("test_h_"):
-        marker_from_file = "h_quality_chat_completions"
-    elif test_file_basename.startswith("test_i_"):
-        marker_from_file = "i_quality_completions"
-    elif test_file_basename.startswith("test_j_"):
-        marker_from_file = "j_clear_thinking"
+    if test_file_basename.startswith("test_g_"):
+        marker_from_file = "g_quality_chat_completions"
+    elif test_file_basename.startswith("test_h_"):
+        marker_from_file = "h_clear_thinking"
     elif test_file_basename.startswith("test_k_customer_"):
         marker_from_file = "k_customer_issue"
 

@@ -1,4 +1,4 @@
-# H. Chat Completions API 质量评估与回答相关性测试
+# G. Chat Completions API 质量评估与回答相关性测试
 
 ## 概述
 验证 `/v1/chat/completions` 接口的模型生成内容质量和回答相关性，包括生成质量、一致性、幻觉率、指令遵循度、回答相关性、乱码检测、无意义回答检测、上下文一致性等。
@@ -7,55 +7,44 @@
 
 | ID | 测试点 | 测试内容 | 优先级 |
 |----|--------|---------|--------|
-| H1 | 生成质量 | 质量对比 | P0 |
-| H2 | 生成一致性 | 相同输入多次生成的稳定性 | P1 |
-| H3 | 幻觉率 | 生成内容中事实错误的比例 | P1 |
-| H4 | 指令遵循度 | 复杂指令（格式、长度、角色）遵循程度 | P0 |
-| H5 | 响应相关性 | 问答相关性评估 | P0 |
-| H6 | 编程领域相关性 | 验证编程问题的回答相关性 | P0 |
-| H7 | 数学领域相关性 | 验证数学问题的回答相关性 | P0 |
-| H8 | 科学领域相关性 | 验证科学问题的回答相关性 | P0 |
-| H9 | 乱码检测 | 检测输出是否为乱码或无效字符 | P0 |
-| H10 | 无意义回答检测 | 检测回答是否与问题完全不相关 | P1 |
-| H11 | 跨领域相关性 | 天气/烹饪等领域相关性验证 | P1 |
-| H12 | 上下文一致性 | 多轮对话中验证上下文一致性 | P0 |
-| H13 | 回答具体性 | 确保回答不是泛泛而谈 | P2 |
+| G1 | 生成质量 | 质量对比 | P0 |
+| G2 | 生成一致性 | 相同输入多次生成的稳定性 | P1 |
+| G3 | 幻觉率 | 生成内容中事实错误的比例 | P1 |
+| G4 | 指令遵循度 | 复杂指令（格式、长度、角色）遵循程度 | P0 |
+| G5 | 响应相关性 | 问答相关性评估 | P0 |
+| G6 | 编程领域相关性 | 验证编程问题的回答相关性 | P0 |
+| G7 | 数学领域相关性 | 验证数学问题的回答相关性 | P0 |
+| G8 | 科学领域相关性 | 验证科学问题的回答相关性 | P0 |
+| G9 | 乱码检测 | 检测输出是否为乱码或无效字符 | P0 |
+| G10 | 无意义回答检测 | 检测回答是否与问题完全不相关 | P1 |
+| G11 | 跨领域相关性 | 天气/烹饪等领域相关性验证 | P1 |
+| G12 | 上下文一致性 | 多轮对话中验证上下文一致性 | P0 |
+| G13 | 回答具体性 | 确保回答不是泛泛而谈 | P2 |
 
 ## 运行方式
 
 ```bash
 # 运行所有 Chat Completions API 质量评估与回答相关性测试
-pytest tests/test_h_quality_chat_completions.py -v
+pytest tests/test_g_quality_chat_completions.py -v
 
 # 使用 marker 运行
-pytest -m h_quality_chat_completions -v
+pytest -m g_quality_chat_completions -v
 
 # 运行特定测试
-pytest tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality -v
+pytest tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_generation_quality -v
 
 # 运行 P0 优先级测试
-pytest tests/test_h_quality_chat_completions.py -m p0 -v
+pytest tests/test_g_quality_chat_completions.py -m p0 -v
 
 # 运行乱码检测
-pytest tests/test_h_quality_chat_completions.py::TestQualityChatCompletions::test_garbled_text_detection -v
+pytest tests/test_g_quality_chat_completions.py::TestQualityChatCompletions::test_garbled_text_detection -v
 ```
-
-## 与 I 类测试的区别
-
-| 维度 | H. Chat Completions API 质量评估 | I. Completions API 质量评估 |
-|------|-------------------------------|---------------------------|
-| 接口 | `/v1/chat/completions` | `/v1/completions` |
-| 调用方式 | `api_client.chat_completion(messages)` | `api_client.completion(prompt)` |
-| 输入格式 | `messages` 列表（含 role） | `prompt` 字符串 |
-| 响应格式 | `choices[0].message.content` | `choices[0].text` |
-| 多轮对话 | 原生支持 messages 数组 | 通过拼接 prompt 模拟上下文 |
-| reasoning_content | 支持 | 不支持 |
 
 ## 核心检测逻辑
 
 ### ResponseRelevanceChecker 工具类
 
-`ResponseRelevanceChecker` 定义在共享模块 `base/relevance_checker.py`，供 H 类与 I 类测试共用。提供三个核心检测方法：
+`ResponseRelevanceChecker` 定义在共享模块 `base/relevance_checker.py`，供 G 类测试使用。提供三个核心检测方法：
 
 #### 1. contains_garbled_text()
 检测乱码输出，支持以下模式：
@@ -87,43 +76,43 @@ is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(questi
 
 ## 测试用例说明
 
-### test_generation_quality (H1)
+### test_generation_quality (G1)
 使用多个不同领域的问题测试生成质量，验证输出非空且长度合理。
 
-### test_generation_consistency (H2)
+### test_generation_consistency (G2)
 测试相同输入（temperature=0）的一致性，多次相同请求应产生一致输出。
 
-### test_hallucination_detection (H3)
+### test_hallucination_detection (G3)
 测试幻觉率，使用简单的事实性问题，验证答案包含预期内容。
 
-### test_instruction_following (H4)
+### test_instruction_following (G4)
 测试指令遵循度，验证模型能遵循复杂的格式要求。
 
-### test_response_relevance (H5)
+### test_response_relevance (G5)
 测试回答相关性，检查回答是否与问题相关，验证包含领域关键词。
 
-### test_response_relevance_programming (H6)
+### test_response_relevance_programming (G6)
 测试编程领域问题的回答相关性：Python 函数定义、递归算法、面向对象编程。
 
-### test_response_relevance_math (H7)
+### test_response_relevance_math (G7)
 测试数学领域问题的回答相关性：简单计算、勾股定理、导数概念。
 
-### test_response_relevance_science (H8)
+### test_response_relevance_science (G8)
 测试科学领域问题的回答相关性：水化学式、光合作用、牛顿定律。
 
-### test_garbled_text_detection (H9)
+### test_garbled_text_detection (G9)
 乱码检测测试，验证输出不是乱码。容忍阈值：乱码率 < 20%。
 
-### test_nonsensical_response_detection (H10)
+### test_nonsensical_response_detection (G10)
 无意义回答检测：关键词重叠度分析、Trivial response 检测。容忍阈值：无意义率 <= 40%。
 
-### test_cross_domain_relevance (H11)
+### test_cross_domain_relevance (G11)
 跨领域相关性测试（参数化）：weather/cooking 领域验证回答不混淆领域。
 
-### test_conversation_context_consistency (H12)
+### test_conversation_context_consistency (G12)
 多轮对话上下文一致性：记住之前提到的信息，多轮追问验证。
 
-### test_response_specificity_check (H13)
+### test_response_specificity_check (G13)
 回答具体性检查：最小长度要求、关键词详细度验证，防止泛泛而谈。
 
 ## 检测阈值说明
@@ -137,8 +126,8 @@ is_nonsensical, reason = ResponseRelevanceChecker.is_nonsensical_response(questi
 
 ## 注意事项
 - 质量评估是主观性较强的测试
-- H1的量化质量损失测试需要在不同量化配置下对比
-- H3幻觉率测试使用简单问题作为基准
+- G1的量化质量损失测试需要在不同量化配置下对比
+- G3幻觉率测试使用简单问题作为基准
 - 领域相关性检测基于关键词匹配，不适用于所有场景
-- H9/H10的容忍阈值允许少量异常，避免误报
+- G9/G10的容忍阈值允许少量异常，避免误报
 - 多语言问题可能影响关键词匹配准确性

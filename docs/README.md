@@ -10,15 +10,11 @@
 | [test_b_advanced_generation.md](test_b_advanced_generation.md) | B. 高级生成功能 | 11 |
 | [test_c_multimodal.md](test_c_multimodal.md) | C. 多模态能力 | 12 |
 | [test_d_long_context.md](test_d_long_context.md) | D. 长上下文处理 | 12 |
-| [test_e_performance.md](test_e_performance.md) | E. 性能指标 | 12 |
-| [test_f_stability.md](test_f_stability.md) | F. 稳定性与边界 | 8 |
-| [test_g_api_compatibility.md](test_g_api_compatibility.md) | G. API兼容性 | 6 |
-| [test_h_quality_chat_completions.md](test_h_quality_chat_completions.md) | H. Chat Completions API 质量评估与回答相关性 | 13 |
-| [test_i_quality_completions.md](test_i_quality_completions.md) | I. Completions API 质量评估与回答相关性 | 13 |
-| [test_j_clear_thinking.md](test_j_clear_thinking.md) | J. clear_thinking 参数行为 | 11 |
+| [test_e_stability.md](test_e_stability.md) | E. 稳定性与边界 | 8 |
+| [test_f_api_compatibility.md](test_f_api_compatibility.md) | F. API兼容性 | 7 |
+| [test_g_quality_chat_completions.md](test_g_quality_chat_completions.md) | G. Chat Completions API 质量评估与回答相关性 | 13 |
+| [test_h_clear_thinking.md](test_h_clear_thinking.md) | H. clear_thinking 参数行为 | 11 |
 | [test_k_customer_issue.md](test_k_customer_issue.md) | K. 客户问题复现 | 30 |
-
-> **注意**：E 类和 I 类测试已在 `conftest.py` 中自动标记为 skip，即使选中也不会执行。
 
 ## 报告文档
 
@@ -37,13 +33,11 @@ pytest -m a_basic -v        # 基础推理能力
 pytest -m b_advanced -v     # 高级生成功能
 pytest -m c_multimodal -v   # 多模态能力
 pytest -m d_long_context -v # 长上下文处理
-pytest -m e_performance -v  # 性能指标（已禁用）
-pytest -m f_stability -v    # 稳定性与边界
-pytest -m g_api -v          # API兼容性
-pytest -m h_quality_chat_completions -v  # Chat Completions API 质量评估
-pytest -m i_quality_completions -v  # Completions API 质量评估（已禁用）
-pytest -m j_clear_thinking -v       # clear_thinking 参数行为
-pytest -m k_customer_issue -v        # 客户问题复现（全部 P0）
+pytest -m e_stability -v    # 稳定性与边界
+pytest -m f_api -v          # API兼容性
+pytest -m g_quality_chat_completions -v  # Chat Completions API 质量评估
+pytest -m h_clear_thinking -v       # clear_thinking 参数行为
+pytest -m k_customer_issue -v        # 客户问题复现
 
 # 按优先级运行
 pytest -m p0 -v  # P0 优先级测试
