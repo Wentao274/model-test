@@ -255,6 +255,7 @@ pytest -m slow -v                           # 慢速测试
 | `--engine` | — | 否 | 推理框架（vllm / sglang，仅用于报告标识） |
 | `--pd-mode` | — | 否 | PD 分离模式（agg / disagg，仅用于报告标识） |
 | `--tester` | — | 否 | 测试人员名称（仅用于报告标识） |
+| `--build-number` | — | 否 | Jenkins 构建号（Jenkinsfile 自动透传当前构建的 `BUILD_NUMBER`；K28/K29 依此将 raw 输出路由至 `builds/<tester>/<构建号>/origin_raw/...`，与 allure-report 同级。手动执行不指定——输出至仓库根 `origin_raw/<工单>/<model>/<时间戳>/`） |
 | `--alluredir` | — | 否 | Allure 结果输出目录（不指定则按芯片/模型/时间戳自动生成） |
 | `--summary-report-dir` | — | 否 | Markdown 汇总报告输出目录（默认 `allure-report`） |
 | `--model` | — | 否 | 指定 `config.yaml` 中的模型配置名（如 `qwen35`、`glm5`） |

@@ -297,6 +297,7 @@ if [ -n "${params.SPECIFIC_TEST}" ] && [ "${params.SPECIFIC_TEST}" != "none" ]; 
         --engine "${params.ENGINE}" \\
         --pd-mode "${params.PD}" \\
         --tester "${params.TESTER}" \\
+        --build-number "${BUILD_NUMBER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
         ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
@@ -309,6 +310,7 @@ else
         --engine "${params.ENGINE}" \\
         --pd-mode "${params.PD}" \\
         --tester "${params.TESTER}" \\
+        --build-number "${BUILD_NUMBER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
         ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}

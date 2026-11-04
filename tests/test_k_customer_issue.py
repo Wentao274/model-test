@@ -8131,7 +8131,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         留）纳入框架：3 用例 × 5 次（--runs 硬编码 5，用户指定）
         流式请求，只评被测平台（用户指定——不跑对照平台），逐条
         留存 raw 响应并统计三项判据。raw 输出目录（用户指定）：
-        Jenkins 构建（BUILD_NUMBER 存在）→
+        Jenkins 构建（--build-number 经 Jenkinsfile 透传，或 BUILD_NUMBER 环境变量存在）→
         builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/
         <model>/（与 allure-report 同级）；手动执行 →
         <repo>/origin_raw/AGDC2-24/<model>/<timestamp>/（年月日_
@@ -8166,7 +8166,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         K28_TICKET = "AGDC2-24"
         # K28: raw 输出目录（用户指定规则）
         repo_root = Path(__file__).parent.parent
-        build_number = os.environ.get("BUILD_NUMBER", "")
+        # --build-number 优先（远程机 shell 无 Jenkins BUILD_NUMBER
+        # 环境变量，Jenkinsfile 经该选项透传），保留环境变量兜底
+        build_number = (
+            request.config.getoption("--build-number", default=None)
+            or os.environ.get("BUILD_NUMBER", "")
+        )
         tester = (
             request.config.getoption("--tester", default=None)
             or os.environ.get("TESTER")
@@ -8298,7 +8303,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         （10/10）；任一不符合即 FAIL。每协议追加 1 次强制工具调
         用（tool_choice required/any——与脚本一致的追加用例，仅观
         察留日志、不计入判据）。raw 输出目录（用户指定）：
-        Jenkins 构建（BUILD_NUMBER 存在）→ builds/<TESTER>/
+        Jenkins 构建（--build-number 经 Jenkinsfile 透传，或 BUILD_NUMBER 环境变量存在）→ builds/<TESTER>/
         <BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与
         allure-report 同级）；手动执行 →
         <repo>/origin_raw/AGDC2-25/<model>/<timestamp>/（年月日_
@@ -8333,7 +8338,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         K29_TICKET = "AGDC2-25"
         # K29: raw 输出目录（用户指定规则，同 K28 口径）
         repo_root = Path(__file__).parent.parent
-        build_number = os.environ.get("BUILD_NUMBER", "")
+        # --build-number 优先（远程机 shell 无 Jenkins BUILD_NUMBER
+        # 环境变量，Jenkinsfile 经该选项透传），保留环境变量兜底
+        build_number = (
+            request.config.getoption("--build-number", default=None)
+            or os.environ.get("BUILD_NUMBER", "")
+        )
         tester = (
             request.config.getoption("--tester", default=None)
             or os.environ.get("TESTER")

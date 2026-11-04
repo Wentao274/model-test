@@ -610,6 +610,13 @@ def pytest_addoption(parser):
         help="Tester name",
     )
     parser.addoption(
+        "--build-number",
+        action="store",
+        default=None,
+        help="Jenkins build number (Jenkinsfile passes BUILD_NUMBER "
+        "through for K28/K29 raw output routing; empty in manual runs)",
+    )
+    parser.addoption(
         "--summary-report-dir",
         action="store",
         default=None,
