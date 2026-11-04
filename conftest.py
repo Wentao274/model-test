@@ -59,50 +59,32 @@ def expand_env_vars(config: Any) -> Any:
     return config
 
 
-# 参数行为类测试用例豁免名单：
-# 这些用例显式指定 temperature/top_p/seed，且测试逻辑/断言与采样参数行为相关，
+# 参数行为类测试用例豁免名单（a-h 套件）：
+# 这些用例显式指定 temperature/top_p/seed——或其测试点即采样参数行为，
 # 全局采样参数覆盖对其不生效，始终按用例自身参数执行。
-# 默认规则（用户口径）：未明确指定加入豁免的用例一律不豁免——全局采样覆盖生效。
+# 默认规则（用户口径）：未明确指定加入豁免的 a-h 用例一律不豁免——全局采样覆盖生效。
 RAW_SAMPLING_PARAM_TESTS = {
     "test_temperature_control",      # A6: temperature 控制（temp=0/1.0 对比断言）
     "test_top_p_top_k_sampling",     # A7: top_p/top_k 采样（参数化显式传参）
     "test_seed_reproducibility",    # A10: seed 可复现性（seed=42 一致性断言）
     "test_invalid_parameters",       # E3: 非法参数校验（temperature=-1/5.0）
     "test_generation_consistency",  # G2: temperature=0 生成一致性断言
-    # ---- K 套件（用户规则：仅测试逻辑确实依赖 temperature/top_p/seed 的用例可豁免）----
-    "test_thinking_disabled_suppresses_reasoning",  # K5: 客户问题复现（显式 temperature=0.6 为关思考档唯一合法温度——非该值 400，请求可执行性依赖温度）
-    "test_thinking_temperature_tier",  # K6: 客户问题复现（测试点即 temperature × thinking 档位联动契约——非法温度 400 断言）
-    "test_thinking_effort_reasoning_length",  # K7: 客户问题复现（temperature=1 为开思考档契约温度——非该值 400，思考长度对比的请求可执行前提）
-    "test_required_chitchat_calls_tool",  # K8: 客户问题复现（0.6/1 为思考档位联动合法温度——非该值 400，工具调用判定的请求可执行前提）
-    "test_required_chitchat_official_behavior",  # K9: 客户问题复现（同 K8——官方行为对照级别）
-    "test_dual_request_response_with_effort_fallback",  # K24: 客户问题复现（两请求体均显式指定 temperature=0.0——工单原始请求体为唯一口径，用户指定豁免；全局覆盖不得生效）
-    # K1/K2/K4/K11-K17/K19 已移除（用户规则：测试逻辑与 temperature/top_p/seed 无关即不豁免）：
-    # K1=Pydantic Schema 工具调用、K2=重复请求稳定性、K4=frequency_penalty<0 钳制（fp 不在
-    # temperature/top_p/seed 之列）、K11=response_format 三模式、K12=reasoning_effort 档位、
-    # K13=stop 截断、K14=孤儿 tool 消息 400、K15/K16=前缀缓存阈值与命中率、K17=换行停止符
-    # 作用于推理、K19=图片数超限拒绝
-    # K18（test_output_json_as_input_context）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
-    # K20（test_1m_context_request_supported）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
-    # K21（test_system_message_embedded_tools_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
-    # K22（test_cross_protocol_prefix_cache_parity）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
-    # K23（test_orphan_tool_message_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
-    # K25（test_duplicate_reasoning_content_history_accepted）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
-    # K26（test_negative_lookahead_tool_pattern_accepted）不在此名单：用户指定不豁免，采样参数由全局 SAMPLING_PARAMS 覆盖
-    # K27（test_invalid_arguments_history_tolerated）不在此名单：默认不豁免（用户口径——未明确指定加入豁免的用例一律不豁免）
-    # K28（test_output_fields_think_tag_probe）不在此名单：请求体不含采样参数，按用户指定保持工单原始请求体不变（不注入 temperature/top_p/seed——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
-    # K29（test_dual_protocol_zero_delta_tool_call）不在此名单：原始请求未指定 temperature/top_p，按用户指定保持不指定（不注入——豁免机制针对 wrapper 注入，该用例经探针直发不涉及）
-    # K30（test_responses_api_marker_output_usage）不在此名单：原始请求未指定 temperature/top_p/seed，保持不指定（不注入——豁免机制针对 wrapper 注入，该用例经手工 payload 直发不涉及）
-    # F7（test_responses_api）不在此名单：经手工 payload 直发 /v1/responses（与 K30 同模式），请求体不含 temperature/top_p/seed，不涉及 wrapper 注入
 }
+
+# test_k 套件整体不参与全局采样覆盖（用户口径）：所有 K 用例保持原始
+# 测试参数——工单/原始请求含采样参数的原样保留（K1 temperature=0.1、
+# K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本
+# temperature=0、K24 temperature=0.0），其余未含参数的用例一律不注入
+# （无全局注入口）。新增 K 用例自动适用本规则，无需登记。
+RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py"}
 
 
 def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
     """解析 --sampling-params JSON 配置（全局采样参数覆盖）
 
-    三态语义（空值 = 不覆盖该参数，保持框架原有行为）：
+    三态语义（未给值 = 不覆盖该参数，请求不携带）：
     - 整个参数留空 → 返回 None（不启用任何全局覆盖）
-    - 字段省略 → 使用默认值（temperature=1.0，top_p=0.95，seed 不发送）
-    - 字段为 null 或空串 → 该字段不覆盖
+    - 字段省略、为 null 或空串 → 该字段不覆盖（不注入）
 
     Returns:
         {"temperature": Optional[float], "top_p": Optional[float],
@@ -121,8 +103,8 @@ def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
             '如 {"temperature": 1.0, "top_p": 0.95, "seed": ""}'
         )
 
-    def _num(key: str, default: float) -> Optional[float]:
-        value = data.get(key, default)
+    def _num(key: str) -> Optional[float]:
+        value = data.get(key)
         if value is None or value == "":
             return None
         try:
@@ -136,8 +118,8 @@ def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
     if seed is not None:
         seed = str(seed).strip() or None
     return {
-        "temperature": _num("temperature", 1.0),
-        "top_p": _num("top_p", 0.95),
+        "temperature": _num("temperature"),
+        "top_p": _num("top_p"),
         "seed": seed,
     }
 
@@ -145,10 +127,15 @@ def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
 def _resolve_global_sampling_params(request) -> Tuple[Optional[float], Optional[float], Optional[str]]:
     """解析当前用例适用的全局采样参数 (temperature, top_p, seed)
 
-    豁免名单内的用例返回 (None, None, None)，按用例自身参数执行。
+    豁免名单内的用例与 test_k 套件用例（整套件保持原始测试参数——
+    不参与全局采样覆盖）返回 (None, None, None)，按用例自身参数执行。
     --sampling-params 与旧 --seed 同时给出时，--sampling-params 优先。
     """
     if request.node.name.split("[")[0] in RAW_SAMPLING_PARAM_TESTS:
+        return None, None, None
+    # test_k 套件整体豁免：保持原始测试参数，不注入全局采样值
+    fspath = getattr(request.node, "fspath", None)
+    if fspath is not None and os.path.basename(str(fspath)) in RAW_SAMPLING_EXEMPT_FILES:
         return None, None, None
     sampling = _parse_sampling_params(
         request.config.getoption("--sampling-params", default=None)
@@ -231,8 +218,8 @@ def api_client(
     3. config.yaml 中的配置
 
     全局采样参数覆盖 (--sampling-params)：非豁免用例注入全局
-    temperature/top_p/seed；豁免用例（见 RAW_SAMPLING_PARAM_TESTS）
-    不注入，按用例自身参数执行。
+    temperature/top_p/seed；豁免用例（RAW_SAMPLING_PARAM_TESTS）
+    与 test_k 套件用例（整套件保持原始测试参数）不注入。
     """
     # 检查命令行参数
     cmd_chip = request.config.getoption("--chip", default=None)
@@ -245,7 +232,7 @@ def api_client(
     cmd_reasoning_effort = request.config.getoption("--reasoning-effort", default=None)
     cmd_reasoning_effort = cmd_reasoning_effort.strip() if cmd_reasoning_effort else None
     # 全局采样参数（temperature/top_p/seed，--sampling-params JSON 解析），
-    # 豁免名单内用例不注入
+    # 豁免名单与 test_k 套件用例不注入
     global_temperature, global_top_p, global_seed = (
         _resolve_global_sampling_params(request)
     )
@@ -414,7 +401,8 @@ def api_client_for_model(config: Dict[str, Any], request) -> ModelAPIClient:
 
     cmd_reasoning_effort = request.config.getoption("--reasoning-effort", default=None)
     cmd_reasoning_effort = cmd_reasoning_effort.strip() if cmd_reasoning_effort else None
-    # 全局采样参数（temperature/top_p/seed），豁免名单内用例不注入
+    # 全局采样参数（temperature/top_p/seed），豁免名单与 test_k 套件
+    # 用例不注入
     global_temperature, global_top_p, global_seed = (
         _resolve_global_sampling_params(request)
     )
@@ -594,10 +582,13 @@ def pytest_addoption(parser):
         default=None,
         help=(
             'Global sampling params as JSON, e.g. '
-            '{"temperature": 1.0, "top_p": 0.95, "seed": ""}. '
-            "Field defaults: temperature=1.0, top_p=0.95, seed not sent; "
-            "null/empty field means no override; "
-            "empty value disables all overrides"
+            '{"temperature": 0.7, "top_p": 0.9, "seed": "42"}. '
+            "Numeric field means global override; "
+            "omitted/null/empty field means no override "
+            "(param not sent unless a test explicitly sets it); "
+            "empty value disables all overrides; "
+            "exempt tests (RAW_SAMPLING_PARAM_TESTS) and the whole "
+            "test_k suite (original ticket params) are never overridden"
         ),
     )
     parser.addoption(

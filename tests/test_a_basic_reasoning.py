@@ -579,7 +579,7 @@ class TestBasicReasoning(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages)
 
         response = api_client.chat_completion(
-            messages, max_tokens=max_tokens, temperature=0.0
+            messages, max_tokens=max_tokens
         )
         TestLogger.log_response(
             test_logger, response, f"max_tokens={max_tokens}响应"

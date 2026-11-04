@@ -250,7 +250,7 @@ pytest -m slow -v                           # 慢速测试
 | `--thinking-mode` | `THINKING_MODE=true` | 否 | 启用思考模式 |
 | `--no-thinking-mode` | — | 否 | 显式关闭思考模式 |
 | `--reasoning-effort` | — | 否 | 全局 `reasoning_effort` 参数（`low`/`high`/`max`）；留空则不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `--sampling-params` | — | 否 | 全局采样参数（JSON）：如 `{"temperature": 1.0, "top_p": 0.95, "seed": ""}`。字段默认 `temperature=1.0`、`top_p=0.95`、`seed` 不发送；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（详见[全局采样参数覆盖](#全局采样参数覆盖)） |
+| `--sampling-params` | — | 否 | 全局采样参数（JSON）：如 `{"temperature": 1.0, "top_p": 0.95, "seed": "42"}`。字段省略/`null`/空串均表示不覆盖该参数（用例未显式指定则请求不带该参数）；整体留空表示全部不覆盖（详见[全局采样参数覆盖](#全局采样参数覆盖)） |
 | `--seed` | — | 否 | 已废弃，改用 `--sampling-params`；仅在未提供 `--sampling-params` 时生效 |
 | `--engine` | — | 否 | 推理框架（vllm / sglang，仅用于报告标识） |
 | `--pd-mode` | — | 否 | PD 分离模式（agg / disagg，仅用于报告标识） |
@@ -261,22 +261,29 @@ pytest -m slow -v                           # 慢速测试
 
 ### 全局采样参数覆盖
 
-`--sampling-params` 用于全局覆盖所有 `chat_completion` 请求的采样参数，典型场景是**受限模型**（仅允许特定采样参数取值，如 `temperature=1`、`top_p=0.95`，其他取值会被 400 拒绝）：
+`--sampling-params` 用于全局覆盖非豁免用例请求的采样参数，典型场景是**受限模型**（仅允许特定采样参数取值，如 `temperature=1`、`top_p=0.95`，其他取值会被 400 拒绝）：
 
 | 写法 | temperature | top_p | seed |
 |------|-------------|-------|------|
-| `""`（整体留空） | 不覆盖（框架默认 0.7 / 用例原值） | 不发送 | 不注入 |
-| `{"temperature": 1.0, "top_p": 0.95, "seed": ""}`（默认值） | 强制 1.0 | 注入 0.95 | 不发送 |
-| `{"top_p": 0.9}`（字段省略） | 省略 → 默认 1.0 | 注入 0.9 | 不发送 |
+| `""`（整体留空） | 不覆盖（用例未显式指定则请求不带该参数） | 不发送 | 不注入 |
+| `{"temperature": "", "top_p": "", "seed": ""}`（Jenkinsfile 默认值） | 不覆盖 | 不发送 | 不发送 |
+| `{"temperature": 1.0, "top_p": 0.95, "seed": ""}`（显式覆盖） | 强制 1.0 | 注入 0.95 | 不发送 |
+| `{"top_p": 0.9}`（字段省略） | 省略 → 不覆盖 | 注入 0.9 | 不发送 |
 | `{"temperature": null, "top_p": null}`（字段空值） | 不覆盖 | 不发送 | 不发送 |
-| `{"seed": 42}` | 强制 1.0 | 注入 0.95 | 注入 42 |
+| `{"seed": 42}` | 不覆盖（temperature 省略） | 不发送（top_p 省略） | 注入 42 |
 
 覆盖语义：
 
 - **temperature：强制覆盖**——优先于用例显式传参，保证受限模型下所有请求统一携带允许值
 - **top_p / seed：注入式覆盖**——仅当请求未显式携带该参数时注入
+- 覆盖通道：`chat_completion`/`chat_completion_stream`/`completion`（/v1/completions）封装自动覆盖；`/v1/responses` 手工直发（F7）按 client 全局值注入 temperature/top_p（seed 不适用——Responses API 无该字段）
 
-豁免机制：以下用例显式指定采样参数且断言逻辑与参数行为相关，全局覆盖对其**不生效**，始终按用例自身参数执行——A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`、K1 `test_pydantic_schema_tool_call_stream`（豁免名单见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
+豁免机制（用户口径）：以下用例全局覆盖对其**不生效**，始终按用例自身参数执行——
+
+- **test_k 全部用例（K1-K30，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0），未含参数的用例一律不注入（无全局注入口）；
+- 测试点即采样参数行为的 a-h 用例：A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`（见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
+
+其余 a-h 用例测试点未指定 temperature/top_p/seed——无全局覆盖时请求一律不带采样参数；设值后走全局参数值（受限模型场景即全量统一携带允许值）。
 
 > 注意：受限模型上豁免用例携带非允许值（如 `temperature=0`）的请求会 400 失败，反映的是模型真实能力限制，非误报。
 
@@ -364,7 +371,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `SAMPLING_PARAMS` | string | `{"temperature": 1.0, "top_p": 0.95, "seed": ""}` | 全局采样参数（JSON）。字段默认：`temperature=1.0`、`top_p=0.95`、`seed` 空（不发送）；字段设为 `null` 表示不覆盖该参数；整体留空表示全部不覆盖（框架原有行为）。参数行为用例（A6/A7/A10/E3/G2）始终按自身参数执行，详见[全局采样参数覆盖](#全局采样参数覆盖) |
+| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K30，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
 | `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_h 与 test_k 下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |

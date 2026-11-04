@@ -55,10 +55,10 @@ class TestAPICompatibility(BaseTest):
             {"role": "system", "content": "你是一个助手"},
             {"role": "user", "content": "请用一句话介绍你自己"},
         ]
-        params = {"max_tokens": 2048, "temperature": 0.0}
+        params = {"max_tokens": 2048}
         TestLogger.log_request(test_logger, messages, params)
 
-        response = api_client.chat_completion(messages, max_tokens=2048, temperature=0.0)
+        response = api_client.chat_completion(messages, max_tokens=2048)
         TestLogger.log_response(test_logger, response, "Chat Completions响应")
         self.log_full_response(test_logger, response, "F1-ChatCompletions")
 
@@ -240,10 +240,10 @@ class TestAPICompatibility(BaseTest):
         test_logger.info("=== 测试开始: Usage统计 ===")
 
         messages = [{"role": "user", "content": "请写一段话"}]
-        params = {"max_tokens": 100, "temperature": 0.0}
+        params = {"max_tokens": 100}
         TestLogger.log_request(test_logger, messages, params)
 
-        response = api_client.chat_completion(messages, max_tokens=100, temperature=0.0)
+        response = api_client.chat_completion(messages, max_tokens=100)
         TestLogger.log_response(test_logger, response, "Usage统计响应")
         self.log_full_response(test_logger, response, "F4-Usage统计")
 
@@ -487,6 +487,9 @@ class TestAPICompatibility(BaseTest):
           区别于 Chat Completions 的 prompt_tokens/completion_tokens）且
           均 > 0；total_tokens 若存在则 >= input+output（同 F4 口径）
         - max_output_tokens 参数被接受（Responses API 字段名）
+        - temperature/top_p 走全局注入（非豁免用例——SAMPLING_PARAMS
+          设值时携带，默认不传）；seed 不适用（/v1/responses 官方
+          参数集无该字段，不注入）
 
         端点未实现（HTTP 404/405/501）→ record_warning 软告警（接口
         未部署，报告可追溯）；端点已部署 → 以下全部硬断言（兼容性
@@ -497,11 +500,18 @@ class TestAPICompatibility(BaseTest):
         test_logger.info("=== 测试开始: Responses API (/v1/responses) ===")
 
         url = f"{api_client.api_prefix}/responses"
+        # 采样参数走全局（非豁免用例）：SAMPLING_PARAMS 设值时注入
+        # （conftest 注入 client 全局值），默认空值不传；seed 不注入
+        # ——/v1/responses 官方参数集不含 seed 字段
         payload = {
             "model": api_client.model_name,
             "input": "请用一句话介绍你自己",
             "max_output_tokens": 2048,
         }
+        if api_client.temperature is not None:
+            payload["temperature"] = api_client.temperature
+        if api_client.top_p is not None:
+            payload["top_p"] = api_client.top_p
         TestLogger.log_request(
             test_logger,
             [{"role": "user", "content": "请用一句话介绍你自己"}],
@@ -509,9 +519,9 @@ class TestAPICompatibility(BaseTest):
                 "endpoint": "/v1/responses",
                 "input": "(string 形式，最简请求)",
                 "max_output_tokens": 2048,
-                "temperature": "(不指定——不注入)",
-                "top_p": "(不指定——不注入)",
-                "seed": "(不指定——不注入)",
+                "temperature": payload.get("temperature", "(不发送)"),
+                "top_p": payload.get("top_p", "(不发送)"),
+                "seed": "(不注入——/v1/responses 无 seed 参数)",
             },
         )
 

@@ -51,7 +51,7 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": 1.0, "top_p": 0.95, "seed": ""}', description: '全局采样参数(JSON)。字段默认: temperature=1.0, top_p=0.95, seed=空(不发送)；字段设为null表示不覆盖该参数；整体留空表示全部不覆盖(框架原有行为)。参数行为用例(A6/A7/A10/E3/G2)始终按自身参数执行')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K30，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
         booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')

@@ -498,7 +498,8 @@ TEST_CATEGORIES = {
                 "K1",
                 "Pydantic $defs/$ref Schema 工具调用",
                 "客户问题复现：thinking+stream+强制tool_choice+Pydantic v2生成的"
-                "$defs/$ref JSON Schema 报【$$不兼容】，原样复现请求验证服务端兼容",
+                "$defs/$ref JSON Schema 报【$$不兼容】，原样复现请求验证服务端兼容"
+                "（工单原始请求含 temperature=0.1——原样保留并豁免全局采样覆盖）",
                 "pydantic_schema_tool_call_stream",
                 "P0",
             ),
@@ -507,7 +508,8 @@ TEST_CATEGORIES = {
                 "同一请求循环执行5次返回信息异常",
                 "客户问题复现：同一 curl（logprobs+top_logprobs+n+thinking+stream+"
                 "X-Cache-Buster）循环执行5次左右出现返回信息异常，原样复现并连续"
-                "执行5次（间隔3s），验证每次响应与内容均正常",
+                "执行5次（间隔3s），验证每次响应与内容均正常（工单原始请求含 "
+                "temperature=1、top_p=0.95——原样保留并豁免全局采样覆盖）",
                 "repeated_request_stability",
                 "P0",
             ),
@@ -612,9 +614,9 @@ TEST_CATEGORIES = {
                 "生成解释器，渲染字段至模型聊天模版）。需支持四种模"
                 "式：auto/required/named/none。四模式各一次（原始脚"
                 "本 glm53_flash_suite 口径：mt=2048、非流式、不传 "
-                "thinking；采样参数不豁免（用户指令）——由全局 "
-                "SAMPLING_PARAMS 覆盖，temperature=0 为无覆盖时回退"
-                "值；工具 get_weather+get_current_"
+                "thinking；采样参数豁免（用户口径）——原始脚本指定 "
+                "temperature=0，原样保留，不受全局 SAMPLING_PARAMS "
+                "覆盖；工具 get_weather+get_current_"
                 "time 两个），断言 auto/required 必须发起工具调用（形"
                 "状合法、finish=tool_calls）、named 必须调用指定工具"
                 "（指定与提示词意图不同向的 get_current_time，未生效"
@@ -635,7 +637,9 @@ TEST_CATEGORIES = {
                 "并转发至引擎）。需支持三种模式：json_object/json_"
                 "schema/text。三模式各一次（原始脚本 glm53_flash_"
                 "suite 口径：temperature=0、mt=2048、非流式、不传 "
-                "thinking），断言 json_object 正文为合法 JSON 对象、"
+                "thinking；采样参数豁免——原始脚本指定 temperature=0 "
+                "原样保留，top_p/seed 未指定不注入），断言 json_object "
+                "正文为合法 JSON 对象、"
                 "json_schema 正文可解析且 city 为字符串、temperature "
                 "为数值、键集合恰为 {city,temperature}（weather "
                 "strict schema）、text 正文非空；每轮 finish=stop；"
@@ -657,7 +661,9 @@ TEST_CATEGORIES = {
                 "出正常响应，否则用例失败。两种放置 × 四档各一次"
                 "（原始脚本 glm53_flash_suite 口径：temperature=0、"
                 "mt=2048、非流式、不传 thinking、chat_template_"
-                "kwargs={clear_thinking:true}；嵌套放置：reasoning_"
+                "kwargs={clear_thinking:true}；采样参数豁免——原始脚"
+                "本指定 temperature=0 原样保留，top_p/seed 未指定不"
+                "注入；嵌套放置：reasoning_"
                 "effort 放进 chat_template_kwargs），断言每轮 "
                 "200+正文非空+finish=stop；档位对思考的实际影响"
                 "（rt/reasoning 长度）仅日志留痕；usage 仅日志",
@@ -783,8 +789,8 @@ TEST_CATEGORIES = {
                 "求（根因断言）复刻工单首个 user 回合（带 bash 工具"
                 "定义），断言模型发起工具调用且每条调用 name/id 非"
                 "空、arguments 为合法 JSON 对象。适用 GLM-5.3；采样"
-                "参数不豁免——由全局 SAMPLING_PARAMS 覆盖"
-                "（temperature 无覆盖时回退 0.7、top_p/seed 注入），"
+                "参数不发送——test_k 保持原始测试参数（工单原始请"
+                "求未指定，不注入），"
                 "三个请求一致",
                 "output_json_as_input_context",
                 "P0",
@@ -804,8 +810,8 @@ TEST_CATEGORIES = {
                 "绝则 PASS；200 放行（限额未生效）或信息不含该模式均"
                 " FAIL。模型真实响应（状态码/响应体全文）断言前打印"
                 "（失败时同样可见）。适用 GLM-5.3-Flash；不发送采样"
-                "参数（不在豁免名单——测试逻辑与采样参数无关，手工 "
-                "payload 直发）；"
+                "参数（test_k 整套件保持原始测试参数——无全局注入"
+                "口，手工 payload 直发）；"
                 "恰好 16 张正向对照未纳入（测试要点仅两条且避免重度"
                 "视觉计算）",
                 "over_image_limit_rejected",
@@ -852,9 +858,8 @@ TEST_CATEGORIES = {
                 "上调客户端超时至 900s（finally 恢复）。模型真实响应"
                 "（状态码/响应体全文）断言前每轮打印（失败时同样可"
                 "见）。适用 "
-                "GLM-5.3；采样参数不豁免（用户指定）：由全局 "
-                "SAMPLING_PARAMS 覆盖——temperature 无覆盖时回退 "
-                "0.7、top_p/seed 显式指定时注入",
+                "GLM-5.3；采样参数不发送（用户指定）：test_k 保持"
+                "原始测试参数（工单原始请求未指定，不注入）",
                 "1m_context_request_supported",
                 "P0",
             ),
@@ -875,10 +880,8 @@ TEST_CATEGORIES = {
                 "在、message 有效输出（content 或 tool_calls 非空——"
                 "文本作答/工具调用响应均为成功形态）；模型真实响应"
                 "（状态码/响应体全文）断言前打印；usage 仅日志；适用 "
-                "Kimi-K3；采样参数不豁免（默认口径——未明确指定加入"
-                "豁免名单）：由全局 SAMPLING_PARAMS 覆盖——"
-                "temperature 无覆盖时回退 0.7、top_p/seed 显式指定时"
-                "注入；打印口径：运行日志不含具体模型名（系统"
+                "Kimi-K3；采样参数不发送——test_k 保持原始测试参数"
+                "（工单原始请求未指定，不注入）；打印口径：运行日志不含具体模型名（系统"
                 "提示词正文含模型自我介绍，仅记字符数概要）",
                 "system_message_embedded_tools_accepted",
                 "P0",
@@ -933,8 +936,7 @@ TEST_CATEGORIES = {
                 "choices；messages：usage+content）。热轮 cache_"
                 "creation>0（前缀逐请求重建=剥离失效直接信号）与双"
                 "低形态仅日志留痕。运行日志不含具体模型名；适用 "
-                "GLM-5.3；采样参数不豁免（默认口径——未明确指定加"
-                "入豁免名单）",
+                "GLM-5.3；采样参数不发送——test_k 保持原始测试参数",
                 "cross_protocol_prefix_cache_parity",
                 "P0",
             ),
@@ -970,10 +972,9 @@ TEST_CATEGORIES = {
                 "出+finish=length 以 reasoning_effort=low 回退重发—"
                 "—K24/K25/K27 口径，双强度均未产出即 FAIL）；官方行为"
                 "细节（输出/推理引用工具数据要素——北京/18/晴）软校"
-                "验仅日志；finish/usage 仅日志；采样参数不豁免（默"
-                "认口径——未明确指定加入豁免名单）：由全局 "
-                "SAMPLING_PARAMS 覆盖——temperature 无覆盖时回退 "
-                "0.7、top_p/seed 显式指定时注入；模型真实响应（状"
+                "验仅日志；finish/usage 仅日志；采样参数不发送——"
+                "test_k 保持原始测试参数（工单原始请求未指定，不注"
+                "入）；模型真实响应（状"
                 "态码/响应体全文）断言前打印；适用 GLM-5.3；运行日"
                 "志不含具体模型名",
                 "orphan_tool_message_accepted",
@@ -992,9 +993,9 @@ TEST_CATEGORIES = {
                 "reasoning_effort）；有正常正文即通过；耗光的请求"
                 "以 reasoning_effort=low（GLM 顶层思考强度参数，"
                 "K20 口径）重发，断言相同；第 2 轮只重测耗光的"
-                "（已通过不重测）。采样参数豁免（用户指定）：两请求"
-                "体均显式 temperature=0.0——工单原始请求体为唯一"
-                "口径，通过 RAW_SAMPLING_PARAM_TESTS 豁免全局覆盖，"
+                "（已通过不重测）。采样参数保持原始（用户指定）：两"
+                "请求体均显式 temperature=0.0——工单原始请求体为唯"
+                "一口径（test_k 整套件不参与全局采样覆盖），"
                 "top_p/seed 不注入。硬断言（每轮每请求）：①HTTP "
                 "200；②合法 JSON 且 choices 非空；③message 有效输"
                 "出（content 或 tool_calls 非空）；第 1 轮耗光形"
@@ -1051,10 +1052,9 @@ TEST_CATEGORIES = {
                 "引号覆盖"
                 "度软观察：三个回填值均不含引号/换行字符时 "
                 "record_warning 留痕（引号兼容路径本次未被实际覆盖，"
-                "构造本身已保证安全，不判失败）。采样参数不豁免（默"
-                "认口径）：由全局 SAMPLING_PARAMS 覆盖——temperature "
-                "无覆盖时回退 0.7、top_p/seed 显式指定时注入（K10/"
-                "K18/K20 口径）。max_tokens=8192 为客户工单原始口径，"
+                "构造本身已保证安全，不判失败）。采样参数不发送——"
+                "test_k 保持原始测试参数（工单原始请求未指定，不注"
+                "入）。max_tokens=8192 为客户工单原始口径，"
                 "三次请求一致；usage 仅日志；模型真实响应（状态码/"
                 "合并正文/思考）断言前打印（失败时同样可见）；适用 "
                 "GLM-5.3",
@@ -1082,9 +1082,8 @@ TEST_CATEGORIES = {
                 "message 结构存在；流式 HTTP 200+SSE 事件非空+至少"
                 "一个含 choices 数据块——报错复现即 FAIL；不断言工"
                 "具被调用与参数满足 pattern（兼容绕过明确口径）。适"
-                "用 GLM-5.3；采样参数不豁免——由全局 SAMPLING_PARAMS"
-                " 覆盖（temperature 无覆盖时回退 0.7、top_p/seed 注"
-                "入），两个请求一致",
+                "用 GLM-5.3；采样参数不发送——test_k 保持原始测试参"
+                "数（工单原始请求未指定，不注入），两个请求一致",
                 "negative_lookahead_tool_pattern_accepted",
                 "P0",
             ),
@@ -1112,9 +1111,9 @@ TEST_CATEGORIES = {
                 "思考仍可能耗尽预算（无正文无调用+finish=length——首跑"
                 "实测 2048 预算 reasoning_tokens 全耗），以 "
                 "reasoning_effort=low 重发，断言相同；双强度"
-                "均未产出即 FAIL。适用 GLM-5.3；采样参数不豁免——由"
-                "全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 "
-                "0.7、top_p/seed 注入）",
+                "均未产出即 FAIL。适用 GLM-5.3；采样参数不发送——"
+                "test_k 保持原始测试参数（工单原始请求未指定，不注"
+                "入）",
                 "invalid_arguments_history_tolerated",
                 "P0",
             ),

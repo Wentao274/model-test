@@ -115,7 +115,6 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         clear_thinking: bool,
         test_logger,
         max_tokens: int = 2048,
-        temperature: float = 0.3,
         only_strategy: Optional[str] = None,
         record_warning=None,
     ) -> Tuple[Dict[str, Any], str]:
@@ -212,14 +211,12 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
                 "strategy": strategy_name,
                 "extra_body": params,
                 "max_tokens": max_tokens,
-                "temperature": temperature,
             }
             TestLogger.log_request(test_logger, messages, meta)
             try:
                 response = api_client.chat_completion(
                     messages,
                     max_tokens=max_tokens,
-                    temperature=temperature,
                     extra_body=params,
                 )
             except Exception as e:
@@ -814,7 +811,6 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         reasoning_effort: str,
         test_logger,
         max_tokens: int = 2048,
-        temperature: float = 0.3,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """以 (clear_thinking, reasoning_effort) 组合发送请求，自动回退下发格式。
 
@@ -868,7 +864,6 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
                 response = api_client.chat_completion(
                     messages,
                     max_tokens=max_tokens,
-                    temperature=temperature,
                     extra_body=params,
                 )
             except Exception as e:
@@ -1244,7 +1239,7 @@ class TestClearThinking(BaseTest, StreamingTestMixin):
         )
         try:
             response_no_param = api_client.chat_completion(
-                messages, max_tokens=2048, temperature=0.3,
+                messages, max_tokens=2048,
                 extra_body=no_clear_params,
             )
         except Exception as e:

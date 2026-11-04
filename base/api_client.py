@@ -153,9 +153,14 @@ class ModelAPIClient:
             if "top_p" not in kwargs and "top_p" not in extra_body:
                 kwargs["top_p"] = self.top_p
 
-    def _effective_temperature(self, temperature: float) -> float:
-        """返回请求实际使用的 temperature（全局覆盖值优先于调用方传参）"""
-        return self.temperature if self.temperature is not None else temperature
+    def _effective_temperature(
+        self, temperature: Optional[float]
+    ) -> Optional[float]:
+        """返回请求实际使用的 temperature（全局覆盖值优先于调用方传参；
+        两者均未指定时返回 None——请求不携带该参数）"""
+        if self.temperature is not None:
+            return self.temperature
+        return temperature
 
     def get_thinking_params(self, enabled: bool = None) -> Dict[str, Any]:
         """根据模型配置生成思考模式参数
@@ -233,7 +238,7 @@ class ModelAPIClient:
         self,
         messages: List[Dict[str, Any]],
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: int = 2048,
         stream: bool = False,
         **kwargs,
@@ -244,7 +249,8 @@ class ModelAPIClient:
         Args:
             messages: 消息列表
             model: 模型名称（默认使用实例配置）
-            temperature: 温度参数（全局 temperature 覆盖非 None 时被强制覆盖）
+            temperature: 温度参数（未显式指定时不发送该参数；全局
+                temperature 覆盖非 None 时强制使用全局值）
             max_tokens: 最大生成token数
             stream: 是否流式输出
             **kwargs: 其他API参数
@@ -265,11 +271,13 @@ class ModelAPIClient:
         payload = {
             "model": model or self.model_name,
             "messages": messages,
-            "temperature": self._effective_temperature(temperature),
             "max_tokens": max_tokens,
             "stream": False,
             **kwargs,
         }
+        effective_temperature = self._effective_temperature(temperature)
+        if effective_temperature is not None:
+            payload["temperature"] = effective_temperature
         if extra_body:
             payload.update(extra_body)
 
@@ -299,7 +307,7 @@ class ModelAPIClient:
         self,
         messages: List[Dict[str, Any]],
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         max_tokens: int = 2048,
         **kwargs,
     ) -> Iterator[Dict[str, Any]]:
@@ -311,11 +319,13 @@ class ModelAPIClient:
         payload = {
             "model": model or self.model_name,
             "messages": messages,
-            "temperature": self._effective_temperature(temperature),
             "max_tokens": max_tokens,
             "stream": True,
             **kwargs,
         }
+        effective_temperature = self._effective_temperature(temperature)
+        if effective_temperature is not None:
+            payload["temperature"] = effective_temperature
         if extra_body:
             payload.update(extra_body)
 
@@ -349,6 +359,13 @@ class ModelAPIClient:
     ) -> Dict[str, Any]:
         """传统Completion API"""
         url = f"{self.api_prefix}/completions"
+        # 全局采样参数覆盖（与 chat_completion 同口径）：temperature
+        # 强制覆盖（优先于调用方显式传参）；top_p/seed 注入式（仅调
+        # 用方未显式指定时注入）；豁免/test_k 用例经 conftest 不携带
+        # 全局值，此处均不生效
+        self._inject_global_params(kwargs)
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         payload = {"model": model or self.model_name, "prompt": prompt, **kwargs}
         response = self.session.post(url, json=payload, timeout=self.timeout)
         response.raise_for_status()

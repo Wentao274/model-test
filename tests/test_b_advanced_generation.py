@@ -789,7 +789,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             messages.extend(tool_messages)
 
             final_response = api_client.chat_completion(
-                messages, temperature=0.0
+                messages
             )
             self.log_full_response(
                 test_logger, final_response, f"工具轮次{round_idx}最终响应"
@@ -858,7 +858,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             )
 
         final_response = api_client.chat_completion(
-            messages, tools=tools, tool_choice="auto", temperature=0.0
+            messages, tools=tools, tool_choice="auto"
         )
         self.log_full_response(test_logger, final_response, "并行工具调用最终响应")
         final_content = self._get_formal_content(
@@ -878,7 +878,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages, {"tools": "TOOLS_GET_WEATHER"})
 
         response = api_client.chat_completion(
-            messages, tools=TOOLS_GET_WEATHER, tool_choice="auto", temperature=0.0
+            messages, tools=TOOLS_GET_WEATHER, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response, "单工具调用响应")
         self.log_full_response(test_logger, response, "B4-单工具调用")
@@ -947,7 +947,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             TestLogger.log_request(test_logger, messages, {"tools": "5 tools"})
 
             response = api_client.chat_completion(
-                messages, tools=tools, tool_choice="auto", temperature=0.0
+                messages, tools=tools, tool_choice="auto"
             )
             TestLogger.log_response(test_logger, response, f"{desc}工具调用")
             self.log_full_response(test_logger, response, f"B5-测试{idx}-{desc}")
@@ -1001,7 +1001,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
         TestLogger.log_request(test_logger, messages, {"tools": "TOOLS_MULTIPLE"})
 
         response = api_client.chat_completion(
-            messages, tools=TOOLS_MULTIPLE, tool_choice="auto", temperature=0.0
+            messages, tools=TOOLS_MULTIPLE, tool_choice="auto"
         )
         TestLogger.log_response(test_logger, response, "并行工具调用响应")
         self.log_full_response(test_logger, response, "B6-并行工具调用")
@@ -1155,7 +1155,7 @@ class TestAdvancedGeneration(BaseTest, StreamingTestMixin):
             )
 
             response = api_client.chat_completion(
-                messages, tools=tools, tool_choice="auto", temperature=0.0
+                messages, tools=tools, tool_choice="auto"
             )
             TestLogger.log_response(test_logger, response, f"第{step}步响应")
             self.log_full_response(test_logger, response, f"B7-第{step}步")

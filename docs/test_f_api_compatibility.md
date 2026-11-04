@@ -36,7 +36,7 @@ pytest tests/test_f_api_compatibility.py::TestAPICompatibility::test_chat_comple
 - choices[0].message 含 role=assistant 和 content 字段
 - finish_reason 合法（stop/eos/ended/length）
 - usage 字段含 prompt_tokens > 0 和 completion_tokens > 0
-- 使用 temperature=0.0 确保确定性输出
+- 不指定采样参数（默认请求不带 temperature/top_p/seed；受限模型经全局 `--sampling-params` 设值时统一携带允许值）
 
 ### F2: test_completions_api
 测试传统Completions接口（非 chat 格式）：
@@ -62,7 +62,7 @@ pytest tests/test_f_api_compatibility.py::TestAPICompatibility::test_chat_comple
   （思考模型可能将 reasoning_tokens 计入 total 但不计入 completion，
   故使用 >= 而非 ==）
 - total_tokens 缺失时记录软告警但不跳过核心验证
-- 使用 temperature=0.0 确保确定性输出
+- 不指定采样参数（默认请求不带 temperature/top_p/seed；受限模型经全局 `--sampling-params` 设值时统一携带允许值）
 
 ### F5: test_error_codes
 测试错误码规范，验证：
@@ -85,7 +85,7 @@ pytest tests/test_f_api_compatibility.py::TestAPICompatibility::test_chat_comple
 **背景**：/v1/responses 是 OpenAI 2025 年 3 月推出的新一代大模型响应生成接口，作为 Chat Completions 的超集（stateful 对话、内置工具、多模态输入、structured outputs），是构建 AI Agent 的核心 API 原语，已成为 2026 年 AI 开发生态的主流标准接口。
 
 **请求构造**：
-- `POST {base_url}/v1/responses`，经手工 payload 直发（与 K30 同模式，不经 wrapper 注入，不指定 temperature/top_p/seed）
+- `POST {base_url}/v1/responses`，经手工 payload 直发（与 K30 同模式，不经 wrapper 注入；不显式指定采样参数——全局 `--sampling-params` 设值时注入 temperature/top_p，seed 不适用（/v1/responses 官方参数集无 seed 字段），默认空值不带）
 - `input` 采用字符串最简形式（区别于 K30 的消息数组形式，互补覆盖两种规范形态）
 - `max_output_tokens=2048`（Responses API 字段名，区别于 Chat Completions 的 max_tokens——本身即为断言点）
 

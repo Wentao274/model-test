@@ -21,12 +21,14 @@ K. 客户问题复现测试
   请求特征：thinking.type=enabled + stream + stream_options.include_usage +
   tool_choice 强制指定 function + tools 使用 Pydantic v2 生成的 JSON Schema
   （含 $defs/$ref 引用）。本用例按客户原始 curl 原样复现请求，验证服务端
-  可正常接受该 Schema 并返回合法的强制工具调用结果。
+  可正常接受该 Schema 并返回合法的强制工具调用结果。工单原始请求含
+  temperature=0.1——原样保留并豁免全局采样覆盖（top_p/seed 工单
+  未指定，不注入）。
 - K2: 同一请求循环执行5次返回信息异常 [P0]
   客户问题：同一 curl 命令循环执行 5 次左右出现返回信息异常。
   请求特征：logprobs+top_logprobs+n+thinking+stream+stream_options+
   frequency_penalty/presence_penalty+user 字段 + X-Cache-Buster 防缓存请求头。
-  本用例按客户原始 curl 原样复现并连续执行 5 次（相邻间隔 3s），断言每次的响应与内容均正常。
+  本用例按客户原始 curl 原样复现并连续执行 5 次（相邻间隔 3s），断言每次的响应与内容均正常。工单原始请求含 temperature=1、top_p=0.95——原样保留并豁免全局采样覆盖（seed 工单未指定，不注入）。
 - K3: Anthropic 协议 prompt cache 未创建 [P0]
   客户问题：通过 Anthropic 协议（/anthropic/v1/messages，stream=true）发送带
   prompt cache 的请求，服务端日志 anthropic cache stats 中 cache_creation_tokens
@@ -119,10 +121,9 @@ K. 客户问题复现测试
   （chat_template.jinja）。本用例对四种模式各发一次请求（原始
   验证脚本 glm53_flash_suite 的 tool_auto/tool_required/tool_
   named/tool_none.sh 口径：max_tokens=2048、非流式、不传
-  thinking——GLM-5.3-Flash 默认思考，不做思考断言；采样参数不豁
-  免（用户指令）——由全局 SAMPLING_PARAMS（Jenkinsfile，经
-  --sampling-params 注入）覆盖：temperature 全局值优先（原始脚
-  本口径 0 为无覆盖时的回退值），top_p/seed 未显式指定时注入）。
+  thinking——GLM-5.3-Flash 默认思考，不做思考断言；采样参数豁
+  免（用户口径：原始脚本指定 temperature=0——原样保留，不受全
+  局 SAMPLING_PARAMS 覆盖；top_p/seed 脚本未指定，不注入）。
   同时适用 Kimi K3（OpenAI 协议 tool_choice 通用语义，默认思考
   不做断言；2026-10-26 staging 实测 kimi-k3 required 轮 500
   prefill_internal_error，该 FAIL 即为其待修复基线）。
@@ -144,7 +145,9 @@ K. 客户问题复现测试
   复：Router 侧支持结构化生成语义并实现语义转发至引擎。本用例对
   三种模式各发一次请求（原始验证脚本 glm53_flash_suite 的
   response_json_object/response_json_schema.sh 口径：temperature=
-  0、max_tokens=2048、非流式、不传 thinking）。json_object 轮按
+  0、max_tokens=2048、非流式、不传 thinking；采样参数豁免——原
+  始脚本指定 temperature=0 原样保留，top_p/seed 未指定不注入）。
+  json_object 轮按
   原始脚本提示词与 jq 校验（正文可解析为 JSON 对象）；json_
   schema 轮按原始脚本 schema（name=weather、strict=true、city:
   string+temperature:number、required、additionalProperties=
@@ -166,7 +169,9 @@ K. 客户问题复现测试
   请求都能被正常接受和处理并输出正常响应，否则用例失败。本用
   例对两种放置 × 四档各发一次请求（原始验证脚本 glm53_flash_
   suite 的 reasoning_low/reasoning_high/reasoning_max.sh 口径：
-  temperature=0、max_tokens=2048、非流式、不传 thinking；顶层
+  temperature=0、max_tokens=2048、非流式、不传 thinking；采样参
+  数豁免——原始脚本指定 temperature=0 原样保留，top_p/seed 未
+  指定不注入；顶层
   放置：reasoning_effort 在顶层 + chat_template_kwargs=
   {"clear_thinking": true} 为原始脚本原样保留；嵌套放置：
   reasoning_effort 放进 chat_template_kwargs（GLM 聊天模版原
@@ -182,9 +187,8 @@ K. 客户问题复现测试
   文在停止词处截断、不含停止词），实际输出 ">苹果、香蕉、"——被截
   断正文前面多输出了一个 ">" 符号。原始请求体（glm-5.3-flash）：
   stream=true、thinking={"type": "enabled"}、reasoning_effort=
-  "low"、stop=["橘子"]、其余采样参数不发送（不在豁免名单——测
-  试逻辑与采样参数无关，用户规则；手工 payload 直发，全局覆盖
-  不涉及）；KimiK3 环境不传 thinking/
+   "low"、stop=["橘子"]、其余采样参数不发送（test_k 保持原始测试
+   参数——工单原始请求未指定，不发送）；KimiK3 环境不传 thinking/
   reasoning_effort（按 K5 口径），断言完全一致。硬断言：SSE 解析
   成功且有正文增量；finish_reason=="stop"；合并正文严格等于
   "苹果、香蕉、"（多余前缀/停止词泄漏/未截断均 FAIL）；正文不含
@@ -195,9 +199,9 @@ K. 客户问题复现测试
   网关应校验并返回 400 Bad Request；实际返回 200 放行，模型把孤儿
   tool 消息当普通上下文推理。按客户原始请求体还原（user "今天天
   气怎么样？" 后直接跟 tool tool_call_id="call_abc123" content=
-  "{\"weather\":\"晴\"}\"，stream=true，无 tools/thinking/采样参
-  数——不在豁免名单（测试逻辑与采样参数无关——用户规则）；
-  手工 payload 直发，全局覆盖不涉及）。硬断言：
+   "{\"weather\":\"晴\"}\"，stream=true，无 tools/thinking/采样参
+   数——test_k 保持原始测试参数（工单原始请求未指定，不发送）。
+   硬断言：
   HTTP 400；若 200 放行（缺陷形态）：取样若干 SSE 事件留证后
   FAIL。GLM-5.3 与 GLM-5.3-Flash 断言完全一致。响应体与 usage
   仅日志。（不进 smoke 集：新用例首跑观察期）
@@ -212,9 +216,9 @@ K. 客户问题复现测试
   2) 输入长度 N<64 的相同请求连发两次，断言 cached_tokens==0
   （低于最小粒度不应缓存）。cached_tokens 取 usage.
   prompt_tokens_details.cached_tokens（兼容 usage.cached_tokens）。
-  GLM-5.3 与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数
-  （不在豁免名单——测试逻辑与采样参数无关，用户规则；手工
-  payload 直发，全局覆盖不涉及）。（不进 smoke 集：新用例首跑
+   GLM-5.3 与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数
+   （test_k 保持原始测试参数——工单原始请求未指定，不发送）。
+   （不进 smoke 集：新用例首跑
   观察期）
 - K16: 固定前缀/多轮上下文缓存命中率达标 [P0]
   客户问题（平台原始验证信息）：短文本缓存命中率不达标——修复前
@@ -227,9 +231,8 @@ K. 客户问题复现测试
   (~501 token)]；模式2 多轮上下文——单会话 history 逐轮追加，
   共享前缀随轮增长。两模式均排除第 1 轮预热、实测 9 轮，断言
   cached_tokens 总和/prompt_tokens 总和 ≥90%。  GLM-5.3 与
-  GLM-5.3-Flash 断言  一致，非流式、不发送采样参数（不在豁免
-  名单——测试逻辑与采样参数无关，用户规则；手工 payload 直
-  发，全局覆盖不涉及）。（不进 smoke 集：新用例首跑观察期）
+   GLM-5.3-Flash 断言  一致，非流式、不发送采样参数（test_k 保
+   持原始测试参数——工单原始请求未指定，不发送）。（不进 smoke 集：新用例首跑观察期）
 - K17: stop 停止符（换行符）在推理阶段生效 [P0]
   客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用
   于推理（reasoning）输出——推理里出现的第一个换行即触发停止，
@@ -238,8 +241,8 @@ K. 客户问题复现测试
   thinking={"type":"enabled"} 显式开启思考（K1 口径）；
   stream=true、stop=["\n"]、
   max_tokens=512 仅作防御性预算（正常应在推理早期触发停止）、其余
-  采样参数不发送——不在豁免名单（测试逻辑与采样参数无关——用
-  户规则）；手工 payload 直发，全局覆盖不涉及。
+   采样参数不发送——test_k 保持原始测试参数（工单原始请求未指
+   定，不发送）。
   硬断言：SSE 解析成功有事件；合并正文为空（stop 在推理阶段触
   发、正文未生成——核心断言）；finish_reason=="stop"；合并
   reasoning 不含 "\n"（stop 语义：输出在停止符前截断、停止符不泄
@@ -277,10 +280,10 @@ K. 客户问题复现测试
   构存在——上次输出 JSON 必须可作为下次输入上下文，报错复现
   即 FAIL；第三个请求模型发起工具调用且每条调用 name/id 非
   空、arguments 为合法 JSON 对象（模型不得返回空 function）。
-  不断言 arguments 被补 "{"（修复明确不补——通过 router 不代
-  表该字符串成为合法参数 JSON）。GLM-5.3 专用；采样参数不豁
-  免——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
-  0.7、top_p/seed 注入），三个请求一致。docx 中 role 拼写
+   不断言 arguments 被补 "{"（修复明确不补——通过 router 不代
+   表该字符串成为合法参数 JSON）。GLM-5.3 专用；采样参数不发送
+   ——test_k 保持原始测试参数（工单原始请求未指定，不注入），
+   三个请求一致。docx 中 role 拼写
   "assitant" 判定为笔误（报错与修复均不涉及 role），按标准
   assistant 还原。usage 仅日志。（不进 smoke 集：新用例首跑观
   察期）
@@ -294,9 +297,9 @@ K. 客户问题复现测试
   消息携带 17 个 image_url part 发起请求，硬断言：响应失败（非
   200）；错误信息含 "at most 16 image"（大小写不敏感）——超限
   被正确拒绝且信息恰当则 PASS；200 放行（限额未生效）或错误信
-  息不含该模式（信息不恰当）均 FAIL。GLM-5.3-Flash 专用；不发
-  送采样参数（不在豁免名单——测试逻辑与采样参数无关，用户规
-  则；手工 payload 直发，全局覆盖不涉及）。
+   信息不含该模式（信息不恰当）均 FAIL。GLM-5.3-Flash 专用；不发
+   送采样参数（test_k 保持原始测试参数——工单原始请求未指定，
+   不发送）。
   原始失败详情截图未收到，断言口径以用户给定的参考信息为准；
   恰好 16 张的正向对照轮未纳入（用户测试要点仅两条，且避免回
   归中重度视觉计算）。模型真实响应（状态码/响应体全文）断言前
@@ -336,10 +339,8 @@ K. 客户问题复现测试
   prefill 重算，不绕过准入长度校验/不省 KV 内存驻留与 decode
   全窗注意力——核心契约验证本不受缓存影响，此为 prefill 侧压
   测）；max 轮取消唯一前缀（用户口径：输出侧验证不受缓存影响，
-  允许命中历史缓存加速）。采样参数不豁免
-  （用户指定）：由全局 SAMPLING_PARAMS（Jenkinsfile）覆盖——
-  temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注入
-  （K10/K18 口径）。模型真实响应（状态码/响应体全文）断言前每
+   允许命中历史缓存加速）。采样参数不发送——test_k 保持原始测
+   试参数（工单原始请求未指定，不注入）。模型真实响应（状态码/响应体全文）断言前每
   轮打印（失败时同样可见）；usage 仅日志。  （不进 smoke 集：
   新用例首跑观察期）
 - K21: system 消息内嵌 tools 的非标请求结构应被接受 [P0]
@@ -357,9 +358,8 @@ K. 客户问题复现测试
   存在；message 有效输出——content 非空或 tool_calls 非空（宽容
   解析后文本作答/工具调用响应均为成功形态）。模型真实响应（状
   态码/响应体全文）断言前打印（失败时同样可见）；usage 仅日志；
-  采样参数不豁免（默认口径——未明确指定加入豁免名单）：由全局
-  SAMPLING_PARAMS（Jenkinsfile）覆盖——temperature 无覆盖时回
-  退 0.7、top_p/seed 显式指定时注入（K10/K18/K20 口径）。打印
+    采样参数不发送——test_k 保持原始测试参数（工单原始请求未指
+    定，不注入）。打印
   口径（用户指令）：运行日志不出现具体模型名——系统提示词正文含
   模型自我介绍，日志仅记字符数概要，原文见本 docstring 与用例
   常量。
@@ -428,9 +428,8 @@ K. 客户问题复现测试
   思考耗光无输出+finish=length 以 reasoning_effort=low 回退重发
   ——K24/K25/K27 口径，双强度均未产出即 FAIL）。
   官方行为细节（输出/推理引用工具数据要素）软校验仅日志；
-  finish/usage 仅日志。采样参数不豁免（默认口径——未明确指定加入
-  豁免名单）：由全局 SAMPLING_PARAMS 覆盖——temperature 无覆盖时
-  回退 0.7、top_p/seed 显式指定时注入（K10/K18/K20 口径）。模型
+    finish/usage 仅日志。采样参数不发送——test_k 保持原始测试参数
+    （工单原始请求未指定，不注入）。模型
   真实响应（状态码/响应体全文）断言前打印。（不进 smoke 集：新
   用例首跑观察期）
 - K24: 双请求正常响应（思考耗尽预算 low 强度回退） [P0]
@@ -441,9 +440,9 @@ K. 客户问题复现测试
   finish=length。回退契约（用户指定）：第 1 轮按工单原始请求体
   直发（不带 reasoning_effort）；有正常正文即通过；耗光的请求
   以 reasoning_effort=low（GLM 顶层参数，K20 口径）重发，断言相
-  同；第 2 轮只重测耗光的（已通过不重测）。采样参数豁免（用户指
-  定）：两请求体均显式 temperature=0.0——工单体为唯一口径，通
-  过 RAW_SAMPLING_PARAM_TESTS 豁免全局 SAMPLING_PARAMS 覆盖。硬
+   同；第 2 轮只重测耗光的（已通过不重测）。采样参数保持原始
+   （用户指定）：两请求体均显式 temperature=0.0——工单体为唯一
+   口径，test_k 整套件不参与全局采样覆盖（原样保留）。硬
   断言（每轮每请求）：①HTTP 200；②合法 JSON 且 choices 非空；
   ③message 有效输出（content 或 tool_calls 非空）；第 1 轮耗光
   形态转 low 回退不直接 FAIL，low 回退仍无正文即 FAIL（双强度
@@ -483,9 +482,9 @@ K. 客户问题复现测试
   为空转移），断言相同；正文空且 finish≠length 直接 FAIL；low 回
   退仍无正文即 FAIL（双强度均未产出——留证交开发）。引号覆盖度软观察：三个回填值均不含引号/换
   行字符时 record_warning 留痕（引号兼容路径本次未被实际覆盖，构
-  造本身已保证安全，不判失败）。采样参数不豁免（默认口径）：由
-  全局 SAMPLING_PARAMS 覆盖——temperature 无覆盖时回退 0.7、
-  top_p/seed 显式指定时注入（K10/K18/K20 口径）。usage 仅日志；
+   造本身已保证安全，不判失败）。采样参数不发送——test_k 保持原
+   始测试参数（工单原始请求未指定，不注入）。
+  usage 仅日志；
   模型真实响应（状态码/合并正文/思考）断言前打印（失败时同样可
   见）。（不进 smoke 集：新用例首跑观察期）
 - K26: 工具 schema 负向前瞻正则应被兼容放行 [P0]
@@ -505,9 +504,8 @@ K. 客户问题复现测试
   HTTP 200+choices 非空+message 结构存在；流式 HTTP 200+SSE 事件
   非空+至少一个含 choices 数据块——报错复现即 FAIL；不断言工具
   被调用与参数满足 pattern（兼容绕过明确口径）。GLM-5.3 专用；
-  采样参数不豁免（用户指定——不进豁免名单）：由全局
-  SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、top_p/seed
-  注入），两个请求一致。usage 仅日志。（不进 smoke 集：新用例首
+    采样参数不发送——test_k 保持原始测试参数（工单原始请求未指
+    定，不注入），两个请求一致。usage 仅日志。（不进 smoke 集：新用例首
   跑观察期）
 - K27: 历史非法 JSON arguments 应被容忍 [P0]
   客户问题（AGDC2-19，codex 客户端 + MCP 工具场景）：模型输出的
@@ -529,10 +527,9 @@ K. 客户问题复现测试
   实测 2048 预算 reasoning_tokens 全耗），该形态以
   reasoning_effort=low 重发（构造不变仅加顶层 reasoning_effort
   字段——HTTP 200 核心契约首次请求已达成），断言相同；双强度
-  均未产出即 FAIL（留证交开发）。GLM-5.3 专用；采样参数不豁免
-  ——由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
-  0.7、top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
-  首跑观察期）
+    均未产出即 FAIL（留证交开发）。GLM-5.3 专用；采样参数不发送
+    ——test_k 保持原始测试参数（工单原始请求未指定，不注入）。
+    usage 仅日志。（不进 smoke 集：新用例
 - K28: 模型输出字段核验（尾裸/回流/工具参数） [P0]
   客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：
   客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次
@@ -1395,8 +1392,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
 
             # 客户请求形态：仅 model/messages/frequency_penalty，不带
-            # max_tokens。chat_completion 封装会强制注入默认 max_tokens=2048
-            # 与 temperature，破坏"不传 max_tokens"的前提，故按 K3 先例
+            # max_tokens。chat_completion 封装会固定附带默认 max_tokens=2048（无法省略），破坏"不传 max_tokens"的前提，故按 K3 先例
             # 手工构造 payload 直发
             payload = {
                 "model": budget_client.model_name,
@@ -2387,8 +2383,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
 
             # 手工构造 payload 直发（需 tools/tool_choice/max_tokens/
-            # 档位温度，chat_completion 封装会强制覆盖 max_tokens/
-            # temperature）
+            # 档位温度——精确控制请求字段集，wrapper 会固定附带
+            # max_tokens/stream 等默认字段）
             payload = {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": K8_USER_PROMPT}],
@@ -2645,8 +2641,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
 
             # 手工构造 payload 直发（需 tools/tool_choice/max_tokens/
-            # 档位温度，chat_completion 封装会强制覆盖 max_tokens/
-            # temperature）
+            # 档位温度——精确控制请求字段集，wrapper 会固定附带
+            # max_tokens/stream 等默认字段）
             payload = {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": K9_USER_PROMPT}],
@@ -2832,11 +2828,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         suite 的 tool_auto/tool_required/tool_named/tool_none.sh
         口径：max_tokens=2048、非流式、不传 thinking——GLM-5.3-
         Flash 默认思考，参考结果含 reasoning_content，不做思考断
-        言；采样参数不豁免（用户指令）——由全局 SAMPLING_PARAMS
-        （Jenkinsfile，经 --sampling-params 注入）覆盖：temperature
-        全局值优先（原始脚本口径 0 为无覆盖时的回退值），top_p/
-        seed 未显式指定时注入；reasoning_effort 不在此列，保持原
-        始口径不传）。工具两个：get_weather(city)+
+        言；采样参数豁免（用户口径：原始脚本指定 temperature=0
+        ——原样保留，不受全局 SAMPLING_PARAMS 覆盖；top_p/seed
+        脚本未指定，不注入）。工具两个：get_weather(city)+
         get_current_time(timezone)。auto/required/none 用工具意图
         提示词（原始脚本口径）；named 指定 get_current_time 且提
         示词保持原始口径的天气意图——named 与提示词自然意图不同
@@ -2923,9 +2917,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             "=== 测试开始: 客户问题 - tool_choice 四种"
             "模式支持（auto/required/named/none；mt=2048、非流式、"
-            "不传 thinking，按原始脚本口径；采样参数不豁免——由全局"
-            " SAMPLING_PARAMS 覆盖（temperature=0 为无覆盖时回退"
-            "值）；named 指定与天气意图不同向的 get_current_time "
+            "不传 thinking，按原始脚本口径；采样参数豁免——原始"
+            "脚本指定 temperature=0 原样保留，不受全局 SAMPLING_"
+            "PARAMS 覆盖；named 指定与天气意图不同向的 get_current_time "
             "以验证强制语义）==="
         )
 
@@ -2935,29 +2929,17 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             label: str, tool_choice: Any, prompt: str, expect: str
         ) -> None:
             """K10 单轮：按 tool_choice 模式断言语义生效"""
-            # 手工构造 payload 直发（需 tools/tool_choice 直进 payload；
-            # 采样参数不豁免（用户指令）——由全局 SAMPLING_PARAMS
-            # （Jenkinsfile，经 conftest 注入 client）覆盖：
-            # temperature 全局值优先（原始脚本口径 0 为无覆盖时的回退
-            # 值），top_p/seed 未显式指定时注入；reasoning_effort 不在
-            # 此列，保持原始口径不传）
-            sampling_extra: Dict[str, Any] = {}
-            if api_client.top_p is not None:
-                sampling_extra["top_p"] = api_client.top_p
-            if api_client.seed:
-                try:
-                    sampling_extra["seed"] = int(api_client.seed)
-                except (ValueError, TypeError):
-                    sampling_extra["seed"] = api_client.seed
+            # 手工构造 payload 直发（需 tools/tool_choice 直进 payload）；
+            # 采样参数豁免（用户口径）——原始脚本指定 temperature=0，
+            # 原样保留；top_p/seed 脚本未指定，不注入
             payload = {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": prompt}],
                 "tools": K10_TOOLS,
                 "tool_choice": tool_choice,
                 "max_tokens": 2048,
-                "temperature": api_client._effective_temperature(0),
+                "temperature": 0,
                 "stream": False,
-                **sampling_extra,
             }
 
             TestLogger.log_request(
@@ -3230,8 +3212,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 },
             )
 
-            # 手工构造 payload 直发（需 response_format/temperature=0，
-            # chat_completion 封装会强制覆盖 max_tokens/temperature）
+            # 手工构造 payload 直发（需 response_format 直进 payload；
+            # temperature=0 为工单原始脚本口径，原样保留——已豁免全局
+            # 采样覆盖；top_p/seed 脚本未指定，不注入）
             payload = {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": prompt}],
@@ -3430,9 +3413,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
 
             # 手工构造 payload 直发（需按放置构造 reasoning_
-            # effort/chat_template_kwargs/temperature=0，chat_
-            # completion 封装会强制覆盖 max_tokens/temperature；
-            # 空档不发送 reasoning_effort 字段）
+            # effort/chat_template_kwargs；temperature=0 为工单原始
+            # 脚本口径，原样保留——已豁免全局采样覆盖；空档不发送
+            # reasoning_effort 字段）
             payload = {
                 "model": api_client.model_name,
                 "messages": [
@@ -3547,9 +3530,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         止词的某个字符/片段泄漏到了正文开头）。
         本用例按客户原始请求体还原（glm-5.3-flash：stream=true、
         thinking={"type": "enabled"}、reasoning_effort="low"、
-        stop=["橘子"]、其余采样参数不发送——客户原始请求体即如此；
-        不在豁免名单（测试逻辑与采样参数无关——用户规则），手工
-        payload 直发，全局覆盖不涉及），KimiK3 环境
+        stop=["橘子"]、其余采样参数不发送——客户原始请求体即如此
+        （test_k 保持原始测试参数，不发送）；KimiK3 环境
         不传 thinking/reasoning_effort/temperature（按 K5 口径），
         断言完全一致。硬断言：
         1. SSE 解析成功且有正文增量（收到 content delta）
@@ -3715,8 +3697,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         本用例按客户原始请求体还原（glm-5.3-flash：messages=
         [user "今天天气怎么样？", tool tool_call_id="call_abc123"
         content="{\"weather\":\"晴\"}"]、stream=true、无 tools/
-        thinking/采样参数——客户原始请求体即如此，通过 RAW_SAMPLING_
-        PARAM_TESTS 豁免全局覆盖；GLM-5.3 与 GLM-5.3-Flash 断言完
+        thinking/采样参数——客户原始请求体即如此（test_k 保持原始
+        测试参数，不发送采样参数）；GLM-5.3 与 GLM-5.3-Flash 断言完
         全一致）。硬断言：
         1. HTTP 400（Bad Request，拒绝协议非法请求）
         若 200 放行（缺陷形态）：取样若干 SSE 事件留证后 FAIL。
@@ -4222,8 +4204,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         - stream=true、stop=["\n"]、max_tokens=512（防御性预算——
           正常应在推理早期几十个 token 内触发停止，仅防缺陷形态下
           无界生成）
-        - 其余采样参数不发送（不在豁免名单——测试逻辑与采样参数
-          无关，用户规则；手工 payload 直发，全局覆盖不涉及）
+        - 其余采样参数不发送（test_k 保持原始测试参数——工单原始
+          请求未指定，不发送）
         硬断言：
         1. SSE 解析成功（收到事件）
         2. 合并正文为空（stop 在推理阶段触发，正文未生成——核心：
@@ -4456,9 +4438,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         docx 中 role 拼写 "assitant" 判定为笔误（报错与修复均不涉
         及 role），按标准 assistant 还原。reasoning 同键字面重复
         无法经 dict 表达，以 reasoning_content + reasoning_context
-        两拼写并存覆盖兼容路径。GLM-5.3 专用；采样参数不豁免——
-        由全局 SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退
-        0.7、top_p/seed 注入），三个请求一致。usage 仅日志。
+        两拼写并存覆盖兼容路径。GLM-5.3 专用；采样参数不发送——
+        test_k 保持原始测试参数（工单原始请求未指定，不注入），
+        三个请求一致。usage 仅日志。
         （不进 smoke 集：新用例首跑观察期）
         """
         # K18: 工单原始 bash 调用 arguments（缺开头 "{"、非合法
@@ -4562,18 +4544,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（需按工单原样还原 assistant 历史怪
-        # 异结构，chat_completion 封装不支持）；采样参数不豁免（用户
-        # 指令）——由全局 SAMPLING_PARAMS（Jenkinsfile，经 conftest
-        # 注入 client）覆盖：temperature 全局值优先（无覆盖时回退
-        # 0.7），top_p/seed 未显式指定时注入；三个请求一致
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (ValueError, TypeError):
-                sampling_extra["seed"] = api_client.seed
+        # 异结构，chat_completion 封装不支持）；采样参数不发送——
+        # test_k 保持原始测试参数（工单原始请求未指定，不注入），
+        # 三个请求一致
 
         temp_file = Path(__file__).with_name(K18_TEMP_FILE_NAME)
         try:
@@ -4584,18 +4557,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     {"role": "user", "content": K18_REQ1_PROMPT}
                 ],
                 "max_tokens": K18_REQ1_MAX_TOKENS,
-                "temperature": api_client._effective_temperature(0.7),
                 "stream": False,
-                **sampling_extra,
             }
             TestLogger.log_request(
                 test_logger,
                 req1_payload["messages"],
                 {
                     "max_tokens": K18_REQ1_MAX_TOKENS,
-                    "temperature": req1_payload["temperature"],
-                    "top_p": req1_payload.get("top_p", "(不注入)"),
-                    "seed": req1_payload.get("seed", "(不注入)"),
+                    "temperature": "(不发送)",
+                    "top_p": "(不发送)",
+                    "seed": "(不发送)",
                     "stream": False,
                     "step": (
                         "第一个请求（输出技能周报数据 JSON，落盘临时"
@@ -4726,9 +4697,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 ],
                 "tools": K18_TOOLS,
                 "max_tokens": K18_MAX_TOKENS,
-                "temperature": api_client._effective_temperature(0.7),
                 "stream": False,
-                **sampling_extra,
             }
             TestLogger.log_request(
                 test_logger,
@@ -4736,9 +4705,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 {
                     "tools": [t["function"]["name"] for t in K18_TOOLS],
                     "max_tokens": K18_MAX_TOKENS,
-                    "temperature": payload["temperature"],
-                    "top_p": payload.get("top_p", "(不注入)"),
-                    "seed": payload.get("seed", "(不注入)"),
+                    "temperature": "(不发送)",
+                    "top_p": "(不发送)",
+                    "seed": "(不发送)",
                     "stream": False,
                     "step": (
                         "第二个请求（工具读取 JSON 文件后回填上下文）"
@@ -4826,9 +4795,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 ],
                 "tools": K18_TOOLS,
                 "max_tokens": K18_REQ3_MAX_TOKENS,
-                "temperature": api_client._effective_temperature(0.7),
                 "stream": False,
-                **sampling_extra,
             }
             TestLogger.log_request(
                 test_logger,
@@ -4836,9 +4803,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 {
                     "tools": [t["function"]["name"] for t in K18_TOOLS],
                     "max_tokens": K18_REQ3_MAX_TOKENS,
-                    "temperature": req3_payload["temperature"],
-                    "top_p": req3_payload.get("top_p", "(不注入)"),
-                    "seed": req3_payload.get("seed", "(不注入)"),
+                    "temperature": "(不发送)",
+                    "top_p": "(不发送)",
+                    "seed": "(不发送)",
                     "stream": False,
                     "step": (
                         "第三个请求（根因断言：模型不得返回空 "
@@ -4980,8 +4947,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         原始失败详情截图未收到，断言口径以用户给定的参考信息为准。
         恰好 16 张的正向对照轮未纳入（用户测试要点仅两条，且避免回
         归中重度视觉计算）。max_tokens=32 防御性预算（应在生成前
-        被拒绝）。不发送采样参数（不在豁免名单——测试逻辑与采样
-        参数无关，用户规则；手工 payload 直发，全局覆盖不涉及）。
+        被拒绝）。不发送采样参数（test_k 保持原始测试参数——工单
+        原始请求未指定，不发送）。
         模型真实响应（状态码/响应体全文）在断言前
         打印到日志（失败时同样可见，便于诊断）。usage/响应体仅日
         志。（不进 smoke 集：新用例首跑观察期）
@@ -5035,7 +5002,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         url = f"{api_client.api_prefix}/chat/completions"
 
         # 手工构造 payload 直发（多模态 image_url part 形态，封
-        # 装不支持）；不发送采样参数（豁免全局覆盖）
+        # 装不支持）；不发送采样参数（test_k 保持原始测试参数）
         content_parts: List[Dict[str, Any]] = [
             {"type": "text", "text": K19_TEXT}
         ]
@@ -5146,9 +5113,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
           负载，输出侧同步压窗口（真实环境实测默认档思考耗尽 32
           预算致 content 为空——预算必须覆盖思考+正文的教训；
           max 档思考显著更长，预算放大至 4096）
-        - 采样参数不豁免（用户指定）：由全局 SAMPLING_PARAMS
-          （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
-          top_p/seed 显式指定时注入（K10/K18 口径）
+        - 采样参数不发送：test_k 保持原始测试参数（工单原始请求未
+          指定，不注入）
         - 跑必冷（用户加固，仅 low 轮）：low 轮（含探针）材料头
           部置每次请求唯一 nonce（时间戳+uuid，可含中文，几十字
           符）——前缀必不命中 KV 缓存，真 1M 冷 prefill（缓存
@@ -5204,23 +5170,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "=== 测试开始: 客户问题 - 1M 上下文请求应被正常支持"
             f"（探针自校准精确计量；目标输入 {K20_TARGET_PROMPT_TOKENS} "
             f"tokens + 输出预算 low 轮 1024 / max 轮 4096——输入+输出 "
-            f"略小于 1M；采样参数不豁免——全局 SAMPLING_PARAMS 覆盖；"
+            f"略小于 1M；采样参数不发送——test_k 保持原始测试参数；"
             f"low 轮唯一 nonce 头部绕过 KV 缓存——跑必冷、"
             f"max 轮无唯一前缀（允许命中缓存）；"
             f"期望每轮 HTTP 200 + 非空正文）==="
         )
 
-        # 采样参数不豁免（用户指定）：由全局 SAMPLING_PARAMS
-        # （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
-        # top_p/seed 显式指定时注入（K10/K18 口径）
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed is not None:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (TypeError, ValueError):
-                sampling_extra["seed"] = api_client.seed
+        # 采样参数不发送——test_k 保持原始测试参数（工单原始请求
+        # 未指定，不注入）
 
         def make_nonce() -> str:
             """生成唯一 nonce（时间戳+uuid，可含中文，几十字符）——
@@ -5235,15 +5192,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         def build_payload(
             text: str, effort: str, max_tokens: int, nonce: str = ""
         ) -> Dict[str, Any]:
-            """构造带全局采样参数的 K20 请求体（探针/两轮共用）"""
+            """构造 K20 请求体（探针/两轮共用）"""
             return {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": nonce + text}],
                 "max_tokens": max_tokens,
                 "reasoning_effort": effort,
-                "temperature": api_client._effective_temperature(0.7),
                 "stream": False,
-                **sampling_extra,
             }
 
         # ---- 阶段1：探针自校准（精确测量每单元 token 数）----
@@ -5271,9 +5226,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             {
                 "max_tokens": 1,
                 "reasoning_effort": K20_EFFORT_ROUNDS[0][0],
-                "temperature": api_client._effective_temperature(0.7),
-                "top_p": sampling_extra.get("top_p", "(未注入)"),
-                "seed": sampling_extra.get("seed", "(未注入)"),
+                "temperature": "(不发送)",
+                "top_p": "(不发送)",
+                "seed": "(不发送)",
                 "cache": "nonce 前缀绕过（跑必冷）",
                 "stream": False,
             },
@@ -5360,9 +5315,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                         "（不支持禁用思考、仅档位——用户口径）"
                     ),
                     "stream": False,
-                    "temperature": api_client._effective_temperature(0.7),
-                    "top_p": sampling_extra.get("top_p", "(未注入)"),
-                    "seed": sampling_extra.get("seed", "(未注入)"),
+                    "temperature": "(不发送)",
+                    "top_p": "(不发送)",
+                    "seed": "(不发送)",
                     "cache": (
                         "nonce 前缀绕过（唯一——跑必冷）"
                         if cold
@@ -5489,10 +5444,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
            后无论按"忽略内嵌 tools 文本作答"或"按工具调用响应"均为
            有效成功形态；两者皆空即未正常响应）
         模型真实响应（状态码/响应体全文）断言前打印（失败时同样可
-        见）；usage 仅日志。采样参数不豁免（默认口径——未明确指定
-        加入豁免名单）：由全局 SAMPLING_PARAMS（Jenkinsfile，经
-        conftest 注入 client）覆盖——temperature 无覆盖时回退 0.7、
-        top_p/seed 显式指定时注入（K10/K18/K20 口径）。打印口径
+        见）；usage 仅日志。采样参数不发送——test_k 保持原始测试参
+        数（工单原始请求未指定，不注入）。打印口径
         （用户指令）：运行日志不出现具体模型名——系统提示词正文含
         模型自我介绍，日志仅记字符数概要，原文见本 docstring 与用
         例常量。
@@ -5569,24 +5522,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             {"role": "user", "content": K21_USER_PROMPT},
             {"role": "system", "tools": K21_EMBEDDED_TOOLS},
         ]
-        # 采样参数不豁免（默认口径——未明确指定加入豁免名单）：
-        # 由全局 SAMPLING_PARAMS（Jenkinsfile，经 conftest 注入
-        # client）覆盖：temperature 全局值优先（无覆盖时回退
-        # 0.7），top_p/seed 显式指定时注入（K10/K18/K20 口径）
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed is not None:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (TypeError, ValueError):
-                sampling_extra["seed"] = api_client.seed
+        # 采样参数不发送——test_k 保持原始测试参数（工单原始请求
+        # 未指定，不注入）
         payload = {
             "model": api_client.model_name,
             "messages": messages,
-            "temperature": api_client._effective_temperature(0.7),
             "stream": False,
-            **sampling_extra,
         }
 
         # 打印口径（用户指令）：运行日志不出现具体模型名——系统提
@@ -5618,9 +5559,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 ),
                 "tools": ["Calculator"],
                 "重放口径": "工单原始请求体（模型名由环境注入——框架约定）",
-                "temperature": api_client._effective_temperature(0.7),
-                "top_p": sampling_extra.get("top_p", "(未注入)"),
-                "seed": sampling_extra.get("seed", "(未注入)"),
+                "temperature": "(不发送)",
+                "top_p": "(不发送)",
+                "seed": "(不发送)",
             },
         )
 
@@ -6457,10 +6398,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         发（构造不变仅加顶层字段），断言相同；双强度均未产出即
         FAIL（留证交开发）。
         官方行为细节（输出/推理引用工具数据要素）为软校验仅日志；
-        finish/usage 仅日志。采样参数不豁免（默认口径——未明确指定
-        加入豁免名单）：由全局 SAMPLING_PARAMS 覆盖——temperature
-        无覆盖时回退 0.7、top_p/seed 显式指定时注入（K10/K18/K20
-        口径）。模型真实响应（状态码/响应体全文）断言前打印（失败
+        finish/usage 仅日志。采样参数不发送——test_k 保持原始测试
+        参数（工单原始请求未指定，不注入）。模型真实响应（状态码/响应体全文）断言前打印（失败
         时同样可见）。（不进 smoke 集：新用例首跑观察期）
         """
         # K23: 客户新工单原始请求体口径（勿改——孤儿 tool 消息的最
@@ -6505,27 +6444,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         url = f"{api_client.api_prefix}/chat/completions"
 
-        # 采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS
-        # （Jenkinsfile）覆盖——temperature 无覆盖时回退 0.7、
-        # top_p/seed 显式指定时注入（K10/K18/K20 口径）
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed is not None:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (TypeError, ValueError):
-                sampling_extra["seed"] = api_client.seed
+        # 采样参数不发送——test_k 保持原始测试参数（工单原始请求
+        # 未指定，不注入）
 
         # 手工构造 payload 直发（含 tool 角色消息，chat_completion
-        # 封装不支持；工单原始请求体为非流式——不传 stream，采样按
-        # 全局覆盖注入）
+        # 封装不支持；工单原始请求体为非流式——不传 stream；采样
+        # 参数不发送——test_k 保持原始测试参数）
         payload = {
             "model": api_client.model_name,
             "messages": K23_MESSAGES,
             "max_tokens": K23_MAX_TOKENS,
-            "temperature": api_client._effective_temperature(0.7),
-            **sampling_extra,
         }
 
         TestLogger.log_request(
@@ -6536,9 +6464,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 "tools": "(未定义)",
                 "thinking": "(不传，工单原始请求体口径)",
                 "stream": "(不传——默认非流式)",
-                "temperature": api_client._effective_temperature(0.7),
-                "top_p": sampling_extra.get("top_p", "(未注入)"),
-                "seed": sampling_extra.get("seed", "(未注入)"),
+                "temperature": "(不发送)",
+                "top_p": "(不发送)",
+                "seed": "(不发送)",
             },
         )
 
@@ -6617,9 +6545,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     "tools": "(未定义)",
                     "thinking": "(不传，工单原始请求体口径)",
                     "stream": "(不传——默认非流式)",
-                    "temperature": retry_payload["temperature"],
-                    "top_p": retry_payload.get("top_p", "(未注入)"),
-                    "seed": retry_payload.get("seed", "(未注入)"),
+                    "temperature": "(不发送)",
+                    "top_p": "(不发送)",
+                    "seed": "(不发送)",
                     "reasoning_effort": "low",
                 },
             )
@@ -6726,10 +6654,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         通过并退出；思考耗光的请求以 reasoning_effort="low"（GLM
         顶层思考强度参数，K20 口径）重发，断言相同；第 2 轮只重测
         第 1 轮耗光的请求（已通过的不重测）。
-        采样参数豁免（用户指定）：两个请求体均显式指定
-        temperature=0.0——工单原始请求体为唯一口径，全局
-        SAMPLING_PARAMS 覆盖不得生效（通过 RAW_SAMPLING_PARAM_TESTS
-        豁免），top_p/seed 亦不注入。
+        采样参数保持原始（用户指定）：两个请求体均显式指定
+        temperature=0.0——工单原始请求体为唯一口径，test_k 整套
+        件不参与全局采样覆盖，top_p/seed 亦不注入。
         硬断言（每轮每请求）：①HTTP 200；②响应合法 JSON 且
         choices 非空；③message 有效输出（content 或 tool_calls 非
         空）。第 1 轮正文空且 finish=length 为耗光形态按契约转
@@ -6902,10 +6829,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         url = f"{api_client.api_prefix}/chat/completions"
 
-        # 采样参数豁免（用户指定）：两个请求体均显式 temperature=
-        # 0.0——工单原始请求体为唯一口径，通过 RAW_SAMPLING_PARAM_
-        # TESTS 豁免全局 SAMPLING_PARAMS 覆盖，top_p/seed 亦不注
-        # 入——payload 直用工单原值
+        # 采样参数保持原始（用户指定）：两个请求体均显式
+        # temperature=0.0——工单原始请求体为唯一口径（test_k 整
+        # 套件不参与全局采样覆盖），top_p/seed 亦不注入——payload
+        # 直用工单原值
 
         # 超时保护：max 思考 + 32768 预算耗光耗时显著——单请求超
         # 时下限（配置已 >= 该值时为 no-op）
@@ -7025,9 +6952,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         引号覆盖度软观察：三个回填值（第 2 次正文/两次思考）均不含
         引号/换行字符时 record_warning 留痕——引号兼容路径本次未被
         实际覆盖（构造本身已保证安全，不判失败）。
-        采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS 覆盖
-        ——temperature 无覆盖时回退 0.7、top_p/seed 显式指定时注
-        入（K10/K18/K20 口径）。max_tokens=8192 为客户工单原始口
+        采样参数不发送——test_k 保持原始测试参数（工单原始请求未
+        指定，不注入）。max_tokens=8192 为客户工单原始口
         径，三次请求一致。usage 仅日志；模型真实响应（状态码/合并
         正文/思考）断言前打印（失败时同样可见）。（不进 smoke 集：
         新用例首跑观察期）
@@ -7083,9 +7009,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             require_json=True 时断言响应正文为合法 JSON（用户口径：
             第 1/2 次响应作为下一请求输入回填——JSON 链条断裂即场
             景无法构造 FAIL）。
-            采样参数不豁免（默认口径）：chat_completion_stream 自
-            动注入全局 temperature/top_p/seed（temperature 无覆盖时
-            回退 0.7）。
+            采样参数不发送——test_k 保持原始测试参数（工单原始请
+            求未指定，不注入）。
             耗光回退（K24 口径）：默认 max 档思考可能耗尽 8192 预
             算（正文空+finish=length），该形态以 reasoning_effort=
             low（GLM 顶层思考强度参数，K20 口径）仅重发本采集请求
@@ -7101,7 +7026,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     {
                         "max_tokens": K25_MAX_TOKENS,
                         "stream": True,
-                        "temperature": "全局覆盖优先（无覆盖时回退 0.7）",
+                        "temperature": "(不发送)",
                         **(
                             {"reasoning_effort": effort}
                             if effort is not None
@@ -7245,17 +7170,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             require_json=True,
         )
 
-        # 采样参数不豁免（默认口径）：temperature 无覆盖时回退 0.7、
-        # top_p/seed 显式指定时注入（K10/K18/K20 口径）——手工拼入
-        # raw body（直发路径不经 chat_completion 封装）
-        sampling_fields = ""
-        if api_client.top_p is not None:
-            sampling_fields += f'"top_p": {dumps(api_client.top_p)}, '
-        if api_client.seed:
-            try:
-                sampling_fields += f'"seed": {dumps(int(api_client.seed))}, '
-            except (ValueError, TypeError):
-                sampling_fields += f'"seed": {dumps(api_client.seed)}, '
+        # 采样参数不发送——test_k 保持原始测试参数（工单原始请求
+        # 未指定，不注入）
 
         # ---- 构造第 3 次请求：assistant 历史同键 reasoning_content
         # 字面重复（dict 无法表达重复键，手工拼接 JSON 文本；content=
@@ -7289,9 +7205,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f'"model": {dumps(api_client.model_name)}, '
                 '"stream": true, '
                 f'"max_tokens": {K25_MAX_TOKENS}, '
-                f'"temperature": {dumps(api_client._effective_temperature(0.7))}, '
                 f"{effort_fields}"
-                f"{sampling_fields}"
                 f'"messages": {messages_raw}'
                 "}"
             )
@@ -7572,10 +7486,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         4. 流式 SSE 事件非空 + 至少一个含 choices 的数据块
         明确不断言：工具被调用、调用参数满足 pattern（兼容绕过
         路径不再由 grammar 强制保证——开发明确口径）、响应形态
-        （正文或工具调用增量均可，宽松留日志）。GLM-5.3 专用；采
-        样参数不豁免（用户指定——不进 RAW_SAMPLING_PARAM_TESTS
-        豁免名单）：由全局 SAMPLING_PARAMS 覆盖（temperature 无
-        覆盖时回退 0.7、top_p/seed 注入），两个请求一致。usage
+        （正文或工具调用增量均可，宽松留日志）。GLM-5.3 专用；采样
+        参数不发送——test_k 保持原始测试参数（工单原始请求未指
+        定，不注入），两个请求一致。usage
         仅日志。（不进 smoke 集：新用例首跑观察期）
         """
         # K26: 工具定义——path 参数 pattern 以 ^(?! 开头（负向前
@@ -7630,18 +7543,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         url = f"{api_client.base_url}/v1/chat/completions"
 
-        # 采样参数不豁免（用户指定——不进豁免名单）：由全局
-        # SAMPLING_PARAMS（Jenkinsfile，经 conftest 注入 client）
-        # 覆盖：temperature 全局值优先（无覆盖时回退 0.7），
-        # top_p/seed 未显式指定时注入；两个请求一致
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (ValueError, TypeError):
-                sampling_extra["seed"] = api_client.seed
+        # 采样参数不发送——test_k 保持原始测试参数（工单原始请求
+        # 未指定，不注入），两个请求一致
 
         # ---- 非流式请求（核心断言：grammar 编译错误修复）----
         payload: Dict[str, Any] = {
@@ -7650,9 +7553,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "tools": K26_TOOLS,
             "tool_choice": "auto",
             "max_tokens": K26_MAX_TOKENS,
-            "temperature": api_client._effective_temperature(0.7),
             "stream": False,
-            **sampling_extra,
         }
         TestLogger.log_request(
             test_logger,
@@ -7661,9 +7562,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 "tools": [t["function"]["name"] for t in K26_TOOLS],
                 "tool_choice": "auto",
                 "max_tokens": K26_MAX_TOKENS,
-                "temperature": payload["temperature"],
-                "top_p": payload.get("top_p", "(不注入)"),
-                "seed": payload.get("seed", "(不注入)"),
+                "temperature": "(不发送)",
+                "top_p": "(不发送)",
+                "seed": "(不发送)",
                 "stream": False,
                 "step": (
                     "非流式请求（负向前瞻 pattern 工具，grammar 编"
@@ -7736,9 +7637,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 "tools": [t["function"]["name"] for t in K26_TOOLS],
                 "tool_choice": "auto",
                 "max_tokens": K26_MAX_TOKENS,
-                "temperature": stream_payload["temperature"],
-                "top_p": stream_payload.get("top_p", "(不注入)"),
-                "seed": stream_payload.get("seed", "(不注入)"),
+                "temperature": "(不发送)",
+                "top_p": "(不发送)",
+                "seed": "(不发送)",
                 "stream": True,
                 "step": (
                     "流式请求（负向前瞻 pattern 工具，"
@@ -7881,9 +7782,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         reasoning_effort=low（GLM 顶层思考强度参数）重发（构造不
         变仅加顶层 reasoning_effort 字段；HTTP 200 核心契约首次请
         求已达成），断言相同；双强度均未产出即 FAIL（留证交开
-        发）。GLM-5.3 专用；采样参数不豁免——由全局
-        SAMPLING_PARAMS 覆盖（temperature 无覆盖时回退 0.7、
-        top_p/seed 注入）。usage 仅日志。（不进 smoke 集：新用例
+        发）。GLM-5.3 专用；采样参数不发送——test_k 保持原始测试参
+        数（工单原始请求未指定，不注入）。usage 仅日志。（不进 smoke 集：新用例
         首跑观察期）
         """
         # K27: 工单同款畸形 arguments（保真浓缩版）——恰因两处
@@ -8012,18 +7912,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         url = f"{api_client.api_prefix}/chat/completions"
 
-        # 采样参数不豁免（默认口径）：由全局 SAMPLING_PARAMS
-        #（Jenkinsfile，经 conftest 注入 client）覆盖：temperature
-        # 全局值优先（无覆盖时回退 0.7），top_p/seed 未显式指定时
-        # 注入
-        sampling_extra: Dict[str, Any] = {}
-        if api_client.top_p is not None:
-            sampling_extra["top_p"] = api_client.top_p
-        if api_client.seed:
-            try:
-                sampling_extra["seed"] = int(api_client.seed)
-            except (ValueError, TypeError):
-                sampling_extra["seed"] = api_client.seed
+        # 采样参数不发送——test_k 保持原始测试参数（工单原始请求
+        # 未指定，不注入）
 
         payload: Dict[str, Any] = {
             "model": api_client.model_name,
@@ -8039,9 +7929,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             ],
             "tools": K27_TOOLS,
             "max_tokens": K27_MAX_TOKENS,
-            "temperature": api_client._effective_temperature(0.7),
             "stream": False,
-            **sampling_extra,
         }
         TestLogger.log_request(
             test_logger,
@@ -8049,9 +7937,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             {
                 "tools": [K27_TOOL_NAME],
                 "max_tokens": K27_MAX_TOKENS,
-                "temperature": payload["temperature"],
-                "top_p": payload.get("top_p", "(不注入)"),
-                "seed": payload.get("seed", "(不注入)"),
+                "temperature": "(不发送)",
+                "top_p": "(不发送)",
+                "seed": "(不发送)",
                 "stream": False,
                 "step": "历史非法 arguments 回放+修正重试",
                 "assistant_history": (
@@ -8121,9 +8009,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 {
                     "tools": [K27_TOOL_NAME],
                     "max_tokens": K27_MAX_TOKENS,
-                    "temperature": retry_payload["temperature"],
-                    "top_p": retry_payload.get("top_p", "(不注入)"),
-                    "seed": retry_payload.get("seed", "(不注入)"),
+                    "temperature": "(不发送)",
+                    "top_p": "(不发送)",
+                    "seed": "(不发送)",
                     "stream": False,
                     "reasoning_effort": "low",
                     "step": "low 回退重发（思考耗光形态）",

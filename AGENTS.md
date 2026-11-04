@@ -16,9 +16,11 @@
    注意前一项补逗号）。
 4. **pytest.ini**：marker 描述中的用例编号枚举同步
    （如 `GLM53: …（K1/K2/K4/K14-K18, K20, K22-K26）`）。
-5. **conftest.py**：采样参数豁免口径——豁免则加入
-   `RAW_SAMPLING_PARAM_TESTS`；不豁免则在名单处补记注释
-   （格式参照 K18/K20/K26 注释）。
+5. **conftest.py**：采样参数豁免口径——test_k 套件经
+   `RAW_SAMPLING_EXEMPT_FILES`（模块级）整体保持原始测试参数，
+   不参与全局采样覆盖：工单/原始请求含采样参数的原样保留，
+   未含参数的不注入（无全局注入口）；新增 K 用例自动适用，
+   无需登记。`RAW_SAMPLING_PARAM_TESTS` 仅登记 a-h 参数行为用例。
 6. **docs/test_k_customer_issue.md**：概览表新增行 + 详述章节
    （背景/请求构造/断言/判定矩阵/设计决策记录/注意事项）。
 7. **checkpoints.md**：新增用例行 + P0 统计行数量与总计同步
