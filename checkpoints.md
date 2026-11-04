@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（9 大类 × 116 个测试点）
+## 二、测试点总览（9 大类 × 122 个测试点）
 
 ### 分类概览
 
@@ -35,7 +35,7 @@
 | F. API 兼容性   | 7    | OpenAI 兼容（含 /v1/responses 新一代接口）、参数一致性     |
 | G. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 30   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验），P0 为主持续追加 |
+| K. 客户问题复现 | 36   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构空正文核验（思考预算配额）、temperature 官方区间放行与越界校验、top_logprobs 稳定放行核验、多模态拒绝错误体指明媒体类型与字段核验、enable_thinking 备选思考开关与官方一致拒绝核验、finish_reason 判定对齐官方核验（流式/多段/结构化 × 双协议）），P0 为主持续追加 |
 
 ---
 
@@ -197,7 +197,7 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | H10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | H11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（H8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 客户问题复现（30 项）
+### K. 客户问题复现（36 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
@@ -235,6 +235,12 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K28 | 模型输出字段核验（尾裸/回流/工具参数） | 客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通过）；length 截断只记录不判定；适用 GLM-5.3 | 客户探针（scripts/probe_think_tag.py）+ 数据集（requests/AGDC2-24，工单原始参数 stream=true、max_tokens=8192、reasoning_effort=max 原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-24/<model>/<timestamp>/；断言：全部 HTTP 200 且响应体可解析 SSE（空体/非流式结构即无法核验）、T1=0、T2=0、T3=100%——任一不符合即 FAIL；模型名由环境注入；请求体不含 temperature/top_p/seed——按用户指定保持工单原始请求体不变、不注入采样参数（豁免机制针对 wrapper 注入，该用例经探针直发不涉及）；usage 仅日志 | P0  |
 | K29 | 双协议零增量响应与工具调用核验 | 客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一段业务会话报文（195 条消息/19 个工具/stream=true/max_tokens=4096）分别请求 /v1/chat/completions 与 /anthropic/v1/messages——OpenAI 协议 13 次中 5 次零增量响应（HTTP 200、SSE 结构完整但 delta.content/reasoning_content/tool_calls 三类增量均空、usage.completion_tokens>0，整条流仅 1 个空 delta chunk），工具调用仅 4/13；Anthropic 协议 8/8 返回工具调用、零增量 0/8；适用 GLM-5.3 | 客户探针（scripts/probe_alaya.py）+ 数据集（requests/AGDC2-25 两份协议请求体）纳入框架：两种协议各发 --n 硬编码 10 次（用户指定）流式请求，逐条留存 raw 并统计三项判据——有效请求==10、零增量==0、返回工具调用==100%（10/10），任一不符合即 FAIL；每协议追加 1 次强制工具调用（tool_choice required/any，仅观察不计入）；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-25/<model>/<timestamp>/；模型名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；temperature/top_p 原始未指定——保持不指定（不注入）；usage 仅日志 | P0  |
 | K30 | /v1/responses 校验码输出与 token 计数核验 | 客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：probe 三项断言未通过——请求明确要求只输出 SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 '4b69a88e6b'（模型未遵守指令）；input_tokens=52 超基准 43 ±3%（区间 41.71-44.29——整数取值 42/43/44）；output_tokens 报告 295 而实际可见输出仅 10 字符且 reasoning_tokens=0（计数与实际文本量明显不成比例，存在统计口径或隐藏推理未计入疑点）；适用 GLM-5.3 | 按客户原始 curl 还原：POST {base}/v1/responses（Responses API），input 两消息（content 均 input_text 类型）、stream=true、max_output_tokens=1024 原样，模型名由环境注入，采样参数原始未指定——保持不注入；断言（任一失败即整体失败）：HTTP 200 且流式结构完整（output_text 增量+usage）、终态事件 status == completed（failed/incomplete/cancelled 或无终态事件即失败）、合并正文严格等于校验码（多一个字符即失败）、usage.input_tokens∈[42,44]（基准 43 ±3%）、output_tokens 满足 reasoning_tokens ≤ output ≤ reasoning + len(正文)（总计=思考+正文，1 token/字符宽松上界——缺陷形态 295 tok vs 10 字符远超） | P0  |
+| K31 | json_object 嵌套结构输出空正文核验（思考预算配额） | 客户问题（工单 P1 R-01，结构化输出）：官方 200+合法 JSON（嵌套对象/数组均可解析），贵方实测 finish_reason=length、content 为空字符串、思考占满 max_tokens=256；整改建议：思考预算与可见输出分别配额、为 content 保留下限；适用 GLM-5.3 | 三种接口（/v1/chat/completions response_format=json_object 非流式 max_tokens=256 + /v1/responses text.format=json_object 非流式 max_output_tokens=256 工单原值 + /v1/messages——Anthropic 协议无 json_object 参数语义，同一 prompt 引导嵌套 JSON、max_tokens=256 协议必需字段工单原值，思考预算配额在该协议同样验证——K31 起双协议要求，用户指定）× 两种嵌套形态（嵌套对象 user_profile.address/嵌套数组 departments[].employees[]）× 各 2 次，模型名由环境注入，采样参数原始未指定——保持不注入；断言（每请求任一失败即 FAIL）：HTTP 200、正文非空（空=缺陷复现）、合法 JSON 对象、嵌套结构齐备；finish_reason/status/stop_reason 留观察日志（length/incomplete/max_tokens 且正文完整合法不判失败——正文可用即整改达标） | P1  |
+| K32 | temperature 官方区间放行与越界校验（双协议） | 客户问题（工单 P1 R-02，参数校验）：官方 200（取值区间 [0, 2)，1.5 合法），贵方实测 6 发全部 400、错误体通用「模型服务调用失败」(upstream_error)；整改建议（即预期结果）：按官方区间放行，越界时 400 并指明参数名与合法区间；适用 GLM-5.3 | 双协议覆盖（K31 起双协议要求，用户指定）：chat 协议按 OpenAI 官方区间 [0, 2)——放行轮 temperature=1.5（工单原值）→ 200+正文非空+自然结束，越界轮 2.0（上界半开不含）与 -0.5 → 400+错误体指明参数名 temperature（大小写不敏感）+含上界数字 2；msg 协议（/anthropic/v1/messages）按 Anthropic 官方区间 [0, 1] 分别校验——放行轮 0.5（工单原值 1.5 在该协议官方语义下越界不可作放行点）→ 200+正文非空+stop_reason 自然结束，越界轮 1.5（工单原值，与 chat 侧同值不同判——验证网关按协议语义分别校验）、2.0 与 -0.5 → 400+指明参数名+含上界数字 1；每组合 1 次（参数校验确定性，K6 先例）；工单原始值原样保留并豁免全局采样覆盖，top_p/seed 未指定不注入，msg max_tokens 协议必需 | P1  |
+| K33 | top_logprobs=5 稳定放行与 logprobs 结构核验（双协议） | 客户问题（工单 P2 R-03，参数校验）：官方 200 返回 logprobs.top_logprobs，贵方实测同参数 12 发中 9 发 400、3 发 200 行为不稳定；整改建议：统一行为，若上游不支持应说明能力缺失而非参数非法；预期按官方行为断言（用户指定）；适用 GLM-5.3 | 双协议覆盖（K31 起双协议要求，用户指定）：chat 协议 12 发同参数（logprobs=true + top_logprobs=5 工单原值）非流式直发，硬断言每发（任一失败即 FAIL 报告第几发）：HTTP 200（任一 400 即缺陷复现——时拒时放未统一）、logprobs 含 top_logprobs（兼容新式 content[] 与旧式顶层结构）、候选为 dict 且项数 ≤5（top-N 语义）、正文非空+finish_reason 宽松枚举（K2 口径）；msg 协议（/anthropic/v1/messages）无 logprobs 参数语义——12 发同参数断言统一行为：全部 400 且错误体指明字段（含 'logprobs'，能力缺失口径）或全部 200 且正文非空，200/400 混现即 FAIL；相邻 3s；max_tokens/thinking/采样参数未指定不传不注入，msg max_tokens 协议必需 | P2  |
+| K34 | 多模态拒绝错误体应指明媒体类型与字段（双协议） | 客户问题（工单 P2 R-04，多模态）：官方 /v1/chat/completions 400 错误体指明 type 参数非法、取值范围 ['text']，贵方实测 chat 与 msg 双协议 8 发均通用「模型服务调用失败」(upstream_error) 未说明媒体类型与字段；整改补充信息：GLM-5.3 纯文本模型——任何媒体块（图/音/视/文档）无论 base64 内联还是远端 URL 传入均须 400 明确拒绝并指明类型与字段，不得 200 静默丢弃/降级纯文本作答/只回通用错误；官方 msg 侧对部分图片 200 属自身静默丢弃，不作判定基准；适用 GLM-5.3 | 媒体类型 × 传入形态 × 双协议矩阵（chat 4 轮 + msg 4 轮 = 8 发对齐工单口径；确定性校验——K6/K32 先例）：chat 协议——image_url×base64（代码生成 PNG）/image_url×URL/input_audio×base64（代码生成最小 WAV）/video_url×URL，硬断言每轮 400+错误体含 image/audio/video；msg 协议（x-api-key + anthropic-version 头——K3 先例）——image×base64/image×URL（source.type=url）/document×base64（application/pdf）/document×URL，硬断言每轮 400+错误体含 image/document；200（含官方 msg 侧 200 形态——不作基准）与 500 等均 FAIL；取值范围痕迹 'text' 留观察；视频轮远端 URL 参照 test_c 视频理解（C5）同款公网地址（MDN flower.mp4），图片/文档远端 URL 用 example.com 占位，媒体数据代码生成；msg max_tokens=64 协议必需；采样参数未指定不注入 | P2  |
+| K35 | enable_thinking 备选思考开关应与官方一致拒绝（双协议） | 客户问题（工单 P1 R-07，接口协议）：官方 400 拒绝该参数（enable_thinking 为非官方备选思考开关），贵方实测 200 放行并按默认思考处理（静默接受）；整改建议：与官方一致拒绝，或在文档中明确声明支持并保证语义等价；不得静默放行；按官方一致行为断言（用户指定）；适用 GLM-5.3 | chat 协议（/v1/chat/completions）与 msg 协议（/anthropic/v1/messages，x-api-key + anthropic-version 头——K3 先例）各发 1 次 enable_thinking=true 请求（确定性参数校验——K6/K32/K34 先例）；硬断言每协议：HTTP 400（200=静默放行缺陷复现——贵方实测形态；500 等=非合规拒绝）+ 错误体含 'enable_thinking'（大小写不敏感——官方未知参数拒绝文案均含参数名；排除通用『模型服务调用失败』缺陷形态）；整改备选分支（文档声明支持+语义等价）为非受测分支；thinking/采样参数未指定不传不注入；msg max_tokens=1024 协议必需 | P1  |
+| K36 | finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） | 客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=stop（20_chat_stream_002 / 20_chat_ms_001 / 20_chat_structured_002 三例）；贵方实测同一请求渠道返回 finish_reason=length，官方返回 stop（三例一致复现）；整改建议：对齐 finish_reason 判定——思考 token 不应把正常结束的请求判成 length 截断；按官方行为进行预期断言（用户指定）；适用 GLM-5.3 | 流式（chat SSE 收集 choices[].finish_reason 与 delta.content——K24 先例；msg SSE 收集 message_delta.delta.stop_reason 与 content_block_delta 正文——K3 先例）、多段（单条 user 消息 content 数组多段文本）、结构化（chat response_format=json_object；msg 无该参数按 K31 先例 prompt 引导）三种请求形态 × chat+msg 双协议各 1 发（共 6 发，相邻间隔 3s）；硬断言每形态 × 每协议：终止语义对齐官方——chat finish_reason=='stop' / msg stop_reason=='end_turn'（Anthropic 自然结束语义——msg 侧 stop 等价；length/max_tokens=缺陷复现：思考 token 计入判定把正常结束的请求误判截断）+ 正文非空（正常结束的佐证；正文空+length 为 K31 思考耗光形态，非本例口径）；max_tokens=512（工单未附原始 payload——适中值：正文远低于配额而计入思考的实现易触顶误判，对判定语义敏感且不致正文真实截断）；thinking/采样参数未指定不传不注入 | P1  |
 
 ---
 
@@ -299,7 +305,7 @@ K1-K7, K10-K30  客户问题复现 28 项（均 P0，客户报障必测）
 
 总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 28 = 57 项。
 
-### P1（选测，44 项）
+### P1（选测，48 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
@@ -310,10 +316,10 @@ E2, E5-E8                   稳定性 5 项
 F2, F5                      API 兼容 2 项
 G2, G3, G10, G11            Chat Completions API 质量评估 4 项
 H1, H2, H4, H5, H6, H7      clear_thinking 参数行为 6 项
-K8, K9                      客户问题复现 2 项（required 工具调用，按客户工单 P1）
+K8, K9, K31, K32, K35, K36   客户问题复现 6 项（required 工具调用/json_object 嵌套结构空正文核验/temperature 区间校验/enable_thinking 参数拒绝/finish_reason 对齐官方，按客户工单 P1）
 ```
 
-### P2（低优，15 项）
+### P2（低优，17 项）
 
 ```
 B6, B10                     高级功能 2 项
@@ -322,4 +328,5 @@ E3                          稳定性 1 项
                             API 兼容 0 项（早期移除的 response_format/stream 项分别见 B8/B9、A4；F7 为新增 /v1/responses 接口兼容，P0）
 G13                         Chat Completions API 质量评估 1 项
 H3, H8, H9, H10, H11        clear_thinking 参数行为 5 项
+K33, K34                    客户问题复现 2 项（top_logprobs 稳定放行核验/多模态拒绝错误体指明媒体类型与字段，按客户工单 P2）
 ```

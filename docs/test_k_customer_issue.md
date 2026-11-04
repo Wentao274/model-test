@@ -8,16 +8,17 @@
 - **原样复现**：system/user 提示词、tools 定义、tool_choice、thinking、stream、
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
-- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K25 为
-  P0 必测（任何失败应阻断发布），K8/K9 按客户工单优先级为 P1。
+- **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K30 为
+  P0 必测（任何失败应阻断发布），K8/K9/K31/K32/K35/K36 按客户工单优先级为 P1，K33/K34 为 P2。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免（test_k 整套件）**：所有 K 用例保持原始测试参数，不参与
   全局 `--sampling-params` 覆盖（`conftest.py` 模块级规则
   `RAW_SAMPLING_EXEMPT_FILES`——新增 K 用例自动适用，无需登记）：
   工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2
   temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本
-  temperature=0、K24 temperature=0.0），其余未含参数的用例一律
-  不注入（无全局注入口）。
+  temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/
+  -0.5——chat/msg 双协议），其余未含参数的用例一律不注入（无全局
+  注入口）。
 - **环境注入（不硬编码）**：客户 curl 中的 **URL、API key、模型名不写入测试
   代码**——与其他测试类一致，由 Jenkinsfile 构建参数（`BASE_URL` / `API_KEY` /
   `MODEL`）透传至 pytest 的 `--base-url` / `--api-key` / `--model-name`，经
@@ -69,6 +70,12 @@
 | K28 | 模型输出字段核验（尾裸/回流/工具参数） | 客户问题（AGDC2-24，TR-20261016-02 九章云-模型输出字段核验）：客户探针报告三项判据——T1 content 尾部裸 </think> 残留（0 次为通过，被测平台曾 2/15 不通过）、T2 字段回流（content→reasoning，0 次为通过）、T3 工具参数完整性（arguments 合法完整 JSON 且 reasoning 无 <arg_key>/<arg_value>/</tool_call> 原生标记，100% 为通过）；length 截断只记录不判定；适用 GLM-5.3 | 客户探针（scripts/probe_think_tag.py）+ 数据集（requests/AGDC2-24，工单原始参数 stream=true、max_tokens=8192、reasoning_effort=max 原样保留）纳入框架：3 用例×5 次（--runs 硬编码 5，用户指定）流式请求，只评被测平台（不跑对照），逐条留存 raw 并统计三项；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-24/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-24/<model>/<timestamp>/；断言：全部 HTTP 200 且响应体可解析 SSE（空体/非流式结构即无法核验）、T1=0、T2=0、T3=100%——任一不符合即 FAIL；模型名由环境注入；请求体不含 temperature/top_p/seed——按用户指定保持工单原始请求体不变、不注入采样参数；usage 仅日志 | P0 |
 | K29 | 双协议零增量响应与工具调用核验 | 客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一段业务会话报文（195 条消息/19 个工具/stream=true/max_tokens=4096）分别请求 /v1/chat/completions 与 /anthropic/v1/messages——OpenAI 协议 13 次中 5 次零增量响应（HTTP 200、SSE 结构完整但 delta.content/reasoning_content/tool_calls 三类增量均空、usage.completion_tokens>0），工具调用仅 4/13；Anthropic 协议 8/8 返回工具调用、零增量 0/8；适用 GLM-5.3 | 客户探针（scripts/probe_alaya.py）+ 数据集（requests/AGDC2-25 两份协议请求体）纳入框架：两种协议各发 --n 硬编码 10 次（用户指定）流式请求，逐条留存 raw 并统计三项判据——有效请求==10、零增量==0、返回工具调用==100%（10/10），任一不符合即 FAIL；每协议追加 1 次强制工具调用（tool_choice required/any，仅观察不计入）；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-25/<model>/<timestamp>/；模型名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；temperature/top_p 原始未指定——保持不指定（不注入）；usage 仅日志 | P0 |
 | K30 | /v1/responses 校验码输出与 token 计数核验 | 客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：probe 三项断言未通过——请求明确要求只输出 SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 '4b69a88e6b'（模型未遵守指令）；input_tokens=52 超基准 43 ±3%（区间 41.71-44.29——整数取值 42/43/44）；output_tokens 报告 295 而实际可见输出仅 10 字符且 reasoning_tokens=0（计数与实际文本量明显不成比例，存在统计口径或隐藏推理未计入疑点）；适用 GLM-5.3 | 按客户原始 curl 还原：POST {base}/v1/responses（Responses API），input 两消息（content 均 input_text 类型）、stream=true、max_output_tokens=1024 原样，模型名由环境注入，采样参数原始未指定——保持不注入；断言（任一失败即整体失败）：HTTP 200 且流式结构完整（output_text 增量+usage）、终态事件 status == completed（failed/incomplete/cancelled 或无终态事件即失败）、合并正文严格等于校验码（多一个字符即失败）、usage.input_tokens∈[42,44]（基准 43 ±3%）、output_tokens 满足 reasoning_tokens ≤ output ≤ reasoning + len(正文)（总计=思考+正文，1 token/字符宽松上界——缺陷形态 295 tok vs 10 字符远超） | P0 |
+| K31 | json_object 嵌套结构输出空正文核验（思考预算配额） | 客户问题（工单 P1 R-01，结构化输出）：官方行为 HTTP 200、content 为合法 JSON（嵌套对象/数组均可解析）；贵方实测 HTTP 200、finish_reason=length、content 为空字符串、思考内容占满 max_tokens=256；整改建议：思考预算与可见输出应分别配额——在 max_tokens 内为 content 保留下限，不得让 reasoning 吃满整额后返回空正文；适用 GLM-5.3 | 三种接口（/v1/chat/completions response_format=json_object 非流式 max_tokens=256 工单原值 + /v1/responses text.format=json_object 非流式 max_output_tokens=256 + /v1/messages Anthropic 协议——无 json_object 参数语义，以同一 prompt 引导嵌套 JSON、max_tokens=256 协议必需字段工单原值，思考预算配额在该协议同样验证）× 两种嵌套形态（嵌套对象 user_profile.address 三层 / 嵌套数组 company.departments[].employees[]）× 各 2 次，模型名由环境注入，采样参数原始未指定——保持不注入；断言（每请求，任一失败即 FAIL 并报告协议/形态/次序）：HTTP 200、正文非空（空正文=缺陷复现）、合法 JSON 对象、嵌套结构齐备；finish_reason/status 与 stop_reason 留观察日志（length/incomplete/max_tokens 且正文完整合法不判失败——正文可用即整改达标） | P1 |
+| K32 | temperature 官方区间放行与越界校验（双协议） | 客户问题（工单 P1 R-02，参数校验）：官方行为 HTTP 200（官方取值区间 [0, 2)，1.5 合法）；贵方实测 6 发全部 HTTP 400、错误体为通用「模型服务调用失败」(upstream_error)；整改建议（即预期结果）：按官方区间放行 temperature，越界时回 400 并指明参数名与合法区间；适用 GLM-5.3 | 双协议覆盖：chat 协议（OpenAI 官方区间 [0, 2)）——放行轮 temperature=1.5（工单原值）→ 200+正文非空+自然结束，越界轮 2.0（上界半开不含 2）与 -0.5 → 400+错误体指明参数名 temperature（大小写不敏感）+含上界数字 2（区间痕迹断言口径）；msg 协议（/anthropic/v1/messages，Anthropic 官方区间 [0, 1] 分别校验）——放行轮 temperature=0.5（工单原值 1.5 在该协议官方语义下越界，不可作放行点）→ 200+正文非空+stop_reason 自然结束，越界轮 1.5（工单原值，与 chat 侧同值不同判——验证网关按协议语义分别校验而非一刀切）、2.0 与 -0.5 → 400+错误体指明参数名+含上界数字 1；每组合 1 次（参数校验确定性——K6 先例）；工单原始值原样保留并豁免全局采样覆盖，top_p/seed 未指定不注入，msg max_tokens 为协议必需字段 | P1 |
+| K33 | top_logprobs=5 稳定放行与 logprobs 结构核验（双协议） | 客户问题（工单 P2 R-03，参数校验）：官方行为 HTTP 200、返回 logprobs.top_logprobs；贵方实测同参数 12 发中 9 发 HTTP 400、3 发 HTTP 200，行为不稳定；整改建议：统一行为，若上游确实不支持，错误体应说明能力缺失而非参数非法；预期按官方行为断言（用户指定）；适用 GLM-5.3 | 双协议覆盖：chat 协议 12 发同参数（logprobs=true + top_logprobs=5 工单原值，成对出现依 OpenAI 规范）非流式直发，硬断言每发（任一失败即 FAIL 并报告第几发）：HTTP 200（任一 400 即缺陷复现——时拒时放未统一）、choices[0].logprobs 含 top_logprobs（兼容新式 content[].top_logprobs 与旧式顶层 top_logprobs）、候选对象为 dict 且项数 ≤5（top-N 语义）、正文非空+finish_reason 宽松枚举（K2 口径）；msg 协议（/anthropic/v1/messages）无 logprobs 参数语义——12 发同参数（max_tokens 协议必需），硬断言统一行为：全部 400 且错误体指明字段（含 'logprobs'，能力缺失说明口径——整改建议两分支之一）或全部 200 且正文非空，200/400 混现即 FAIL——不稳定性在两协议均不得复现；相邻间隔 3s；max_tokens/thinking/采样参数未指定不传不注入 | P2 |
+| K34 | 多模态拒绝错误体应指明媒体类型与字段（双协议） | 客户问题（工单 P2 R-04，多模态）：官方 /v1/chat/completions 行为 HTTP 400、错误体指明 type 参数非法、取值范围 ['text']；贵方实测 chat 与 msg 双协议 8 发均为通用「模型服务调用失败」(upstream_error)，未说明哪种媒体类型、哪个字段不被支持；整改补充信息：GLM-5.3 为纯文本模型，不支持任何多模态输入——任何媒体块（图/音/视/文档）无论 base64 内联还是远端 URL 传入均须 400 明确拒绝并指明类型与字段，不得 200 静默丢弃、不得降级纯文本作答、不得只回通用错误；官方 msg 侧对部分图片 200 属自身静默丢弃，不作判定基准；适用 GLM-5.3 | 媒体类型 × 传入形态 × 双协议矩阵（chat 4 轮 + msg 4 轮 = 8 发，对齐工单 8 发口径；确定性校验——K6/K32 先例）：chat 协议——image_url×base64（代码生成 32x32 PNG data URL）、image_url×远端 URL、input_audio×base64（代码生成最小 WAV）、video_url×远端 URL，硬断言每轮 HTTP 400 + 错误体含 image/audio/video（大小写不敏感）；msg 协议（/anthropic/v1/messages，x-api-key + anthropic-version 头——K3 先例）——image×base64、image×URL（source.type=url）、document×base64（application/pdf）、document×URL，硬断言每轮 HTTP 400 + 错误体含 image/document；200=静默忽略/降级作答（官方 msg 侧 200 同此判定不作基准）、500 等=非合规拒绝均 FAIL；取值范围痕迹 'text' 留观察日志；视频轮远端 URL 参照 test_c 视频理解（C5）同款公网地址（MDN flower.mp4），图片/文档远端 URL 用 example.com 占位；媒体数据代码生成（PNG/WAV/最小 PDF）；msg max_tokens=64 协议必需；采样参数未指定不注入 | P2 |
+| K35 | enable_thinking 备选思考开关应与官方一致拒绝（双协议） | 客户问题（工单 P1 R-07，接口协议）：官方行为 HTTP 400——拒绝该参数（enable_thinking 为非官方备选思考开关）；贵方实测 HTTP 200——放行并按默认思考处理（静默接受）；整改建议：与官方一致拒绝，或在文档中明确声明支持并保证语义等价；不得静默放行；按官方一致行为断言（用户指定）；适用 GLM-5.3 | chat 协议（/v1/chat/completions）与 msg 协议（/anthropic/v1/messages，x-api-key + anthropic-version 头——K3 先例）各发 1 次 enable_thinking=true 请求（确定性参数校验——K6/K32/K34 先例）；硬断言每协议：HTTP 400（200=静默放行缺陷复现——贵方实测形态；500 等=非合规拒绝）+ 错误体含 'enable_thinking'（大小写不敏感——官方未知参数拒绝文案均含参数名；排除通用『模型服务调用失败』缺陷形态）；整改备选分支（文档声明支持+语义等价）为非受测分支；thinking/采样参数未指定不传不注入；msg max_tokens=1024 协议必需 | P1 |
+| K36 | finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） | 客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=stop（20_chat_stream_002 / 20_chat_ms_001 / 20_chat_structured_002 三例）；贵方实测同一请求渠道返回 finish_reason=length，官方返回 stop（三例一致复现）；整改建议：对齐 finish_reason 判定——思考 token 不应把正常结束的请求判成 length 截断；按官方行为进行预期断言（用户指定）；适用 GLM-5.3 | 流式（SSE 收集终止字段与正文增量）、多段（单条 user 消息 content 数组多段文本）、结构化（chat response_format=json_object / msg 无该参数按 K31 先例 prompt 引导）三种请求形态 × chat+msg 双协议各 1 发（共 6 发）；硬断言每形态 × 每协议：终止语义对齐官方——chat finish_reason=='stop' / msg stop_reason=='end_turn'（Anthropic 协议自然结束语义——msg 侧的 stop 等价；length/max_tokens=缺陷复现：思考 token 计入判定把正常结束的请求误判截断）+ 正文非空（正常结束的佐证；正文空+length 为 K31 思考耗光形态，非本例口径）；max_tokens=512（工单未附原始 payload——适中值：正文远低于配额而计入思考的实现易触顶误判，对判定语义敏感且不致正文真实截断）；thinking/采样参数未指定不传不注入；相邻间隔 3s | P1 |
 
 ## 运行方式
 
@@ -2281,3 +2288,601 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 - marker：`GLM53`（K 套件按模型分组标记；原始请求模型 glm-5.3）
 - 若被测网关未实现 `/v1/responses` 端点，断言 1（HTTP 200）将
   如实暴露（404/405）
+
+### test_json_object_nested_empty_content (K31)
+
+**背景**：客户问题（工单 P1 R-01 · json_object 嵌套对象/数组返回
+空正文，结构化输出）：
+- **官方行为**：HTTP 200，content 为合法 JSON（嵌套对象/数组均可
+  解析）
+- **贵方实测**：HTTP 200，finish_reason=length，content 为空字符
+  串，思考内容占满 max_tokens=256
+- **整改建议（本用例验收口径）**：思考预算与可见输出应分别配额
+  ——在 max_tokens 内为 content 保留下限，不得让 reasoning 吃满
+  整额后返回空正文
+
+**测试断言点（按整改建议设计，任一失败即 FAIL）**：
+1. 每请求 HTTP 200
+2. content/output_text 非空字符串（空正文=缺陷复现——思考占满
+   整额）
+3. json.loads 成功且为 dict（json_object 模式输出合法 JSON 对象）
+4. 嵌套结构齐备（按形态校验关键嵌套键）
+
+**请求构造**（三种接口 × 两种嵌套形态 × 各 2 次）：
+- 端点 A：`{api_prefix}/chat/completions`——
+  `response_format={"type": "json_object"}`、非流式、
+  `max_tokens=256`（工单原值）、messages 单 user 消息
+- 端点 B：`{api_prefix}/responses`——
+  `text={"format": {"type": "json_object"}}`（Responses API 的
+  结构化输出参数）、非流式、`max_output_tokens=256`（Responses
+  API 字段名，工单原值）、`input` 字符串最简形式（F7 先例）
+- 端点 C：`{base_url}/anthropic/v1/messages`（K3 先例——
+  `x-api-key` + `anthropic-version: 2023-06-01` 头）——该协
+  议无 json_object 参数语义（官方无结构化输出参数），以同一
+  prompt 引导嵌套 JSON 输出、`max_tokens=256`（协议必需字段，
+  工单原值）——思考预算配额（正文保留下限）在该协议同样验证，
+  断言与端点 A/B 一致
+- 形态 A（嵌套对象）：要求输出 `user_profile`（含 `name`、`age`、
+  `address`{`city`,`street`,`zip`}、`contact`{`email`,`phone`}）
+  ——三层嵌套对象
+- 形态 B（嵌套数组）：要求输出 `company`{`name`、`departments`[
+  {`name`、`employees`[{`name`、`role`}]}]}——对象/数组互嵌，
+  至少 2 部门、每部门至少 2 员工
+- 模型名由环境注入；采样参数/thinking/stream 工单原始未指定——
+  保持不指定（不注入/不传）
+- 相邻请求间隔 3s（K 套件惯例）
+
+**断言**（硬，每请求，任一失败即 FAIL 并报告协议/形态/次序）：
+1. HTTP 200
+2. 正文非空（空正文=缺陷复现——finish_reason=length +
+   content=""、思考占满 256）
+3. 正文可解析为合法 JSON 对象（dict）
+4. 嵌套结构齐备——形态 A：`user_profile` 为 dict 且 `address`
+   为 dict 含 `city`；形态 B：`company` 为 dict、`departments`
+   为非空 list 且元素为 dict 含 `name`
+
+**判定矩阵**：
+- 非 200 → FAIL（端点不可用/请求被拒）
+- 正文为空字符串 → FAIL（缺陷复现——思考占满整额，content 无保
+  留下限）
+- 正文非空但非法 JSON → FAIL（json_object 模式语义不生效；msg
+  协议即引导输出失败）
+- 合法 JSON 但缺关键嵌套结构 → FAIL（嵌套对象/数组解析要求未满
+  足——对工单"嵌套对象/数组均可解析"口径）
+- `finish_reason == "length"`（chat）/`status == "incomplete"`
+  （responses）/`stop_reason == "max_tokens"`（msg）但正文完整合
+  法 → 不判 FAIL，warning 留观察日志（正文可用即整改达标——整
+  改要求的是为 content 保留下限，而非保证自然结束）
+- 200 + 正文非空 + 合法 JSON + 结构齐备 → PASS
+
+**设计决策记录**：
+- **P1**（按客户工单 P1 R-01）
+- **覆盖三种接口**：`/v1/chat/completions`（response_format）与
+  `/v1/responses`（text.format）为工单指定双接口——同一
+  json_object 语义在两协议下的参数载体不同，均需验证思考预算配
+  额；`/v1/messages` 为后续用户补充要求（K31 起用例须验证 chat
+  与 msg 双协议）——该协议无 json_object 参数语义，以同一
+  prompt 引导嵌套 JSON，思考预算配额（正文保留下限）主题同样
+  成立，max_tokens=256 协议必需字段恰好即工单原值
+- **嵌套形态取自工单"嵌套对象/数组"两个口径**：形态 A 三层嵌套
+  对象（user_profile.address）、形态 B 对象/数组互嵌
+  （departments[].employees[]）——覆盖工单"均可解析"要求
+- **每形态重复 2 次**：缺陷为思考预算分配问题、思考长度有随机
+  性（整改后 reasoning 短则不触发），重复降低偶发逃逸；6 请求/
+  形态共 12 请求，全部判定任一失败即 FAIL
+- **finish_reason/status/stop_reason 不作硬断言**：整改要求"为
+  content 保留下限"——正文完整可用即达标；length/incomplete/
+  max_tokens 且正文合法只留观察日志（缺陷形态=length+空正文，
+  已由断言 2 覆盖）
+- **结构断言取关键嵌套键**（city/departments 元素 name）：不断言
+  全字段——模型生成内容有随机性，验证工单口径的"嵌套结构可解
+  析"而非逐字段等值
+- **chat 协议用 _post_with_retry、responses/msg 协议用
+  session.post**（对齐 K11/K30/K3 先例）；responses 非流式正文
+  聚合按 F7 先例（output 内 type=="message" 项的 content 中
+  output_text 项）；msg 正文聚合 content 数组中 type=="text"
+  项的 text 字段
+- **观察日志**：finish_reason/status/stop_reason、正文/reasoning
+  长度、completion_tokens/output_tokens、reasoning_tokens、
+  incomplete_details——预算分配行为全量留痕，便于整改前后对照
+
+**注意事项**：
+- 观察日志与判据分离：length/incomplete/max_tokens+完整正文是
+  "观察项"而非"失败项"，报告阅读时勿混淆
+- marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
+  用例惯例归 GLM-5.3）
+- 若被测网关未实现 text.format 语义（responses 侧），断言 3（合
+  法 JSON）将如实暴露；msg 侧依赖模型按 prompt 引导输出 JSON——
+  引导失败同样如实暴露（非协议参数层缺陷，按断言 3 判定）
+- 不进 smoke 集：新用例首跑观察期
+
+### test_temperature_range_validation (K32)
+
+**背景**：客户问题（工单 P1 R-02 · temperature=1.5 被拒绝（官方接
+受），参数校验）：
+- **官方行为**：HTTP 200（官方取值区间 [0, 2)，1.5 合法）
+- **贵方实测**：6 发全部 HTTP 400，错误体为通用「模型服务调用失
+  败」(upstream_error)
+- **整改建议（即预期结果）**：按官方区间 [0, 2) 放行 temperature；
+  越界时回 400 并指明参数名与合法区间
+
+**测试断言点（按整改建议设计，任一失败即 FAIL）**：
+1. chat 放行轮：temperature=1.5 → HTTP 200 + 正文非空 + 自然结束
+2. chat 越界轮：temperature=2.0 / -0.5 → HTTP 400 + 错误体指明参数
+   名与合法区间（上界数字 2）
+3. msg 放行轮：temperature=0.5 → HTTP 200 + 正文非空 + stop_reason
+   自然结束
+4. msg 越界轮：temperature=1.5 / 2.0 / -0.5 → HTTP 400 + 错误体
+   指明参数名与合法区间（上界数字 1）
+
+**请求构造**（每组合 1 次，参数校验确定性——K6 先例；双协议覆
+盖——K31 起用例须验证 chat 与 msg 双协议，用户指定）：
+- chat 端点：`{api_prefix}/chat/completions`（非流式直发
+  `_post_with_retry`）；消息：单 user 闲聊（"请用一句话介绍你自
+  己。"）；`temperature`：工单原值 1.5 / 越界点 2.0、-0.5——直
+  进 payload，原样保留并豁免全局采样覆盖（top_p/seed 工单未指
+  定，不注入；max_tokens/thinking/stream 未指定不传）
+- msg 端点：`{base_url}/anthropic/v1/messages`（K3 先例——
+  `x-api-key` + `anthropic-version: 2023-06-01` 头，session.post
+  直发）；放行点 0.5（工单原值 1.5 在 Anthropic 官方区间 [0, 1]
+  语义下越界，不可作放行点）与越界点 1.5（工单原值——与 chat 侧
+  同值不同判）、2.0、-0.5；`max_tokens=1024` 为协议必需字段
+- 模型名由环境注入；相邻请求间隔 3s
+
+**断言**（硬）：
+1. chat 放行轮 HTTP 200（缺陷形态：6 发全部 400 通用「模型服务调
+   用失败」upstream_error）
+2. chat 放行轮正文非空且 `finish_reason == "stop"`（自然结束）
+3. chat 越界轮 HTTP 400（越界被静默放行/其他状态均为整改未达标）
+4. chat 越界轮错误体含参数名 `temperature`（大小写不敏感）
+5. chat 越界轮错误体含上界数字 `2`（合法区间痕迹）
+6. msg 放行轮 HTTP 200 且正文非空、`stop_reason` 存在且非
+   "max_tokens"（自然结束——Anthropic 枚举含 end_turn/
+   stop_sequence 等形态，宽松口径）
+7. msg 越界轮 HTTP 400
+8. msg 越界轮错误体含参数名 `temperature`（大小写不敏感）
+9. msg 越界轮错误体含上界数字 `1`（该协议合法区间痕迹）
+
+**判定矩阵**：
+- chat 放行 1.5 非 200 → FAIL（缺陷复现——官方区间内合法值被拒）
+- chat 放行 1.5 正文空或 finish_reason ≠ stop → FAIL（放行后生成
+  异常）
+- chat 越界点非 400 → FAIL（越界未被拒绝——静默放行同样未达标）
+- 400 但错误体不含 "temperature" → FAIL（缺陷形态复现——通用
+  「模型服务调用失败」不含参数名，整改未达标）
+- chat 400 且含参数名但不含数字 2 / msg 400 且含参数名但不含数
+  字 1 → FAIL（未指明对应协议合法区间）
+- msg 放行 0.5 非 200 → FAIL（Anthropic 官方区间内合法值被拒）
+- msg 越界 1.5 非 400 → FAIL（msg 语义下越界被静默放行——若网
+  关一刀切按 chat 区间 [0, 2) 放行 1.5，将在此如实暴露）
+- 1.5→200+stop（chat）/2.0、-0.5→400+参数名+区间；0.5→200+
+  自然结束（msg）/1.5、2.0、-0.5→400+参数名+区间（msg）→ PASS
+
+**设计决策记录**：
+- **P1**（按客户工单 P1 R-02）
+- **双向验收**：整改建议含两部分（区间内放行 + 越界拒绝并指明
+  原因）——只测放行无法暴露"越界乱拒/不拒"的整改缺口，只测越
+  界无法复现工单原缺陷（1.5 被拒）
+- **双协议按各自官方区间分别校验**：OpenAI 官方 [0, 2)、
+  Anthropic 官方 [0, 1]——工单原值 1.5 在两协议下预期相反（chat
+  放行/msg 拒绝），恰好验证网关是否按协议语义分别校验而非一刀
+  切；若一刀切复用 chat 校验逻辑，msg 越界轮 1.5 将以 200 放行
+  FAIL 如实暴露
+- **msg 放行点取 0.5 而非工单原值 1.5**：1.5 在 Anthropic 官方
+  [0, 1] 语义下越界，不可作放行点；取 [0, 1] 内合法中位点验证
+  msg 侧放行能力
+- **越界点取双向边界**：2.0（上界——半开区间不含）与 -0.5（负
+  向——下界 0 含、负数不含）
+- **区间痕迹断言口径（chat 含数字 2/msg 含数字 1）为下限设计**：
+  错误文案形态多样（"[0, 2)" / "0 to 2" / "0 and 1"……），逐文案
+  精确匹配会误报；含 "temperature" + 对应上界数字已可完全区分缺
+  陷形态（通用「模型服务调用失败」upstream_error 两者皆不含）
+- **每组合 1 次**：参数校验为确定性行为（K6 先例——6 组合无多次
+  连发），无需重复；工单"6 发"为客户侧探测次数，不改变确定性
+- **不传 max_tokens/thinking（chat 侧）**：工单原始请求未指定
+  （仅知 temperature=1.5 与 6 发全 400）——按"未含参数不注入"
+  口径保持最小请求形态，避免引入无关变量；msg 侧 max_tokens 为
+  协议必需字段（1024 单句闲聊合理值）
+- **直发 payload**：temperature 直进请求体（K 套件豁免机制下原
+  样保留，无全局注入口）
+
+**注意事项**：
+- 若被测实现存在模型级温度档联动（如 thinking 档位契约），chat
+  放行轮 FAIL 即按工单口径如实暴露（整改要求按 [0, 2) 放行，模
+  型档位联动不得窄于官方区间）
+- 越界轮若返回 422/500 等非 400 状态：同样 FAIL（整改明确要求
+  400）
+- msg 越界轮 "1" 断言为下限口径：若错误体含其他数字组合（如
+  HTTP 状态码字样）误含 "1"，按关键词组合 "temperature"+"1" 判
+  定——通用 upstream_error 两者皆不含，区分度充分
+- marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
+  用例惯例归 GLM-5.3）
+- 不进 smoke 集：新用例首跑观察期
+
+### test_top_logprobs_stable_support (K33)
+
+**背景**：客户问题（工单 P2 R-03 · top_logprobs=5 时拒时放，参数
+校验）：
+- **官方行为**：HTTP 200，返回 logprobs.top_logprobs
+- **贵方实测**：同参数 12 发中 9 发 HTTP 400、3 发 HTTP 200，行为
+  不稳定
+- **整改建议**：统一行为；若上游确实不支持，错误体应说明能力缺
+  失而非参数非法，避免客户端反复重试
+- **本用例口径**：预期按官方行为断言（用户指定）——12 发全部应
+  200 且返回 logprobs.top_logprobs
+
+**测试断言点（按官方行为断言，任一失败即 FAIL 并报告第几发）**：
+1. chat 每发 HTTP 200（任一 400 即缺陷复现——时拒时放未统一）
+2. chat `choices[0].logprobs` 存在且含 `top_logprobs`
+3. chat `top_logprobs` 候选对象为 dict、项数 ≤ 5（top-N 语义）
+4. chat 正文非空、finish_reason 宽松枚举（K2 口径）
+5. msg 12 发状态码完全一致（全部 400 或全部 200——200/400 混现
+   即时拒时放缺陷复现）
+6. msg 若全 400：错误体指明字段（含 `logprobs`——能力缺失说明
+   口径）；若全 200：每发正文非空
+
+**请求构造**（双协议 12 发同参数，对齐工单"12 发"口径；K31 起
+用例须验证 chat 与 msg 双协议，用户指定）：
+- chat 端点：`{api_prefix}/chat/completions`（非流式直发
+  `_post_with_retry`）；消息：单 user 闲聊（"请用一句话介绍你自
+  己。"）；`logprobs=true` + `top_logprobs=5`（工单原值，成对出
+  现依 OpenAI 规范——top_logprobs 依赖 logprobs 开关）；
+  max_tokens/thinking/采样参数工单未指定——不传（不注入）
+- msg 端点：`{base_url}/anthropic/v1/messages`（K3 先例——
+  `x-api-key` + `anthropic-version: 2023-06-01` 头，session.post
+  直发）；同一参数 `logprobs=true` + `top_logprobs=5` 直进
+  payload；`max_tokens=512` 为协议必需字段
+- 模型名由环境注入；相邻间隔 3s
+
+**断言**（硬）：
+1. chat 每发 HTTP 200
+2. chat `logprobs` 为 dict 且含 `top_logprobs`（兼容两种结构——新
+   式 `logprobs.content[].top_logprobs` 与旧式 `logprobs.
+   top_logprobs`）
+3. chat 每个候选为 dict（token/logprob 对象）、数组长度 ≤ 5
+4. chat 正文非空、finish_reason ∈ {tool_calls, stop, eos, ended,
+   length}
+5. msg 12 发状态码集合大小为 1（统一行为）
+6. msg 全 400 → 每发错误体含 `logprobs`（大小写不敏感）；msg 全
+   200 → 每发正文非空
+
+**判定矩阵**：
+- chat 任一发非 200 → FAIL（缺陷复现——工单实测 12 发中 9 发 400
+   的时拒时放形态）
+- chat 200 但 logprobs 缺失或无 top_logprobs → FAIL（官方行为"
+   返回 logprobs.top_logprobs"未满足——能力缺失时按整改应统一说
+   明，不得返回不含 logprobs 的 200）
+- chat top_logprobs 项数 > 5 → FAIL（参数语义未生效）
+- chat 候选元素非 dict → FAIL（结构不合规）
+- chat 正文空/finish_reason 异常 → FAIL（放行后生成异常）
+- msg 200/400 混现 → FAIL（时拒时放缺陷在 msg 协议复现——整改
+  要求统一行为，与具体分支无关）
+- msg 全 400 但错误体不含 "logprobs" → FAIL（能力缺失未指明字段
+  ——整改建议："错误体应说明能力缺失"便于客户端停止重试）
+- msg 全 200 但任一发正文空 → FAIL（统一放行下的空作答异常）
+- chat 12 发全部 200+结构齐备+项数 ≤5；msg 12 发统一（全 400 指
+  明字段或全 200 正文非空）→ PASS（行为已统一，时拒时放缺陷在
+  两协议均未复现）
+
+**设计决策记录**：
+- **P2**（按客户工单 P2 R-03）
+- **12 发对齐工单口径**：缺陷形态是"同参数时拒时放"——只发 1-2
+   发无法暴露不稳定行为；12 发与工单实测次数一致，任一发失败即
+   FAIL 并报告第几发
+- **chat 按官方行为断言（用户指定）**：整改建议含两个分支（统一
+   放行/统一能力缺失说明），用户明确按官方行为断言——200+
+   top_logprobs 为唯一预期，不测 400 错误文案分支
+- **msg 断统一性而非 200**：Anthropic 协议无 logprobs 参数语义
+  （官方对未知字段应 400 拒绝）——按官方 200 预期会与"网关忽略
+  未知参数统一作答"的现实实现冲突；本用例主题是"时拒时放"不稳
+  定性，msg 侧以整改建议的两分支（统一能力缺失说明/统一放行）
+  为达标口径，混现即 FAIL——两协议判据不同但核心一致（行为统
+  一）
+- **兼容两种 logprobs 结构**：新式 `content[].top_logprobs`
+  （OpenAI 当前规范）与旧式顶层 `top_logprobs`——两种实现均视
+   为"返回 logprobs.top_logprobs"，避免对结构形态过严误报
+- **项数 ≤5 为硬断言**：top_logprobs=5 语义即返回 top-5 候选——
+   返回更多即参数未生效
+- **finish_reason 宽松枚举（K2 先例口径）**：本用例主题为参数放
+   行稳定性而非生成质量，finish 异常形态（tool_calls/eos/ended/
+   length）均不算参数层缺陷
+- **不传 max_tokens（chat 侧）**：工单未指定——最小请求形态
+  （K32 同口径）；msg 侧 max_tokens=512 为协议必需字段（单句闲
+  聊合理值）
+
+**注意事项**：
+- 双协议 24 发 × 思考模型单发 10-30s，总耗时约 6-12 分钟——P2
+  选测可接受，不进 smoke 集
+- 若被测实现 logprobs 为路由层透传（不落引擎），结构兼容断言保
+  证两代格式均通过；判据核心是"有 top_logprobs"而非具体形态
+- msg 统一性判定需收满 12 发后判（单发无法判定不稳定）——失败
+  时逐发状态码全量进断言消息
+- marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
+  用例惯例归 GLM-5.3）
+- 不进 smoke 集：新用例首跑观察期；P2 选测
+
+### test_multimodal_rejection_error_detail (K34)
+
+**背景**：客户问题（工单 P2 R-04 · 多模态拒绝的错误体未指明媒体
+类型与字段，多模态）：
+- **官方行为**：`/v1/chat/completions` HTTP 400，错误体指明 type
+  参数非法、取值范围 `['text']`；官方 `/v1/messages` 侧对部分图
+  片返回 200——属官方自身静默丢弃，不作为判定基准
+- **贵方实测**：HTTP 400，chat 与 msg 双协议 8 发均为通用「模型服
+  务调用失败」(upstream_error)，未说明哪种媒体类型、哪个字段不被
+  支持
+- **整改补充信息（用户后续提供，本用例预期断言口径）**：GLM-5.3
+  为纯文本模型，不支持任何多模态输入——凡收到图片、音频、视频、
+  文档等媒体块，**无论 base64 内联还是远端 URL 传入**，须返回 400
+  明确拒绝并在错误体中指明不支持的媒体类型与字段；不得 200 静默
+  丢弃、不得降级为纯文本照常作答、也不得只回通用「模型服务调用
+  失败」使客户端无法判断原因
+
+**测试断言点（按整改口径设计，每轮任一失败即 FAIL 并报告轮标
+签）**：
+1. HTTP 400（纯文本模型明确拒绝任何媒体块——200=静默忽略/降级
+   作答、500 等=非合规拒绝）
+2. 错误体指明该轮媒体类型——含对应关键词 `image`/`audio`/
+   `video`/`document`（大小写不敏感）
+
+**请求构造**（媒体类型 × 传入形态 × 双协议矩阵——chat 4 轮 +
+msg 4 轮 = 8 发，对齐工单 8 发口径；确定性校验行为，K6/K32 先
+例）：
+- chat 协议：`{api_prefix}/chat/completions`（非流式直发
+  `_post_with_retry`），4 轮：
+  1. `image_url` × base64 内联（1 张代码生成 32x32 纯色 PNG
+     data URL——K19 同款）+ text part
+  2. `image_url` × 远端 URL（`https://example.com/test.png`）
+     + text part
+  3. `input_audio` × base64 内联（代码生成最小 WAV——8kHz
+     16bit 20ms 静音段；`format=wav`）+ text part
+  4. `video_url` × 远端 URL（`https://interactive-examples.`
+     `mdn.mozilla.net/media/cc0-videos/flower.mp4`——参照
+     test_c 多模态视频理解 C5 同款公网视频地址，同 video_url
+     part 形态）+ text part
+- msg 协议：`{base_url}/anthropic/v1/messages`（K3 先例——
+  `x-api-key` + `anthropic-version: 2023-06-01` 头，session.post
+  直发），4 轮：
+  1. `image` × base64（`source.type=base64`、
+     `media_type=image/png`、`data=<PNG base64>`）+ text part
+  2. `image` × 远端 URL（`source.type=url`、
+     `url=https://example.com/test.png`）+ text part
+  3. `document` × base64（`source.type=base64`、
+     `media_type=application/pdf`、`data=<最小 PDF base64>`）
+     + text part
+  4. `document` × 远端 URL（`source.type=url`、
+     `url=https://example.com/test.pdf`）+ text part
+- msg 协议 `max_tokens=64` 为 Anthropic 协议必需字段（最小合理
+  值，工单未指定）；`stream` 非流式；thinking/采样参数工单未指
+  定——不传（不注入）；模型名由环境注入；相邻间隔 3s
+
+**断言**（硬，每轮）：
+1. HTTP 400
+2. 错误体含该轮媒体类型关键词（chat 轮：image/image/audio/
+   video；msg 轮：image/image/document——大小写不敏感；URL 轮
+   与 base64 轮判据相同——整改要求"无论何种传入形态"）
+
+**判定矩阵**：
+- 任一轮非 400 → FAIL（200=媒体被静默忽略或降级纯文本作答——
+  官方 msg 侧 200 属其自身静默丢弃，不作判定基准，msg 轮 200 同
+  样 FAIL；500 等=非合规拒绝）
+- 400 但错误体不含该轮关键词 → FAIL（缺陷复现——通用「模型服
+  务调用失败」upstream_error 未指明媒体类型与字段，客户端无法
+  定位）
+- 8 轮全部 400 且错误体含对应关键词 → PASS（拒绝合规 + 媒体类
+  型可定位 + 覆盖图/音/视/文档 × base64/URL 全形态）
+- 错误体是否含 `text`（取值范围 `['text']` 痕迹）→ 观察日志，
+  不计判据
+
+**设计决策记录**：
+- **P2**（按客户工单 P2 R-04）
+- **媒体类型 × 传入形态矩阵（用户补充信息驱动）**：整改补充信息
+  明确"图片、音频、视频、文档等媒体块"与"base64 内联/远端
+  URL"两维度均须拒绝——原设计仅 chat 图片 base64 + msg 图片
+  base64 两点，不足以覆盖"无论何种形态"口径；扩展为 chat 4 轮
+  （图×2 形态 + 音频 + 视频）+ msg 4 轮（图×2 形态 + 文档×2
+  形态）= 8 发，恰好对齐工单"8 发"计数
+- **媒体类型与协议的对应关系**：chat 协议取 OpenAI 侧可标准构
+  造的 part（image_url/input_audio——官方规范；video_url 为多模
+  态扩展常见非标形态）；msg 协议取 Anthropic 官方 image/
+  document block（source.type=base64/url 两形态均为官方 schema）
+  ——各协议按其字段语义覆盖，不硬凑无标准构造的组合（如 msg 音
+  频）
+- **官方 msg 侧 200 不作判定基准（用户指定）**：官方 /v1/messages
+  对部分图片 200 属自身静默丢弃——整改要求"不得 200 静默丢
+  弃"，故 msg 轮仍按 400 断言，官方 200 行为不构成放松判据的
+  依据
+- **断言口径为"含该轮媒体关键词"下限设计**：错误体文案形态多样
+  （"type 'image_url' not supported" / "image not allowed" /
+  "source type image invalid" / "document blocks not
+  supported"……），逐文案精确匹配会误报；含关键词已可完全区分缺
+  陷形态（通用「模型服务调用失败」upstream_error 不含任何媒体
+  类型与字段名）
+- **取值范围痕迹（'text'）留观察不计判据**：官方行为含取值范围
+  `['text']`，但整改核心要求是"指出不支持的媒体类型与字
+  段"——允许值列表为增强信息，不作硬断言避免对文案形态过严
+- **远端 URL 取材**：视频轮参照 test_c 多模态视频理解（C5）同
+  款公网视频地址（MDN flower.mp4，CC0 公共视频）——与既有套件
+  素材一致、同 video_url part 形态；图片/文档远端 URL 用
+  example.com 占位（媒体类型校验发生在媒体块字段层——type/字
+  段名/扩展名可见，不依赖真实可下载资源，避免测试环境外网依赖
+  与下载不确定性；预期 400 拒绝发生在校验层，不触发真实下载）
+- **媒体数据代码生成（PNG/WAV/最小 PDF）**：自包含、无外部依
+  赖；chat 用 data URL/base64、msg 用 base64 段（同一份生成数据
+  两种协议形态）；PDF 取最小骨架（类型校验在 media_type 字段
+  层，不要求可完整解析）
+- **每轮 1 发**：错误体来自固定代码路径（确定性校验行为，K6/
+  K32 先例）——8 轮已对齐工单计数，无需逐轮重复
+- **msg 协议 max_tokens=64**：Anthropic 协议必需字段——最小合理
+  值并注明（工单未指定，非采样/生成参数不适用"不注入"豁免口径
+  的范围）
+
+**注意事项**：
+- 本用例针对纯文本模型（GLM-5.3）的多模态拒绝场景（用户补充信
+  息明确）；若被测部署实为多模态模型（支持 image 等），断言 1
+  将以"200 媒体被接受"FAIL——如实暴露环境与整改口径不符，须人
+  工确认部署口径
+- 若网关在多协议路由层即拒绝（未达模型），错误体通常由网关生
+  成——断言口径同样适用（网关文案同样须指明媒体类型）
+- msg 侧若按官方 Anthropic 严格校验未知 part（如 video_url 类
+  chat 轮 400 由 type 校验拒绝），文案含 part 类型名即满足断言
+  2——与"能力缺失说明"口径一致
+- marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
+  用例惯例归 GLM-5.3）
+- 不进 smoke 集：新用例首跑观察期；P2 选测
+
+### test_enable_thinking_param_rejection (K35)
+
+**背景**：客户问题（工单 P1 R-07 · 备选思考开关 enable_thinking 放
+行行为不一致，接口协议）：
+- **官方行为**：HTTP 400——拒绝该参数（enable_thinking 为非官方/
+  备选思考开关，官方对未知参数直接拒绝）
+- **贵方实测**：HTTP 200——放行并按默认思考处理（静默接受）
+- **整改建议**：与官方一致拒绝，或在文档中明确声明支持该参数并
+  保证语义等价；不得静默放行
+- **本用例口径**：按与官方一致的行为断言（用户指定）——400 拒绝
+
+**测试断言点（按官方一致行为设计，每协议任一失败即 FAIL）**：
+1. HTTP 400（200=静默放行缺陷复现——贵方实测形态，整改明令"不
+   得静默放行"）
+2. 错误体含参数名 `enable_thinking`（大小写不敏感）
+
+**请求构造**（双协议各 1 发——参数校验为确定性行为，K6/K32/K34
+先例）：
+- chat 协议：`{api_prefix}/chat/completions`（非流式直发
+  `_post_with_retry`），单 user 闲聊（"请用一句话介绍你自己。"），
+  payload 顶层带 `enable_thinking=true`（开关典型取值形态——工
+  单未附请求样例）
+- msg 协议：`{base_url}/anthropic/v1/messages`（K3 先例——
+  `x-api-key` + `anthropic-version: 2023-06-01` 头，session.post
+  直发），同参数 `enable_thinking=true`，`max_tokens=1024` 为协
+  议必需字段
+- thinking/采样参数工单未指定——不传（不注入）；模型名由环境
+  注入；相邻间隔 3s
+
+**断言**（硬，每协议）：
+1. HTTP 400
+2. 错误体含 `enable_thinking`（大小写不敏感——官方未知参数拒绝
+   文案均含参数名，如 "Unrecognized request argument supplied:
+   enable_thinking" / "unexpected field"）
+
+**判定矩阵**：
+- 200 → FAIL（静默放行缺陷复现——贵方实测形态：放行并按默认思
+  考处理；整改明令"不得静默放行"）
+- 500 等 → FAIL（非合规拒绝——整改要求"与官方一致拒绝"）
+- 400 但错误体不含 `enable_thinking` → FAIL（缺陷形态——通用
+  「模型服务调用失败」不含参数名，客户端无法定位）
+- 400 且错误体含 `enable_thinking` → PASS（与官方一致拒绝且可
+  定位）
+
+**设计决策记录**：
+- **P1**（按客户工单 P1 R-07）
+- **按官方一致行为断言（用户指定）**：整改建议含两分支（与官方
+  一致拒绝 / 文档声明支持并保证语义等价），用户明确按官方一致
+  行为断言——400 为唯一预期，文档声明分支为非受测分支
+- **双协议覆盖**（K31 起用例须验证 chat 与 msg 双协议，用户指
+  定）：同一非官方参数在两协议下均须与官方一致拒绝——任一协
+  议静默放行即缺陷复现
+- **断言含参数名为下限设计**：官方对未知参数的拒绝文案均含参数
+  名（OpenAI "Unrecognized request argument supplied" / 
+  Anthropic "unexpected field"），含 `enable_thinking` 已可完全
+  区分缺陷形态（通用「模型服务调用失败」upstream_error 不含任
+  何参数名）
+- **每协议 1 发**：参数校验为确定性行为（K6/K32/K34 先例）——
+  官方拒绝参数本身、与取值无关，单值即可判定"静默放行"形态
+- **enable_thinking=true 为开关典型取值**：工单未附请求样例；
+  true 即"开启备选思考"语义，为该开关的代表性形态
+- **不传 thinking/采样参数**：工单未指定——最小请求形态，避免
+  引入无关变量；msg 侧 max_tokens=1024 为协议必需字段
+
+**注意事项**：
+- 若被测网关选择整改备选分支（文档声明支持 enable_thinking 并
+  保证语义等价），本用例将按官方分支如实 FAIL——须人工确认分支
+  口径后再调整用例
+- marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
+  用例惯例归 GLM-5.3）
+- 不进 smoke 集：新用例首跑观察期
+
+### test_finish_reason_stop_semantics (K36)
+
+**背景**：客户问题（工单 P1 R-06 · finish_reason 语义与官方不
+一致，接口协议）：
+- **官方行为**：finish_reason=stop（20_chat_stream_002 /
+  20_chat_ms_001 / 20_chat_structured_002 三例）
+- **贵方实测**：同一请求渠道返回 finish_reason=length，官方返
+  回 stop（三例一致复现）
+- **整改建议**：对齐 finish_reason 判定——思考 token 不应把正
+  常结束的请求判成 length 截断
+- **本用例口径**：按官方行为进行预期断言（用户指定），覆盖工单
+  三例对应的三种请求形态
+
+**测试断言点（按官方行为设计，每形态 × 每协议任一失败即 FAIL）**：
+1. 终止语义对齐官方：chat `finish_reason == "stop"` / msg
+   `stop_reason == "end_turn"`（Anthropic 协议的自然结束语义——
+   msg 侧的 stop 等价；length/max_tokens=缺陷复现：思考 token
+   计入判定把正常结束的请求误判截断——工单三例一致形态）
+2. 正文非空（正常结束的佐证）
+
+**请求构造**（三种请求形态 × chat+msg 双协议 = 6 发，相邻间隔
+3s；thinking/采样参数工单未指定——不传不注入）：
+- **流式**（对齐工单 20_chat_stream_002 形态）：chat
+  `/v1/chat/completions` SSE（收集 `choices[].finish_reason` 与
+  `delta.content` 增量，K24 流式消费先例）；msg
+  `/anthropic/v1/messages` SSE（收集
+  `message_delta.delta.stop_reason` 与
+  `content_block_delta` 正文增量，K3 流式消费先例）
+- **多段**（对齐工单 20_chat_ms_001 形态）：单条 user 消息
+  content 数组多段文本（3 段——姓名/年龄/复述引导），非流式
+- **结构化**（对齐工单 20_chat_structured_002 形态）：chat 侧
+  `response_format={"type": "json_object"}` + JSON 对象任务；
+  msg 侧无该参数按 K31 先例 prompt 引导 JSON，非流式
+- msg 协议头：`x-api-key` + `anthropic-version: 2023-06-01`
+  （K3 先例）；max_tokens 两协议同为 512（msg 协议必需字段）
+
+**断言**（硬，每形态 × 每协议）：
+1. chat `finish_reason == "stop"` / msg `stop_reason ==
+   "end_turn"`
+2. 正文非空（流式侧为合并增量，非流式侧为
+   `message.content` / `content[].text`）
+
+**判定矩阵**：
+- chat `length` / msg `max_tokens`（正文已正常产出）→ FAIL
+  （缺陷复现——思考 token 计入判定把正常结束的请求误判截断，
+  贵方实测三例一致形态）
+- 正文为空（任意终止字段）→ FAIL（思考耗光配额的 K31 形态混
+  入——正常结束无从谈起，属配额缺陷而非误判，但本例判据要求
+  "正常结束"，如实 FAIL 交人工分派）
+- `stop` / `end_turn` 且正文非空 → PASS（与官方一致）
+
+**设计决策记录**：
+- **P1**（按客户工单 P1 R-06）
+- **按官方行为断言（用户指定）**：工单实测为官方 stop / 贵方
+  length 的对照——本用例对齐官方预期 stop 为唯一合法终止语义
+- **三种请求形态（工单三例映射）**：流式 / 多段 / 结构化各 1
+  发——工单三例一致复现说明缺陷在判定层而非特定请求形态，但
+  按工单原始覆盖面逐一验证
+- **双协议覆盖**（K31 起用例须验证 chat 与 msg 双协议，用户指
+  定）：msg 侧终止字段为 Anthropic 语义 `stop_reason`
+  （自然结束=`end_turn`，截断=`max_tokens`）——与 chat 侧
+  `finish_reason`（stop/length）一一对应，同一判定缺陷的双协
+  议映射
+- **max_tokens=512（工单三例未附原始 payload——设计取值）**：
+  单句/短 JSON 正文（数十 token 量级）远低于配额（官方自然结
+  束 stop），默认档思考 token 常达数百——计入判定的实现易触顶
+  误判 length（贵方缺陷形态），对判定语义敏感且不致正文真实
+  截断（真实截断时 length 反而正确，测试将失去判别力）
+- **正文非空断言为佐证性设计**：把"正常结束"钉死——正文空+
+  length 形态属 K31（思考耗光配额）域，混入时先行 FAIL 交人工
+  分派
+- **不传 thinking/采样参数**：工单未指定——缺陷正出在默认思考
+  的 token 计入判定，注入思考参数反而引入无关变量
+
+**注意事项**：
+- 观察项：finish=length 但正文完整（真实自然结束而仅标签错）
+  亦判 FAIL——判定语义必须整体对齐官方，标签错误同样违约
+- msg 流式侧 `stop_reason` 取自 `message_delta` 事件（Anthropic
+  SSE 协议位置）；chat 流式侧 `finish_reason` 取自末个带该字段
+  的 chunk
+- marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
+  用例惯例归 GLM-5.3）
+- 不进 smoke 集：新用例首跑观察期

@@ -1194,6 +1194,158 @@ TEST_CATEGORIES = {
                 "responses_api_marker_output_usage",
                 "P0",
             ),
+            (
+                "K31",
+                "json_object 嵌套结构输出空正文核验（思考预算配额）",
+                "客户问题（工单 P1 R-01，结构化输出）：官方行为 "
+                "HTTP 200、content 为合法 JSON（嵌套对象/数组均可解"
+                "析）；贵方实测 HTTP 200、finish_reason=length、"
+                "content 为空字符串、思考内容占满 max_tokens=256。"
+                "整改建议：思考预算与可见输出应分别配额——在 "
+                "max_tokens 内为 content 保留下限，不得让 reasoning "
+                "吃满整额后返回空正文。本用例按整改建议设计验收口"
+                "径：三种接口（/v1/chat/completions response_format="
+                "json_object + /v1/responses text.format=json_object "
+                "+ /v1/messages——Anthropic 协议无 json_object 参数"
+                "语义，以同一 prompt 引导嵌套 JSON、思考预算配额在"
+                "该协议同样验证；max_tokens/max_output_tokens=256 "
+                "工单原值）× 两种嵌套形态（嵌套对象/嵌套数组）× "
+                "各 2 次，硬断言每次 HTTP 200、正文非空、合法 JSON "
+                "对象、嵌套结构齐备；finish_reason/status 与 stop_"
+                "reason 留观察日志（length/incomplete/max_tokens 且"
+                "正文完整合法不判失败——正文可用即整改达标）。模型"
+                "名由环境注入；采样参数原始未指定——保持不注入",
+                "json_object_nested_empty_content",
+                "P1",
+            ),
+            (
+                "K32",
+                "temperature 官方区间放行与越界校验（双协议）",
+                "客户问题（工单 P1 R-02，参数校验）：官方行为 "
+                "HTTP 200（官方取值区间 [0, 2)，1.5 合法）；贵方实"
+                "测 6 发全部 HTTP 400，错误体为通用「模型服务调用失"
+                "败」(upstream_error)。整改建议（即预期结果）：按官"
+                "方区间放行 temperature；越界时回 400 并指明参数名"
+                "与合法区间。本用例双向验收（参数校验为确定性，每"
+                "组合 1 次——K6 先例）双协议覆盖：chat 协议按 "
+                "OpenAI 官方区间 [0, 2)——放行轮 temperature=1.5"
+                "（工单原值）→ 200+正文非空+自然结束，越界轮 2.0"
+                "（上界半开不含 2）与 -0.5 → 400+错误体指明参数名"
+                " temperature+含上界数字 2；msg 协议（/anthropic/v1/"
+                "messages）按 Anthropic 官方区间 [0, 1] 分别校验——"
+                "放行轮 temperature=0.5（工单原值 1.5 在该协议官方"
+                "语义下越界，不可作放行点）→ 200+正文非空+stop_"
+                "reason 自然结束，越界轮 1.5（工单原值，与 chat 侧"
+                "同值不同判——验证网关按协议语义分别校验）、2.0 与 "
+                "-0.5 → 400+错误体指明参数名 temperature+含上界数"
+                "字 1。工单原始值 temperature 原样保留并豁免全局采"
+                "样覆盖；top_p/seed 工单未指定——不注入；msg 协议 "
+                "max_tokens 为必需字段",
+                "temperature_range_validation",
+                "P1",
+            ),
+            (
+                "K33",
+                "top_logprobs=5 稳定放行与 logprobs 结构核验（双协议）",
+                "客户问题（工单 P2 R-03，参数校验）：官方行为 "
+                "HTTP 200、返回 logprobs.top_logprobs；贵方实测同参"
+                "数 12 发中 9 发 HTTP 400、3 发 HTTP 200，行为不稳"
+                "定。整改建议：统一行为；若上游确实不支持，错误体"
+                "应说明能力缺失而非参数非法，避免客户端反复重试。"
+                "本用例预期按官方行为断言（用户指定）双协议覆盖："
+                "chat 协议 12 发同参数（logprobs=true + top_"
+                "logprobs=5 工单原值，成对出现依 OpenAI 规范）非流"
+                "式请求，硬断言每发 HTTP 200、logprobs 含 top_"
+                "logprobs（兼容新式 content[] 与旧式顶层两种结"
+                "构）、候选对象数 ≤5（top-N 语义）、正文非空+"
+                "finish_reason 宽松枚举（K2 口径）——任一发 400 即"
+                "缺陷复现（时拒时放未统一）；msg 协议（/anthropic/"
+                "v1/messages）无 logprobs 参数语义——12 发同参数，"
+                "硬断言统一行为：全部 400 且错误体指明字段（含 "
+                "'logprobs'，能力缺失说明口径）或全部 200 且正文非"
+                "空，200/400 混现即 FAIL。max_tokens/thinking/采样"
+                "参数工单未指定——不传（不注入）；msg 协议 "
+                "max_tokens 为必需字段",
+                "top_logprobs_stable_support",
+                "P2",
+            ),
+            (
+                "K34",
+                "多模态拒绝错误体应指明媒体类型与字段（双协议）",
+                "客户问题（工单 P2 R-04，多模态）：官方 /v1/chat/"
+                "completions 行为 HTTP 400，错误体指明 type 参数非"
+                "法、取值范围 ['text']；贵方实测 HTTP 400，chat 与 "
+                "msg 双协议 8 发均为通用「模型服务调用失败」"
+                "(upstream_error)，未说明哪种媒体类型、哪个字段不被"
+                "支持。整改补充信息：GLM-5.3 为纯文本模型，不支持"
+                "任何多模态输入——凡收到图片、音频、视频、文档等"
+                "媒体块，无论 base64 内联还是远端 URL 传入，须 400 "
+                "明确拒绝并在错误体中指明不支持的媒体类型与字段；"
+                "不得 200 静默丢弃、不得降级为纯文本照常作答、也不"
+                "得只回通用错误使客户端无法判断原因；官方 msg 侧对"
+                "部分图片 200 属自身静默丢弃，不作判定基准。本用例"
+                "媒体类型 × 传入形态 × 双协议矩阵（chat 4 轮——"
+                "image_url×base64/URL、input_audio×base64、"
+                "video_url×URL；msg 4 轮——image×base64/URL、"
+                "document×base64/URL；=8 发对齐工单口径；确定性校验"
+                "——K6/K32 先例），硬断言每轮：HTTP 400 + 错误体含"
+                "对应媒体类型关键词（image/audio/video/document，"
+                "大小写不敏感）；取值范围痕迹 'text' 留观察日志。媒"
+                "体数据代码生成（PNG/WAV/最小 PDF）——视频轮远端 "
+                "URL 参照 test_c 视频理解 C5 同款公网地址（MDN "
+                "flower.mp4），图片/文档远端 URL 用 example.com 占"
+                "位（类型校验在媒体块字段层，不依赖真实可下载资"
+                "源）；msg 协议 max_tokens=64 为必需字段；采样参数"
+                "未指定——不注入",
+                "multimodal_rejection_error_detail",
+                "P2",
+            ),
+            (
+                "K35",
+                "enable_thinking 备选思考开关应与官方一致拒绝（双协议）",
+                "客户问题（工单 P1 R-07，接口协议）：官方行为 HTTP "
+                "400——拒绝该参数（enable_thinking 为非官方备选思考"
+                "开关，官方对未知参数直接拒绝）；贵方实测 HTTP 200——"
+                "放行并按默认思考处理（静默接受）。整改建议：与官方一"
+                "致拒绝，或在文档中明确声明支持该参数并保证语义等"
+                "价；不得静默放行。本用例按官方一致行为断言（用户指"
+                "定）双协议覆盖：chat 与 msg 各发 1 次 "
+                "enable_thinking=true（确定性参数校验——K6/K32/K34 "
+                "先例），硬断言每协议：HTTP 400 + 错误体含 "
+                "'enable_thinking'（大小写不敏感——官方未知参数拒绝"
+                "文案均含参数名；排除通用『模型服务调用失败』缺陷形"
+                "态）；整改备选分支（文档声明支持+语义等价）为非受"
+                "测分支。采样参数未指定——不注入；msg 协议 "
+                "max_tokens 为必需字段",
+                "enable_thinking_param_rejection",
+                "P1",
+            ),
+            (
+                "K36",
+                "finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议）",
+                "客户问题（工单 P1 R-06，接口协议）：官方行为 "
+                "finish_reason=stop（20_chat_stream_002 / "
+                "20_chat_ms_001 / 20_chat_structured_002 三例）；贵"
+                "方实测同一请求渠道返回 finish_reason=length，官方"
+                "返回 stop（三例一致复现）。整改建议：对齐 "
+                "finish_reason 判定——思考 token 不应把正常结束的请"
+                "求判成 length 截断。本用例按官方行为进行预期断言"
+                "（用户指定），覆盖三种请求形态 × 双协议（chat + "
+                "msg——K31 起口径）：流式（SSE 收集终止字段与正文）、"
+                "多段（content 数组多段文本）、结构化（chat "
+                "response_format=json_object / msg prompt 引导——"
+                "K31 先例），硬断言每形态 × 每协议：终止语义对齐官"
+                "方——chat finish_reason=='stop' / msg "
+                "stop_reason=='end_turn'（length/max_tokens=缺陷"
+                "复现：思考 token 计入判定把正常结束的请求误判截"
+                "断）+ 正文非空（正常结束的佐证；正文空+length 为"
+                "K31 思考耗光形态，非本例口径）。max_tokens=512（工"
+                "单未附原始 payload——适中值，正文远低于配额而计入"
+                "思考的实现易触顶误判，对判定语义敏感）；thinking/"
+                "采样参数未指定——不注入",
+                "finish_reason_stop_semantics",
+                "P1",
+            ),
         ],
     },
 }
