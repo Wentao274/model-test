@@ -7,16 +7,16 @@
 
 1. **用例本体**（`tests/test_k_customer_issue.py`）：
    - 测试方法（追加于文件末尾，不改动已有用例）；
-   - 模块 docstring：新增用例条目 + 头部优先级范围枚举（当前口径：
-     `K1-K7、K10-K30 为 P0，K8/K9/K31/K32/K35/K36 为 P1，
-     K33/K34 为 P2`）。
+    - 模块 docstring：新增用例条目 + 头部优先级范围枚举（当前口径：
+      `K1-K7、K10-K30、K37、K38 为 P0，K8/K9/K31/K32/K35/K36 为
+      P1，K33/K34 为 P2`）。
 2. **注册**（`base/test_definitions.py`）：追加条目
    （id/标题/描述/方法名后缀/优先级）。
 3. **Jenkinsfile**：用例选择参数（choice）列表追加测试节点
    （`tests/test_k_customer_issue.py::TestCustomerIssue::<方法名>`，
    注意前一项补逗号）。
 4. **pytest.ini**：marker 描述中的用例编号枚举同步
-   （如 `GLM53: …（K1/K2/K4/K14-K18, K20, K22-K36）`）。
+   （如 `GLM53: …（K1/K2/K4/K14-K18, K20, K22-K38）`）。
 5. **conftest.py**：采样参数豁免口径——test_k 套件经
    `RAW_SAMPLING_EXEMPT_FILES`（模块级）整体保持原始测试参数，
    不参与全局采样覆盖：工单/原始请求含采样参数的原样保留，
@@ -25,7 +25,7 @@
 6. **docs/test_k_customer_issue.md**：概览表新增行 + 详述章节
    （背景/请求构造/断言/判定矩阵/设计决策记录/注意事项）。
 7. **checkpoints.md**：新增用例行 + P0/P1/P2 统计行数量与总计同步
-   （如 `K1-K7, K10-K30 客户问题复现 28 项`、总计行）。
+   （如 `K1-K7, K10-K30, K37, K38 客户问题复现 30 项`、总计行）。
 8. **README.md**（K 类行：测试点计数 + 用例枚举追加 + 总计行
    计数/P0 数）与 **docs/README.md**（K 类行测试点计数）——
    README 系列文档全部在维护范围（用户明确指定），计数与枚举

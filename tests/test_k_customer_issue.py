@@ -2,8 +2,8 @@
 K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30
- 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36 为 P1，K33/K34 为 P2。
+标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
+ K37、K38 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -585,125 +585,176 @@ K. 客户问题复现测试
   reasoning + len(正文)（总计=思考+正文，1 token/字符宽松上
   界——缺陷形态 295 tok vs 10 字符远超）。GLM-5.3 专用。（不
   进 smoke 集：新用例首跑观察期）
-- K31: json_object 嵌套结构输出空正文核验（思考预算配额） [P1]
-  客户问题（工单 P1 R-01，结构化输出）：官方行为 HTTP 200、
-  content 为合法 JSON（嵌套对象/数组均可解析）；贵方实测
-  HTTP 200、finish_reason=length、content 为空字符串、思考内
-  容占满 max_tokens=256。整改建议：思考预算与可见输出应分别
-  配额——在 max_tokens 内为 content 保留下限，不得让 reasoning
-  吃满整额后返回空正文。本用例按整改建议设计验收口径：三种
-  接口（/v1/chat/completions response_format=json_object +
-  /v1/responses text.format=json_object + /v1/messages——
-  Anthropic 协议无 json_object 参数语义，以同一 prompt 引导
-  嵌套 JSON、max_tokens=256 协议必需字段工单原值，思考预算配
-  额在该协议同样验证，max_tokens/max_output_tokens=256 工单
-  原值）× 两种嵌套形态（嵌套对象/嵌套数组）× 各 2 次，硬断言
-  每次请求 HTTP 200、正文非空、合法 JSON 对象、嵌套结构齐备；
-  finish_reason/status 与 stop_reason 留观察日志（length/
-  incomplete/max_tokens 且正文完整合法不判失败——正文可用即
-  整改达标）。模型名由环境注入；工单原始请求未指定采样参数/
-  thinking/stream——保持不指定（不注入）。GLM-5.3 专用。
-  （不进 smoke 集：新用例首跑观察期）
-- K32: temperature 官方区间放行与越界校验（双协议） [P1]
-  客户问题（工单 P1 R-02，参数校验）：官方行为 HTTP 200（官
-  方取值区间 [0, 2)，1.5 合法）；贵方实测 6 发全部 HTTP 400，
-  错误体为通用「模型服务调用失败」(upstream_error)。整改建议
-  （即预期结果）：按官方区间放行 temperature；越界时回 400
-  并指明参数名与合法区间。本用例双向验收（参数校验为确定性
-  行为，每组合 1 次——K6 先例）双协议覆盖（chat + msg——
-  K31 起用例须验证 /v1/chat/completions 与 /v1/messages 双协
-  议，用户指定）：chat 协议按 OpenAI 官方区间 [0, 2)——放行
-  轮 temperature=1.5（工单原值）→ 200+正文非空+自然结束；越
-  界轮 2.0（上界半开不含 2）与 -0.5 → 400+错误体指明参数名
-  temperature（大小写不敏感）+含上界数字 2（区间痕迹断言口
-  径）。msg 协议（/anthropic/v1/messages）按 Anthropic 官方
-  区间 [0, 1] 分别校验——放行轮 temperature=0.5（工单原值
-  1.5 在该协议官方语义下越界，不可作放行点）→ 200+正文非空
-  +stop_reason 自然结束；越界轮 1.5（工单原值，[0, 1] 越界
-  ——与 chat 侧同值不同判，验证网关按协议语义分别校验而非一
-  刀切）与 2.0、-0.5 → 400+错误体指明参数名 temperature+
-  含上界数字 1（区间痕迹）——排除通用「模型服务调用失败」
-  不含参数名与区间的缺陷形态。非流式直发；工单原始值
-  temperature 原样保留并豁免全局采样覆盖；top_p/seed 工单未
-  指定，不注入；msg 协议 max_tokens 为必需字段。GLM-5.3 专
-  用。（不进 smoke 集：新用例首跑观察期）
-- K33: top_logprobs=5 稳定放行与 logprobs 结构核验（双协议） [P2]
-  客户问题（工单 P2 R-03，参数校验）：官方行为 HTTP 200、返
-  回 logprobs.top_logprobs；贵方实测同参数 12 发中 9 发
-  HTTP 400、3 发 HTTP 200，行为不稳定。整改建议：统一行为；
-  若上游确实不支持，错误体应说明能力缺失而非参数非法，避免
-  客户端反复重试。本用例预期按官方行为断言（用户指定）双协
-  议覆盖（chat + msg——K31 起用例须验证双协议，用户指定）：
-  chat 协议 12 发同参数（logprobs=true + top_logprobs=5 工
-  单原值，成对出现依 OpenAI 规范）非流式请求，硬断言每发
-  HTTP 200、choices[0].logprobs 含 top_logprobs（兼容新式
-  content[] 与旧式顶层两种结构）、候选对象数 ≤5（top-N 语
-  义）、正文非空+finish_reason 宽松枚举（K2 口径）——任一发
-  400 即缺陷复现（时拒时放未统一）。msg 协议（/anthropic/
-  v1/messages）无 logprobs 参数语义（Anthropic 官方未知字段
-  应 400 拒绝）——12 发同参数，硬断言统一行为：要么全部 400
-  且错误体指明字段（含 "logprobs"，能力缺失说明口径——整改
-  建议两分支之一），要么全部 200 且正文非空（网关忽略该参数
-  统一作答）；时拒时放（200/400 混现）即 FAIL——不稳定性缺
-  陷在两协议均不得复现；msg 协议 max_tokens 为必需字段。
-  max_tokens/thinking/采样参数工单未指定——不传（不注入）。
-  GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期；P2 选
-  测——双协议 24 发长耗时）
-- K34: 多模态拒绝错误体应指明媒体类型与字段（双协议） [P2]
-  客户问题（工单 P2 R-04，多模态）：官方 /v1/chat/completions
-  行为 HTTP 400，错误体指明 type 参数非法、取值范围 ['text']；
-  贵方实测 HTTP 400，chat 与 msg 双协议 8 发均为通用「模型服
-  务调用失败」(upstream_error)，未说明哪种媒体类型、哪个字
-  段不被支持。整改补充信息（用户后续提供）：GLM-5.3 为纯文
-  本模型，不支持任何多模态输入——凡收到图片、音频、视频、
-  文档等媒体块，无论 base64 内联还是远端 URL 传入，须返回
-  400 明确拒绝并在错误体中指明不支持的媒体类型与字段；不得
-  200 静默丢弃、不得降级为纯文本照常作答、也不得只回通用
-  「模型服务调用失败」使客户端无法判断原因；官方 /v1/messages
-  侧对部分图片返回 200 属官方自身静默丢弃，不作为判定基准
-  （msg 侧仍按 400 断言）。本用例按整改口径设计媒体类型 ×
-  传入形态 × 双协议矩阵（chat 4 轮 + msg 4 轮 = 8 发，对齐
-  工单 8 发口径；确定性校验行为——K6/K32 先例）：chat 协议
-  （/v1/chat/completions）——image_url×base64 内联（代码
-  生成 32x32 PNG）、image_url×远端 URL、input_audio×base64
-  内联（代码生成最小 WAV）、video_url×远端 URL（视频 URL 参
-  照 test_c 多模态视频理解 C5 同款公网地址——MDN flower.mp4），
-  硬断言每轮 HTTP 400 + 错误体含对应媒体类型关键词（image/
-  audio/video，大小写不敏感）；msg 协议（/anthropic/v1/
-  messages，x-api-key + anthropic-version 头——K3 先例）——
-  image×base64（type=image、source.type=base64）、image×远端
-  URL（source.type=url）、document×base64（source.type=
-  base64、media_type=application/pdf）、document×远端 URL
-  （source.type=url），硬断言每轮 HTTP 400 + 错误体含对应关
-  键词（image/document）。200=媒体被静默忽略或降级作答（msg
-  侧官方 200 同此判定——不作为判定基准）、500 等=非合规拒
-  绝，均 FAIL。图片/文档远端 URL 用 example.com 占位（类型校
-  验在媒体块字段层，不依赖真实可下载资源）；msg 协议
-  max_tokens=64 为协议必需字段；thinking/采样参数未指定——
-  不传（不注入）。GLM-5.3 专用。（不进 smoke 集：新用例首跑
-  观察期）
-- K35: enable_thinking 备选思考开关应与官方一致拒绝（双协议） [P1]
-  客户问题（工单 P1 R-07，接口协议）：官方行为 HTTP 400——拒绝
-  该参数（enable_thinking 为非官方/备选思考开关，官方对未知参
-  数直接拒绝）；贵方实测 HTTP 200——放行并按默认思考处理（静
-  默接受）。整改建议：与官方一致拒绝，或在文档中明确声明支持
-  该参数并保证语义等价；不得静默放行。本用例按官方一致行为断
-  言（用户指定）双协议覆盖（chat + msg——K31 起用例须验证双协
-  议）：chat 协议（/v1/chat/completions）与 msg 协议
-  （/anthropic/v1/messages，x-api-key + anthropic-version 头
-  ——K3 先例）各发 1 次 enable_thinking=true 的请求（确定性参
-  数校验，每协议 1 发——K6/K32/K34 先例），硬断言每协议：
-  HTTP 400（200=静默放行缺陷复现——贵方实测形态；500 等=非合
-  规拒绝）+ 错误体含 "enable_thinking"（大小写不敏感——官方未
-  知参数拒绝文案均含参数名，如 "Unrecognized request argument
-  supplied: enable_thinking"；排除通用『模型服务调用失败』不
-  含参数名的缺陷形态）。整改备选分支（文档声明支持该参数并保
-  证语义等价）为非受测分支——按用户指定取官方一致分支断言。
-  enable_thinking=true 为开关典型取值（工单未附请求样例；官方
-  拒绝参数本身、与取值无关，单值即可判定静默放行形态）；
-  thinking/采样参数工单未指定——不传（不注入）；msg 协议
-  max_tokens=1024 为必需字段。GLM-5.3 专用。（不进 smoke 集：
+- K31: json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议） [P1]
+  客户问题（工单 P1 R-01+A-07a/A-07b，结构化输出）：官方行为
+  HTTP 200、content 为合法 JSON（嵌套对象/数组均可解析）；贵
+  方实测 finish_reason=length、content 为空字符串、思考内容占
+  满 max_tokens=256——A-07a（嵌套对象 user.name/user.age/
+  address.city，021-023.json）与 A-07b（数组 3 个 id+title 对
+  象，024-026.json）两种请求各 3 发全部该形态（3 采样 0 过，
+  2026-11-03），reasoning_tokens=256/256。用户确认：思考消
+  耗配额致空正文/截断在官方与被测均有一定概率发生——验收口
+  径调整为预算回退链（用户指定）：核心需求为在 max_tokens 内
+  能返回完整合法 JSON。chat+msg 双协议（msg 无 json_object 参
+  数语义——同一 prompt 引导、max_tokens 协议必需字段）× 工单
+  两形态（提示词/请求体工单原样，chat 字段序 model/messages/
+  max_tokens/response_format、无 stream 字段）× 预算回退链：
+  轮一 max_tokens=256（工单原值）——HTTP 200+正文非空+
+  json.loads 成功+嵌套结构齐备（递归宽容：含 name+age 的
+  user 对象与含 city 的 address 对象 / 对象数组每元素含
+  id+title，裸数组或对象包裹均认可，数量=3 与类型留观察）→
+  直接达标；不满足（空正文/json 截断或非法/结构不齐）→ 回
+  退 max_tokens=512 同请求重验——满足→测试通过+警告留痕（警
+  告显示 256 输出空正文或 json 截断及 finish 状态）；两轮均
+  不满足→FAIL（输出两轮各自形态）。HTTP 非 200 直接 FAIL（回
+  退链仅针对正文形态）。finish_reason/stop_reason=length/
+  max_tokens 且正文完整合法不判失败留观察；A-07 形态（空正文+
+  reasoning_tokens=256）留痕。历史记录：初版按 R-01 设计（三
+  接口 chat/responses/msg × 两形态 × 各 2 次，断言 256 内正
+  文非空）；A-07a/A-07b 证据后重构为预算回退链并聚焦双协议
+  （用户指定"覆盖两种协议"），/v1/responses 轮移除。模型名由
+  环境注入；采样参数/thinking/stream 工单未指定——不注入。
+  GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期；双协议 ×
+  两形态 4 链 × 每链 1-2 发）
+- K32: temperature 原厂区间 [0, 2] 放行与越界校验（chat+msg
+  双协议） [P1]
+  客户问题（工单 P1 R-02+A-03，参数校验）：官方行为 HTTP 200
+  （原厂取值区间 [0, 2]，1.5 合法）；贵方最新实测（A-03，
+  2026-11-03）chat 三发 temperature=1.5 全部 HTTP 400，错误体
+  「temperature 超出范围 [0, 1]」(bad_response_status_code)
+  ——本地收紧到 [0, 1]；历史形态（R-02）6 发全部 400 通用
+  「模型服务调用失败」(upstream_error)。整改建议（即预期结
+  果，用户指定）：放开 temperature 到原厂支持的 [0, 2] 区间
+  （原合法区间 [0, 2) 调整为 [0, 2]——上界端点 2.0 移入放
+  行），或按原厂取值原样透传，不做本地收紧；保留非法参数
+  校验（越界 400 并指明参数名与区间）。本用例双向验收（chat
+  放行点按工单 A-03 三发依序复现，其余组合每组合 1 次——K6
+  先例）双协议覆盖（chat + msg——K31 起用例须验证
+  /v1/chat/completions 与 /v1/messages 双协议，用户指定）：
+  chat 协议按原厂区间 [0, 2]——工单 A-03 三发复现
+  temperature=1.5、content="只回复:好"、max_tokens=32（请求
+  体工单原样：字段序 model/messages/max_tokens/temperature、
+  无 stream 字段）→ 200+choices 非空（正文/finish_reason 留
+  观察不计判据——max_tokens=32 小配额下默认思考计入共享配额
+  易 length/空正文，K31 域形态非本例判据；A-03 判据为 HTTP
+  状态语义）；边界轮 2.0（上界端点移入放行，测试自构造轮）
+  → 200+正文非空+自然结束；越界轮 2.5 与 -0.5 → 400+错误体
+  指明参数名 temperature（大小写不敏感）+含上界数字 2（区
+  间痕迹辅助下限口径——A-03 形态错误体含 request id 数字串
+  可能恒满足，本地收紧主判据在放行轮 200）。msg 协议
+  （/anthropic/v1/messages）按 Anthropic 官方区间 [0, 1] 分
+  别校验（A-03 未涉及 msg，维持原口径）——放行轮
+  temperature=0.5（工单原值 1.5 在该协议官方语义下越界，不
+  可作放行点）→ 200+正文非空+stop_reason 自然结束；越界轮
+  1.5（工单原值，[0, 1] 越界——与 chat 侧同值不同判，验证
+  网关按协议语义分别校验而非一刀切）与 2.0、-0.5 → 400+错
+  误体指明参数名 temperature+含上界数字 1（区间痕迹）。非流
+  式直发；工单原始值 temperature/max_tokens 原样保留并豁免
+  全局采样覆盖；top_p/seed 工单未指定，不注入；msg 协议
+  max_tokens 为必需字段；A-03 工单三发采集间隔 1s（节奏非判
+  据），复现按套件相邻 3s。GLM-5.3 专用。（不进 smoke 集：
   新用例首跑观察期）
+- K33: top_logprobs=5 稳定放行与结构核验（未开 logprobs 也接
+  受，chat+msg 双协议） [P2]
+  客户问题（工单 P2 R-03+A-04，参数校验）：官方行为不变——
+  top_logprobs=5 官方 HTTP 200 接受（未开 logprobs 时也接
+  受）；贵方最新实测（A-04，2026-11-03）chat 三发
+  top_logprobs=5 单独出现（无 logprobs）全部 HTTP 400，错误体
+  「top_logprobs is only allowed when logprobs is enabled」
+  (top_logprobs_requires_logprobs)——对未开 logprobs 的
+  top_logprobs 额外拒绝；历史形态（R-03）同参数（logprobs=
+  true + top_logprobs=5 成对）12 发中 9 发 400、3 发 200，时
+  拒时放。整改建议（即预期结果）：按官方行为处理 top_logprobs
+  （未开 logprobs 时也接受），不额外拒绝；统一行为；若上游
+  确实不支持，错误体应说明能力缺失而非参数非法，避免客户端
+  反复重试。双协议覆盖（chat + msg——K31 起用例须验证双协
+  议，用户指定）：chat 协议——A-04 三发复现 top_logprobs=5 单
+  独出现（无 logprobs 字段）、content="只回复:好"、max_
+  tokens=32（请求体工单原样：字段序 model/messages/max_
+  tokens/top_logprobs、无 stream 字段）→ 200+choices 非空
+  （正文/finish_reason/logprobs 结构留观察不计判据——小配
+  额+默认思考计入易 length，K31 域形态；客户预期仅定义接受
+  语义，与 K32/K35 断言收缩同理）；R-03 稳定性轮 12 发成对
+  （logprobs=true + top_logprobs=5 工单原值，依 OpenAI 规范）
+  → 硬断言每发 200、choices[0].logprobs 含 top_logprobs（兼
+  容新式 content[] 与旧式顶层两种结构）、候选对象数 ≤5
+  （top-N 语义）、正文非空+finish_reason 宽松枚举（K2 口
+  径）——任一发 400 即时拒时放缺陷复现。msg 协议
+  （/anthropic/v1/messages）无 logprobs 参数语义（Anthropic
+  官方未知字段应 400 拒绝）——A-04 镜像 3 发（top_logprobs
+  单独出现、content 工单原样字符串、max_tokens=512 套件必
+  需字段值——工单 32 为 chat 小配额口径）与 R-03 成对 12 发
+  均硬断言统一行为：要么全部 400 且错误体指明字段（含
+  "logprobs"，top_logprobs 子串覆盖，能力缺失说明口径——整
+  改建议两分支之一），要么全部 200 且正文非空（网关忽略该
+  参数统一作答）；混现（时拒时放）即 FAIL——不稳定性与额
+  外拒绝缺陷在两协议均不得复现；msg 协议 max_tokens 为必需
+  字段。max_tokens/thinking/采样参数工单未指定——不传（不注
+  入）；A-04 工单三发采集间隔 1s（节奏非判据），复现按套件
+  相邻 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期；
+  P2 选测——双协议 30 发长耗时）
+- K34: 多模态媒体块该拒未拒（msg 侧静默丢弃返回 200）应 400
+  明确拒绝（chat+msg 双协议） [P2]
+  客户问题（工单 P2 R-04 补充证据 A-01，多模态）：官方行为
+  glm-5.3 为非多模态模型——请求携带图片/音频/视频/文档
+  （base64 与 URL 两种载体）必须返回 400，返回 2xx 即不合格；
+  原始问题：msg 协议下返回 200 该拒未拒——媒体块被静默丢弃：
+  prompt_tokens 仅 17-43（媒体未进入分词器）、正文自述『没有
+  收到视频/音频/文档』，同一素材 chat 协议渠道返回 400（同一
+  渠道、同一文件、两种协议两种结果）；整改建议（客户给出）：
+  /v1/messages → OpenAI 转换层对 media block（video/audio/
+  document）前置校验返回 400 并给出明确文案，不得剥离媒体块后
+  继续转发，URL 载体同样必须 400、不得自行抓取/转文字/降级纯
+  文本，chat 协议也应相同处理。本用例双协议各 5 发共 10 发
+  （用户指定：message 协议和 chat 协议都要 5 轮请求）：msg 5
+  发按工单原始记录依序复现（缺陷复现轮）——document×
+  base64、text+audio×base64（文本块在前——工单原序）、
+  video×base64、video×url（沿用本仓现有 MDN flower.mp4 地址
+  ——工单原 test-videos.co.uk 不复用，用户指定保留现有
+  URL）、video×base64（工单第 5 采集提问原样）；chat 5 发为
+  同素材/同提示词/同块序镜像（整改『chat 协议也应相同处理』
+  ——一致性核验轮；part 映射：document→file part（file_data
+  data URL）、audio→input_audio、video→video_url（base64 发
+  data URL））；媒体数据工单未提供完整 data——代码生成有效
+  base64（最小 PDF/WAV/MP4 容器，内存生成不落临时文件；拒绝
+  校验在媒体块类型层不依赖可解码内容；双协议第 3/5 发共用同
+  一生成 MP4——判定在类型层）；max_tokens=1024 工单原值（10
+  发同值镜像，豁免注入）；请求体不含 stream 字段（工单原始格
+  式，两协议默认非流式）；thinking/采样参数未含——不注入；
+  相邻间隔 3s。硬断言每发：HTTP 400（200=静默丢弃缺陷复现
+  ——A-01 形态（prompt_tokens 仅 17-43+正文自述未收到）留
+  证）+ 错误体含对应媒体类型关键词（中英任一命中：document/
+  文档/pdf、audio/音频/语音、video/视频——20261104 实测整改
+  错误体为中文，双语匹配（用户指定）；排除通用『模型服务调
+  用失败』缺陷形态）；'text' 痕迹留观察。GLM-5.3 专用。（不
+  进 smoke 集：新用例首跑观察期）
+- K35: 关闭思考应按原厂 400 拒绝（enable_thinking=false 与
+  thinking.type=disabled 双路径，chat+msg 双协议） [P1]
+  客户问题（工单 P1 R-07 补充证据 A-02 · chat/msg 协议关闭思考
+  的请求被放行，接口协议）：官方行为：原厂对关闭思考返回 400
+  （原厂 HTTP 400）；贵方实测（A-02，2026-11-03 采集，2 发均
+  HTTP 200）：渠道返回 200 并正常出文——chat 发
+  enable_thinking=false 放行且响应带 reasoning_content（思考仍
+  开启，reasoning_tokens=91）、msg 发 thinking.type=disabled 放
+  行且 content 带 thinking 块（思考仍开启），对照记为
+  http_status 400→200（HTTP 状态语义）；预期行为（整改）：统
+  一关闭思考的拒绝口径——enable_thinking=false 与
+  thinking.type=disabled 两条路径均按原厂返回 400，不得一条拒
+  一条放。本用例按客户原始请求 A-02 依序复现（用户指定——两
+  条路径都要按官方行为返回 400，覆盖两种协议）：路径1 chat 协
+  议（/v1/chat/completions）enable_thinking=false（工单原样：
+  content="23+19 等于多少？"、max_tokens=512、不含 stream 字
+  段）；路径2 msg 协议（/anthropic/v1/messages，x-api-key +
+  anthropic-version 头——K3 先例）thinking={"type": "disabled"}
+  （工单原样：content="23+19=?" 为字符串、max_tokens=512、
+  stream=false 显式携带）；硬断言每路径：HTTP 400（200=放行
+  缺陷复现——A-02 形态：200 且正常出文（思考仍开启）；
+  500 等=非合规拒绝）；错误体参数名痕迹（路径1 enable_thinking/
+  路径2 thinking）留观察不计判据（官方拒绝文案常含参数名；
+  排除通用『模型服务调用失败』不含参数名缺陷形态）；max_
+  tokens=512 工单 2 发同值（豁免注入）；采样参数未含——不注
+  入；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例首
+  跑观察期）
 - K36: finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） [P1]
   客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=
   stop（20_chat_stream_002 / 20_chat_ms_001 /
@@ -727,6 +778,50 @@ K. 客户问题复现测试
   致正文真实截断）；thinking/采样参数工单未指定——不传（不注
   入）；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑
   观察期）
+- K37: n=2 请求挂死限时返回与官方一致（单 choice） [P0]
+  客户问题（工单 P0，异常）：官方 n=2 HTTP 200（返回 1 个
+  choice）；贵方实测无响应直至超时——参数电池 3/3 轮 TimeoutError
+  （已重试 1 次仍超时）、协议电池 2 例 ReadTimeout、直连 300s 超
+  时，挂死同时导致模块 4 的 n=2 探针被记为『无效』而未计失败。整
+  改建议：定位 n=2 路径阻塞点（疑似上游对 n>1 未返回/连接不复
+  位）；要求 n=2 在 30s 内返回 200 或明确 4xx、不得无限挂起，客
+  户端侧加硬超时。本用例按官方行为断言（用户指定）chat 2 发对齐
+  工单 055/056 口径，工单原值原样保留（"说一句话。"/
+  max_tokens=16/n=2），单发直发不重试，requests timeout=30s 硬超
+  时——超时即 FAIL 挂死复现（纠正『无效不计失败』漏报形态）；硬
+  断言每发：30s 内返回 + HTTP 200（4xx=整改下限达标但与官方不
+  一致，如实 FAIL 交人工分派）+ choices 恰 1 个；finish_reason/
+  正文留观察（16 配额默认思考计入易空正文+length——K31 域形
+  态，非本例判据）；chat 单协议（n 为 OpenAI 参数、msg 无该语
+  义——msg 未知参数行为由 K33/K35 覆盖）；thinking/采样参数未
+  含——不传（不注入）；相邻间隔 3s。GLM-5.3 专用。（不进
+  smoke 集：新用例首跑观察期）
+- K38: max_completion_tokens 别名单 token 请求不挂起（与 tokens 主路径同延迟水平） [P0]
+  客户问题（工单 A-A01，异常）：官方判定通过——max_completion_
+  tokens 别名为单 token 请求，被接受并按 max_tokens 语义立即截
+  断返回；贵方实测客户原始请求 1 发即挂起——180s 请求超时、无
+  响应（HTTP 0，采集未落盘）。预期行为（整改）：不得触发 180s
+  级挂起；需与 tokens 主路径同延迟水平。本用例按原始请求与预
+  期行为验收（用户指定），chat 单协议 2 发：别名轮工单原样
+  （单 user "Write a long essay about turbines." +
+  max_completion_tokens=1，字段序 model/messages/max_
+  completion_tokens，无 stream 字段）1 发对齐工单口径；主路
+  径轮同 prompt max_tokens=1 对照基线 1 发。硬断言：别名轮
+  30s 硬超时（requests timeout=30s——对齐 K37 先例，远低于工
+  单 180s 挂起水平；单发直发不重试——重试掩盖挂起证据且超
+  时等待翻倍）内返回、HTTP 200（官方判定通过）+ 响应体合法
+  + usage.completion_tokens<=2（别名生效——单 token 截断；
+  字段被丢弃则长文数百 token）；主路径轮 30s 内返回 + 200；
+  同延迟水平判据：别名 elapsed<=主路径 elapsed*3+10s（容网
+  络抖动）。超时即 FAIL 挂起复现（工单 180s 无响应形态）；字
+  节缓流形态留观察人工分派（K37 口径）；finish_reason/正文
+  留观察（1 配额默认思考计入易空正文+length——K31 域形态非
+  本例判据）。chat 单协议（max_completion_tokens 为 OpenAI
+  别名字段、Anthropic /v1/messages 无该字段——max_tokens 即
+  协议必需主路径字段，msg 未知参数行为由 K33/K35 覆盖）；模
+  型名由环境注入；thinking/采样参数工单未含——不传（不注
+  入）；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例
+  首跑观察期）
 """
 
 import base64
@@ -8855,139 +8950,198 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_json_object_nested_empty_content(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K31 [P1]: 客户问题 - json_object 嵌套结构输出空正文核验
+        """K31 [P1]: 客户问题 - json_object 嵌套结构完整输出与预
+        算回退核验（256→512，chat+msg 双协议）
 
-        客户问题（工单 P1 R-01 · json_object 嵌套对象/数组返回空
-        正文，结构化输出）：官方行为 HTTP 200、content 为合法
-        JSON（嵌套对象/数组均可解析）；贵方实测 HTTP 200、
+        客户问题（工单 P1 R-01+A-07a/A-07b · json_object 嵌套
+        对象/数组返回空正文，结构化输出）：官方行为 HTTP 200、
+        content 为合法 JSON（嵌套对象/数组均可解析）；贵方实测
         finish_reason=length、content 为空字符串、思考内容占满
-        max_tokens=256。整改建议（按此设计验收口径）：思考预算与
-        可见输出应分别配额——在 max_tokens 内为 content 保留下限，
-        不得让 reasoning 吃满整额后返回空正文。
-        本用例覆盖三种接口 × 两种嵌套形态 × 各 2 次（缺陷为思考
-        预算分配问题、思考长度有随机性，重复 2 次降低偶发逃逸）：
-        1. /v1/chat/completions：response_format={"type":
-           "json_object"}、非流式、max_tokens=256（工单原值）
-        2. /v1/responses：text={"format":{"type":"json_object"}}、
-           非流式、max_output_tokens=256（Responses API 字段名）
-        3. /v1/messages（Anthropic 协议，/anthropic/v1/messages，
-           x-api-key + anthropic-version 头——K3 先例）：该协
-           议无 json_object 参数语义（官方无结构化输出参数），
-           以同一 prompt 引导嵌套 JSON 输出、max_tokens=256
-           （协议必需字段，工单原值）——思考预算配额（正文保
-           留下限）在该协议同样验证，断言与 chat/responses 一
-           致（正文非空+合法 JSON+嵌套结构齐备）
-        形态：嵌套对象（user_profile.address 三层嵌套对象）与嵌
-        套数组（company.departments[].employees[] 对象/数组互嵌）。
-        硬断言（每请求，任一失败即 FAIL 并报告协议/形态/次序）：
-        1. HTTP 200
-        2. content/output_text 非空字符串（空正文=缺陷复现——
-           思考占满整额）
-        3. json.loads 成功且为 dict（json_object 模式输出合法
-           JSON 对象）
-        4. 嵌套结构齐备（形态 A：user_profile 为 dict 且 address
-           为 dict 含 city；形态 B：company 为 dict、departments
-           为非空 list 且元素为 dict 含 name）
-        观察记录（不计判据，留日志）：finish_reason/status
-        （length/incomplete 且正文完整合法时不判失败——正文可
-        用即整改达标）、思考与正文 token 计数（usage）、
-        reasoning 长度、耗时。
+        max_tokens=256——A-07a（嵌套对象 user.name/user.age/
+        address.city，021-023.json）与 A-07b（数组 3 个 id+title
+        对象，024-026.json）两种请求各 3 发全部该形态（3 采样
+        0 过，2026-11-03），reasoning_tokens=256/256、
+        prompt_tokens=36/40。用户确认：思考消耗配额致空正文/
+        截断在官方与被测均有一定概率发生——验收口径调整为预算
+        回退链（用户指定）：核心需求为在 max_tokens 内能返回完
+        整合法 JSON。
+        本用例覆盖 chat+msg 双协议 × 工单两种形态（A-07a/A-07b
+        提示词与请求体工单原样——chat 字段序 model/messages/
+        max_tokens/response_format、无 stream 字段；msg 无
+        json_object 参数语义，同一 prompt 引导）× 预算回退链：
+        1. 轮一 max_tokens=256（工单原值）：HTTP 200 + 正文非
+           空 + json.loads 成功 + 嵌套结构齐备 → 链直接达标
+        2. 轮一不满足（空正文/json 截断或非法/结构不齐）→ 回
+           退 max_tokens=512 同请求重验
+        3. 512 满足 → 测试通过 + 警告留痕（警告显示 256 输出
+           空正文或 json 截断及 finish 状态——思考消耗配额属
+           官方/被测共有随机形态）
+        4. 256 与 512 均不满足 → FAIL（输出两轮各自不满足形态）
+        HTTP 非 200 直接 FAIL（回退链仅针对正文形态）。
+        结构校验（嵌套层级不定——递归宽容）：A-07a——含 name+
+        age 的 user 嵌套对象与含 city 的 address 嵌套对象齐备
+        （顶层或 user 内嵌均认可）；A-07b——对象数组且每元素
+        含 id/title（json_object 约束下裸数组或对象包裹两形态
+        均认可；数量=3 与 id 数字类型留观察不判据）。
+        观察记录（不计判据，留日志）：每轮 finish_reason/
+        stop_reason、正文与 reasoning 长度、completion_tokens/
+        reasoning_tokens（A-07 形态=空正文+reasoning_tokens=
+        256 留痕）、耗时；finish=length/max_tokens 且正文完整
+        合法不判失败。
         模型名由环境注入；工单原始请求未指定采样参数/thinking/
         stream——保持不指定（不注入）；相邻请求间隔 3s。GLM-5.3
-        专用。（不进 smoke 集：新用例首跑观察期）
+        专用。（不进 smoke 集：新用例首跑观察期；双协议 × 两形
+        态 4 链 × 每链 1-2 发）
         """
-        # K31: 工单原值——思考占满整额的预算上限
+        # K31: 工单原值——json_object 嵌套/数组两形态预算上限
         K31_MAX_TOKENS = 256
-        # K31: 每形态重复次数（思考长度有随机性，重复降低偶发逃逸）
-        K31_RUNS = 2
-
-        # K31: 形态 A 提示词（嵌套对象——user_profile.address 三层）
-        K31_FORM_OBJ_PROMPT = (
-            "请以 JSON 对象输出用户档案：顶层键 user_profile，值为"
-            "嵌套对象，含 name（字符串）、age（数值）、address（嵌"
-            "套对象，含 city、street、zip）与 contact（嵌套对象，"
-            "含 email、phone）。只输出 JSON，不要任何解释或 "
-            "markdown 代码块。"
+        # K31: 预算回退上限（用户指定——256 空正文/截断时重验；
+        # 思考消耗配额致空正文/截断在官方/被测均有概率发生）
+        K31_FALLBACK_MAX_TOKENS = 512
+        # K31: 工单 A-07a 原样提示词（嵌套对象——user.name/
+        # user.age/address.city 嵌套结构，021-023.json 三发）
+        K31_A07A_PROMPT = (
+            "返回一个 JSON 对象,含 user.name、user.age 和 "
+            "address.city(嵌套结构)。只输出 JSON。"
         )
-        # K31: 形态 B 提示词（嵌套数组——departments[].employees[]）
-        K31_FORM_ARR_PROMPT = (
-            "请以 JSON 对象输出公司结构：顶层键 company，值为嵌套"
-            "对象，含 name（字符串）与 departments（数组，每个元素"
-            "为嵌套对象，含 name 与 employees——employees 为数组，"
-            "每个元素为嵌套对象，含 name 与 role）。至少 2 个部门、"
-            "每部门至少 2 名员工。只输出 JSON，不要任何解释或 "
-            "markdown 代码块。"
+        # K31: 工单 A-07b 原样提示词（数组——3 个 id+title 对
+        # 象，024-026.json 三发）
+        K31_A07B_PROMPT = (
+            "返回一个 JSON 数组,含 3 个对象,每个对象有 id(数字)"
+            "和 title(字符串)。只输出 JSON。"
         )
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - json_object 嵌套结构输出空正"
-            "文核验（工单 P1 R-01：思考预算与可见输出分别配额；两"
-            "接口 × 两形态 × 各 2 次；判据：200+正文非空+合法 JSON+"
-            "嵌套结构齐备）==="
+            "=== 测试开始: 客户问题 - json_object 嵌套结构完整输"
+            "出与预算回退核验（工单 P1 R-01+A-07a/A-07b：chat/msg "
+            "双协议 × 嵌套对象/数组 × 预算回退链——256 工单原值优"
+            "先，空正文/json 截断回退 512，512 达标警告通过，两轮"
+            "均不达标 FAIL）==="
         )
 
         chat_url = f"{api_client.api_prefix}/chat/completions"
-        resp_url = f"{api_client.api_prefix}/responses"
+        msg_url = f"{api_client.base_url}/anthropic/v1/messages"
 
-        def check_nested_object(tag: str, parsed: Dict[str, Any]) -> None:
-            """K31 形态 A 结构校验：user_profile.address 三层嵌套"""
-            prof = parsed.get("user_profile")
-            assert isinstance(prof, dict), (
-                f"[{tag}] user_profile 应为嵌套对象，实际: {prof!r}"
+        def find_dict_with_keys(
+            node: Any, required: tuple
+        ) -> Optional[Dict[str, Any]]:
+            """K31: 递归查找包含全部 required 键的 dict（A-07a 嵌
+            套层级不定——user/address 顶层或内嵌均认可）"""
+            if isinstance(node, dict):
+                if all(k in node for k in required):
+                    return node
+                for value in node.values():
+                    found = find_dict_with_keys(value, required)
+                    if found is not None:
+                        return found
+            elif isinstance(node, list):
+                for item in node:
+                    found = find_dict_with_keys(item, required)
+                    if found is not None:
+                        return found
+            return None
+
+        def check_a07a_object(tag: str, parsed: Any) -> None:
+            """K31 A-07a 结构校验：JSON 对象，含 name+age 的 user
+            嵌套对象与含 city 的 address 嵌套对象递归齐备"""
+            assert isinstance(parsed, dict), (
+                f"[{tag}] A-07a 应输出 JSON 对象（提示词要求嵌套"
+                f"对象+json_object 语义），实际类型: "
+                f"{type(parsed).__name__}（{str(parsed)[:150]}）"
             )
-            addr = prof.get("address")
-            assert isinstance(addr, dict) and "city" in addr, (
-                f"[{tag}] address 应为嵌套对象且含 city，实际: "
-                f"{addr!r}"
+            user_obj = find_dict_with_keys(parsed, ("name", "age"))
+            assert user_obj is not None, (
+                f"[{tag}] A-07a 嵌套结构不齐：未找到含 name+age 的"
+                f"user 嵌套对象，实际: {str(parsed)[:200]}"
+            )
+            addr_obj = find_dict_with_keys(parsed, ("city",))
+            assert addr_obj is not None, (
+                f"[{tag}] A-07a 嵌套结构不齐：未找到含 city 的 "
+                f"address 嵌套对象，实际: {str(parsed)[:200]}"
             )
 
-        def check_nested_array(tag: str, parsed: Dict[str, Any]) -> None:
-            """K31 形态 B 结构校验：departments[].employees[]"""
-            comp = parsed.get("company")
-            assert isinstance(comp, dict), (
-                f"[{tag}] company 应为嵌套对象，实际: {comp!r}"
-            )
-            deps = comp.get("departments")
-            assert isinstance(deps, list) and deps, (
-                f"[{tag}] departments 应为非空数组，实际: {deps!r}"
-            )
-            first = deps[0]
-            assert isinstance(first, dict) and "name" in first, (
-                f"[{tag}] departments 元素应为嵌套对象且含 name，实"
-                f"际: {first!r}"
-            )
+        def find_item_array(node: Any) -> Optional[List[Any]]:
+            """K31: 查找对象数组（顶层裸数组或 dict 单层包裹——
+            json_object 约束下模型可能以对象包裹数组，两形态均
+            认可）"""
+            if isinstance(node, list) and node and all(
+                isinstance(x, dict) for x in node
+            ):
+                return node
+            if isinstance(node, dict):
+                for value in node.values():
+                    if isinstance(value, list) and value and all(
+                        isinstance(x, dict) for x in value
+                    ):
+                        return value
+            return None
 
-        def run_chat(
-            form_label: str,
-            prompt: str,
-            structure_check,
-            attempt: int,
-        ) -> None:
-            """K31 chat 协议轮：response_format=json_object 非流式"""
-            tag = f"chat/形态={form_label}/第{attempt}次"
+        def check_a07b_array(tag: str, parsed: Any) -> None:
+            """K31 A-07b 结构校验：对象数组且每元素含 id+title
+            （数量=3 与 id 数字类型留观察不判据——避免对生成细
+            节过严误报）"""
+            items = find_item_array(parsed)
+            assert items is not None, (
+                f"[{tag}] A-07b 嵌套结构不齐：未找到对象数组，实"
+                f"际: {str(parsed)[:200]}"
+            )
+            for idx, item in enumerate(items):
+                assert "id" in item and "title" in item, (
+                    f"[{tag}] A-07b 数组第 {idx + 1} 个对象缺 "
+                    f"id/title 键，实际: {item!r}"
+                )
+            if len(items) != 3:
+                test_logger.info(
+                    f"[{tag}] 观察: 数组含 {len(items)} 个对象"
+                    f"（提示词要求 3——数量留观察不判据）"
+                )
+
+        def evaluate_output(
+            tag: str, content: str, structure_check
+        ) -> tuple:
+            """K31: 单轮预算输出核验——返回（合格?, 不满足形态描
+            述）（空正文/json 截断或非法/结构不齐三类形态供回退
+            链警告与失败信息引用）"""
+            if not content or not content.strip():
+                return False, "空正文"
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as e:
+                return False, f"json 截断/非法（{e}）"
+            try:
+                structure_check(tag, parsed)
+            except AssertionError as e:
+                return False, f"嵌套结构不齐（{str(e)[:200]}）"
+            return True, ""
+
+        def send_chat(
+            tag: str, prompt: str, max_tokens: int
+        ) -> Dict[str, Any]:
+            """K31 chat 协议预算轮：json_object 非流式，返回轮结
+            果（正文判定由预算回退链统一执行——send 仅采集）"""
             TestLogger.log_request(
                 test_logger,
                 [{"role": "user", "content": prompt}],
                 {
                     "endpoint": "/v1/chat/completions",
                     "response_format": {"type": "json_object"},
-                    "max_tokens": K31_MAX_TOKENS,
-                    "stream": False,
+                    "max_tokens": max_tokens,
+                    "stream": "(工单未带——不传)",
                     "temperature": "(原始未指定——不注入)",
                     "top_p": "(原始未指定——不注入)",
                     "seed": "(原始未指定——不注入)",
                 },
             )
-            # K31: 手工构造 payload 直发（response_format 直进
-            # payload；工单原值 max_tokens=256 原样保留；采样参数
-            # 工单未指定——不注入；thinking/stream 工单未指定——
-            # 不传）
+            # K31: 工单 A-07 原样 payload 直发（字段序按工单
+            # model/messages/max_tokens/response_format；response_
+            # format 直进 payload——json_object 语义；max_tokens
+            # 256 工单原值/512 回退值；stream/采样参数工单未带
+            # ——不传）
             payload: Dict[str, Any] = {
                 "model": api_client.model_name,
                 "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
                 "response_format": {"type": "json_object"},
-                "max_tokens": K31_MAX_TOKENS,
-                "stream": False,
             }
             started = time.time()
             try:
@@ -9007,7 +9161,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"elapsed={elapsed:.1f}s, "
                 f"body={response.text[:800]!r}"
             )
-            # 断言1：请求应成功
+            # 断言：HTTP 200（非 200 直接 FAIL——回退链仅针对正文
+            # 形态，不覆盖请求层失败）
             assert response.status_code == 200, (
                 f"[{tag}] 请求失败：实际 HTTP "
                 f"{response.status_code}: {response.text[:400]}"
@@ -9020,182 +9175,36 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             content = message.get("content") or ""
             finish_reason = choice.get("finish_reason")
             usage = data.get("usage") or {}
-            reasoning_len = len(message.get("reasoning_content") or "")
             reasoning_tokens = (usage.get("completion_tokens_details") or {}).get(
                 "reasoning_tokens"
             )
-            # 观察记录：finish_reason 与预算分配留痕（length 且正文
-            # 完整合法不判失败——正文可用即整改达标）
+            # 观察记录：预算分配留痕（A-07 实测形态=空正文+
+            # reasoning_tokens=256——思考占满配额）
             test_logger.info(
                 f"[{tag}] finish_reason={finish_reason!r}, 正文 "
-                f"{len(content)} 字符, reasoning {reasoning_len} 字符"
+                f"{len(content)} 字符, reasoning "
+                f"{len(message.get('reasoning_content') or '')} 字符"
                 f", completion_tokens={usage.get('completion_tokens')}"
                 f", reasoning_tokens={reasoning_tokens}"
             )
-            # 断言2：content 非空（空正文=缺陷复现——思考占满整额）
-            assert content.strip(), (
-                f"[{tag}] 空正文——缺陷复现：finish_reason="
-                f"{finish_reason!r}、思考占满 max_tokens="
-                f"{K31_MAX_TOKENS}（整改要求：思考预算与可见输出分"
-                f"别配额，为 content 保留下限）"
-            )
-            # 断言3：合法 JSON 对象（json_object 模式语义）
-            try:
-                parsed = json.loads(content)
-            except json.JSONDecodeError as e:
-                pytest.fail(
-                    f"[{tag}] content 非合法 JSON: {e}（content="
-                    f"{content[:200]!r}）"
+            if not content.strip() and reasoning_tokens:
+                test_logger.info(
+                    f"[{tag}] 观察: 空正文且 reasoning_tokens="
+                    f"{reasoning_tokens}——思考占满配额（A-07 实测"
+                    f"形态，留痕不判据）"
                 )
-            assert isinstance(parsed, dict), (
-                f"[{tag}] json_object 模式应输出 JSON 对象，实际类"
-                f"型: {type(parsed).__name__}"
-            )
-            # 断言4：嵌套结构齐备
-            structure_check(tag, parsed)
-            if finish_reason == "length":
-                test_logger.warning(
-                    f"[{tag}] finish_reason=length 但正文完整合法"
-                    f"——观察记录（正文可用即整改达标，不判失败）"
-                )
-            test_logger.info(
-                f"[{tag}] 通过: 正文 {len(content)} 字符合法 JSON、"
-                f"嵌套结构齐备, elapsed={elapsed:.1f}s"
-            )
-
-        def run_responses(
-            form_label: str,
-            prompt: str,
-            structure_check,
-            attempt: int,
-        ) -> None:
-            """K31 responses 协议轮：text.format=json_object 非流式"""
-            tag = f"responses/形态={form_label}/第{attempt}次"
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": prompt}],
-                {
-                    "endpoint": "/v1/responses",
-                    "text.format": {"type": "json_object"},
-                    "max_output_tokens": K31_MAX_TOKENS,
-                    "stream": False,
-                    "temperature": "(原始未指定——不注入)",
-                    "top_p": "(原始未指定——不注入)",
-                    "seed": "(不注入——/v1/responses 无 seed 参数)",
-                },
-            )
-            # K31: Responses API 手工 payload（input 字符串最简形式
-            # ——F7 先例；text.format 即该协议的结构化输出参数；
-            # max_output_tokens 为 Responses API 字段名，工单原值
-            # 256 原样；采样参数/thinking/stream 工单未指定——不传）
-            payload: Dict[str, Any] = {
-                "model": api_client.model_name,
-                "input": prompt,
-                "text": {"format": {"type": "json_object"}},
-                "max_output_tokens": K31_MAX_TOKENS,
-                "stream": False,
+            return {
+                "content": content,
+                "finish_reason": finish_reason,
+                "elapsed": elapsed,
             }
-            started = time.time()
-            try:
-                response = api_client.session.post(
-                    resp_url,
-                    json=payload,
-                    timeout=api_client.timeout,
-                )
-            except Exception as e:
-                pytest.fail(f"[{tag}] 请求发送异常（{resp_url}）: {e}")
-            elapsed = time.time() - started
-            try:
-                data = response.json()
-            except ValueError:
-                data = None
-            # 模型真实响应断言前打印（失败时同样可见）
-            test_logger.info(
-                f"[{tag}] 真实响应: HTTP {response.status_code}, "
-                f"elapsed={elapsed:.1f}s, "
-                f"body={response.text[:800]!r}"
-            )
-            # 断言1：请求应成功
-            assert response.status_code == 200, (
-                f"[{tag}] 请求失败：实际 HTTP "
-                f"{response.status_code}: {response.text[:400]}"
-            )
-            assert data, f"[{tag}] 响应体应为合法 JSON"
-            status = data.get("status")
-            output = data.get("output")
-            assert isinstance(output, list) and output, (
-                f"[{tag}] output 应为非空数组，实际: {output!r}"
-            )
-            # 正文聚合：output 内 type=="message" 项的 content 中
-            # output_text 项（F7 先例口径）
-            message_items = [
-                o
-                for o in output
-                if isinstance(o, dict) and o.get("type") == "message"
-            ]
-            text_parts: List[str] = []
-            for msg in message_items:
-                for c in msg.get("content") or []:
-                    if isinstance(c, dict) and c.get("type") == "output_text":
-                        text_parts.append(c.get("text") or "")
-            text = "".join(text_parts).strip()
-            usage = data.get("usage") or {}
-            reasoning_tokens = (usage.get("output_tokens_details") or {}).get(
-                "reasoning_tokens"
-            )
-            # 观察记录：status 与预算分配留痕（incomplete 且正文完
-            # 整合法不判失败——正文可用即整改达标）
-            test_logger.info(
-                f"[{tag}] status={status!r}, 正文 {len(text)} 字符, "
-                f"output_tokens={usage.get('output_tokens')}, "
-                f"reasoning_tokens={reasoning_tokens}, "
-                f"incomplete_details={data.get('incomplete_details')}"
-            )
-            # 断言2：正文非空（空正文=缺陷复现——思考占满整额）
-            assert text, (
-                f"[{tag}] 空正文——缺陷复现：status={status!r}、思"
-                f"考占满 max_output_tokens={K31_MAX_TOKENS}（整改"
-                f"要求：思考预算与可见输出分别配额，为 content 保留"
-                f"下限）"
-            )
-            # 断言3：合法 JSON 对象（json_object 模式语义）
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError as e:
-                pytest.fail(
-                    f"[{tag}] 正文非合法 JSON: {e}（正文="
-                    f"{text[:200]!r}）"
-                )
-            assert isinstance(parsed, dict), (
-                f"[{tag}] json_object 模式应输出 JSON 对象，实际类"
-                f"型: {type(parsed).__name__}"
-            )
-            # 断言4：嵌套结构齐备
-            structure_check(tag, parsed)
-            if status == "incomplete":
-                test_logger.warning(
-                    f"[{tag}] status=incomplete 但正文完整合法——观"
-                    f"察记录（正文可用即整改达标，不判失败）"
-                )
-            test_logger.info(
-                f"[{tag}] 通过: 正文 {len(text)} 字符合法 JSON、"
-                f"嵌套结构齐备, elapsed={elapsed:.1f}s"
-            )
 
-        # K31: msg 协议轮（Anthropic /v1/messages——K3 先例构造）。
-        # 该协议无 json_object 参数语义（官方无结构化输出参数），
-        # 以同一 prompt 引导嵌套 JSON 输出、max_tokens=256（协议
-        # 必需字段，工单原值）——思考预算配额（正文保留下限）在
-        # 该协议同样验证，断言与 chat/responses 一致
-        msg_url = f"{api_client.base_url}/anthropic/v1/messages"
-
-        def run_messages(
-            form_label: str,
-            prompt: str,
-            structure_check,
-            attempt: int,
-        ) -> None:
-            tag = f"msg/形态={form_label}/第{attempt}次"
+        def send_msg(
+            tag: str, prompt: str, max_tokens: int
+        ) -> Dict[str, Any]:
+            """K31 msg 协议预算轮（/anthropic/v1/messages——K3 先
+            例构造；协议无 json_object 参数语义，同一 prompt 引
+            导；max_tokens 为协议必需字段），返回轮结果"""
             TestLogger.log_request(
                 test_logger,
                 [{"role": "user", "content": prompt}],
@@ -9203,23 +9212,26 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     "endpoint": "/anthropic/v1/messages",
                     "protocol": "anthropic（x-api-key + "
                                 "anthropic-version 头）",
-                    "max_tokens": K31_MAX_TOKENS,
-                    "stream": False,
+                    "response_format": "(协议无语义——不传)",
+                    "max_tokens": max_tokens,
+                    "stream": "(工单未带——不传)",
                     "temperature": "(原始未指定——不注入)",
                     "top_p": "(原始未指定——不注入)",
                     "seed": "(原始未指定——不注入)",
                 },
             )
+            # K31: msg 镜像 payload（协议必需字段 max_tokens——
+            # 256 工单原值/512 回退值；无 response_format 语义
+            # ——不传；stream 工单未带——不传）
             payload: Dict[str, Any] = {
                 "model": api_client.model_name,
-                "max_tokens": K31_MAX_TOKENS,
+                "max_tokens": max_tokens,
                 "messages": [
                     {
                         "role": "user",
                         "content": [{"type": "text", "text": prompt}],
                     }
                 ],
-                "stream": False,
             }
             headers: Dict[str, Any] = {
                 "anthropic-version": "2023-06-01"
@@ -9245,9 +9257,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"[{tag}] 真实响应: HTTP {response.status_code}, "
                 f"elapsed={elapsed:.1f}s, body={response.text[:800]!r}"
             )
+            # 断言：HTTP 200（非 200 直接 FAIL——同 chat 侧口径）
             assert response.status_code == 200, (
                 f"[{tag}] msg 协议嵌套 JSON 引导请求（max_tokens="
-                f"{K31_MAX_TOKENS}）应放行 HTTP 200，实际 "
+                f"{max_tokens}）应放行 HTTP 200，实际 "
                 f"{response.status_code}（body={response.text[:400]!r}）"
             )
             assert data, f"[{tag}] 200 响应体应为合法 JSON 对象"
@@ -9258,66 +9271,117 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 if isinstance(c, dict) and c.get("type") == "text"
             ).strip()
             stop_reason = data.get("stop_reason")
+            # 观察记录：stop_reason 与正文/usage 留痕（max_tokens
+            # 即 chat 侧 length 的 msg 形态）
             test_logger.info(
                 f"[{tag}] stop_reason={stop_reason!r}, 正文 "
-                f"{len(text)} 字符"
+                f"{len(text)} 字符, usage={data.get('usage')!r}"
             )
-            # 断言1：正文非空——思考吃满 max_tokens 配额缺陷复现
-            assert text, (
-                f"[{tag}] msg 协议正文为空——思考预算配额缺陷复现"
-                f"（stop_reason={stop_reason!r}, usage="
-                f"{data.get('usage')!r}）"
+            return {
+                "content": text,
+                "finish_reason": stop_reason,
+                "elapsed": elapsed,
+            }
+
+        def run_budget_chain(
+            protocol: str,
+            form_label: str,
+            prompt: str,
+            structure_check,
+            send,
+        ) -> bool:
+            """K31: 预算回退链（用户指定口径）——256 工单原值优
+            先；空正文/json 截断或非法/结构不齐则回退 512 重验；
+            512 达标→警告+通过；两轮均不达标→FAIL；返回是否经
+            回退达标"""
+            tag_base = f"{protocol}/形态={form_label}"
+            # ── 轮一：max_tokens=256（工单原值）──
+            tag1 = f"{tag_base}/256轮"
+            r1 = send(tag1, prompt, K31_MAX_TOKENS)
+            ok1, desc1 = evaluate_output(
+                tag1, r1["content"], structure_check
             )
-            # 断言2/3：合法 JSON 对象
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError as e:
-                pytest.fail(
-                    f"[{tag}] 正文非合法 JSON: {e}（正文="
-                    f"{text[:200]!r}）"
+            if ok1:
+                test_logger.info(
+                    f"[{tag1}] 通过: 工单预算 max_tokens="
+                    f"{K31_MAX_TOKENS} 内正文完整合法、嵌套结构齐"
+                    f"备（{len(r1['content'])} 字符），elapsed="
+                    f"{r1['elapsed']:.1f}s"
                 )
-            assert isinstance(parsed, dict), (
-                f"[{tag}] 引导 JSON 输出应为 JSON 对象，实际类型: "
-                f"{type(parsed).__name__}"
-            )
-            # 断言4：嵌套结构齐备
-            structure_check(tag, parsed)
-            if stop_reason == "max_tokens":
-                test_logger.warning(
-                    f"[{tag}] stop_reason=max_tokens 但正文完整合法"
-                    f"——观察记录（正文可用即整改达标，不判失败）"
-                )
+                return False
             test_logger.info(
-                f"[{tag}] 通过: 正文 {len(text)} 字符合法 JSON、嵌"
-                f"套结构齐备, elapsed={elapsed:.1f}s"
+                f"[{tag1}] 预算未满足: {desc1}（finish="
+                f"{r1['finish_reason']!r}）——回退 max_tokens="
+                f"{K31_FALLBACK_MAX_TOKENS} 重验"
+            )
+            time.sleep(3)
+            # ── 轮二：max_tokens=512（预算回退）──
+            tag2 = f"{tag_base}/512回退轮"
+            r2 = send(tag2, prompt, K31_FALLBACK_MAX_TOKENS)
+            ok2, desc2 = evaluate_output(
+                tag2, r2["content"], structure_check
+            )
+            if ok2:
+                # 用户指定：512 达标→测试通过+警告留痕（警告显示
+                # 256 输出空正文或 json 截断及 finish 状态）
+                test_logger.warning(
+                    f"警告：[{tag_base}] 工单预算 max_tokens="
+                    f"{K31_MAX_TOKENS} 输出{desc1}（finish="
+                    f"{r1['finish_reason']!r}，正文 "
+                    f"{len(r1['content'])} 字符）——预算回退 "
+                    f"max_tokens={K31_FALLBACK_MAX_TOKENS} 后正文"
+                    f"完整合法、嵌套结构齐备（{len(r2['content'])} "
+                    f"字符，finish={r2['finish_reason']!r}），测试"
+                    f"通过；256 预算下思考消耗配额属官方/被测共有"
+                    f"随机形态，留痕观察"
+                )
+                return True
+            # 用户指定：256 与 512 均不满足→用例失败（输出两轮各
+            # 自不满足形态）
+            pytest.fail(
+                f"[{tag_base}] 预算回退链均未满足需求——256 轮: "
+                f"{desc1}（finish={r1['finish_reason']!r}，正文头 "
+                f"{r1['content'][:120]!r}）；512 回退轮: {desc2}"
+                f"（finish={r2['finish_reason']!r}，正文头 "
+                f"{r2['content'][:120]!r}）——在 max_tokens 内返回"
+                f"完整合法 JSON 的需求未达成"
             )
 
-        # K31: 主循环——两形态 × 各 2 次 × 三协议（chat → responses
-        # → msg，对齐工单两种接口覆盖要求并补 /v1/messages 协议
-        # 验证），相邻间隔 3s
+        # K31: 主流程——chat+msg 双协议 × 工单两形态 × 预算回退
+        # 链（每形态 chat → msg，相邻间隔 3s；经回退达标的链计
+        # 数供收尾统计）
         forms = (
-            ("嵌套对象", K31_FORM_OBJ_PROMPT, check_nested_object),
-            ("嵌套数组", K31_FORM_ARR_PROMPT, check_nested_array),
+            ("嵌套对象", K31_A07A_PROMPT, check_a07a_object),
+            ("数组", K31_A07B_PROMPT, check_a07b_array),
         )
+        senders = (("chat", send_chat), ("msg", send_msg))
         total = 0
+        fallback_count = 0
         for form_label, prompt, structure_check in forms:
-            for attempt in range(1, K31_RUNS + 1):
+            for protocol, send in senders:
                 if total:
                     time.sleep(3)
-                run_chat(form_label, prompt, structure_check, attempt)
                 total += 1
-                time.sleep(3)
-                run_responses(form_label, prompt, structure_check, attempt)
-                total += 1
-                time.sleep(3)
-                run_messages(form_label, prompt, structure_check, attempt)
-                total += 1
-        test_logger.info(
-            f"客户问题整改验证通过: {total} 请求（chat/responses/msg "
-            f"三协议 × 嵌套对象/嵌套数组 × 各{K31_RUNS}次）全部正文非"
-            f"空、合法 JSON、嵌套结构齐备——思考预算配额整改达标"
-            f"（max_tokens={K31_MAX_TOKENS} 内为 content 保留了下限）"
-        )
+                if run_budget_chain(
+                    protocol, form_label, prompt, structure_check, send
+                ):
+                    fallback_count += 1
+        if fallback_count:
+            test_logger.info(
+                f"客户问题整改验证通过（预算回退链）: chat/msg 双协"
+                f"议 × 嵌套对象/数组 {total} 链——{fallback_count} 链"
+                f"经 max_tokens={K31_FALLBACK_MAX_TOKENS} 回退达标"
+                f"（警告留痕：256 预算输出空正文/json 截断），其余 "
+                f"{total - fallback_count} 链 256 工单预算直接达标"
+                f"——在 max_tokens 内返回完整合法 JSON 的需求已验证"
+            )
+        else:
+            test_logger.info(
+                f"客户问题整改验证通过（预算回退链）: chat/msg 双协"
+                f"议 × 嵌套对象/数组 {total} 链全部 256 工单预算直接"
+                f"达标（无回退触发）——在 max_tokens 内返回完整合法 "
+                f"JSON 的需求已验证"
+            )
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
@@ -9325,50 +9389,82 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_temperature_range_validation(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K32 [P1]: 客户问题 - temperature 官方区间放行与越界校验
+        """K32 [P1]: 客户问题 - temperature 原厂区间 [0, 2] 放
+        行与越界校验（chat+msg 双协议）
 
-        客户问题（工单 P1 R-02 · temperature=1.5 被拒绝（官方接
-        受），参数校验）：官方行为 HTTP 200（官方取值区间
-        [0, 2)，1.5 合法）；贵方实测 6 发全部 HTTP 400，错误体为
-        通用「模型服务调用失败」(upstream_error)。整改建议（即
-        预期结果）：按官方区间放行 temperature；越界时回 400
-        并指明参数名与合法区间。
-        本用例按整改建议设计双向验收（参数校验为确定性行为，
-        每组合 1 次——K6 先例）双协议覆盖（chat + msg——K31 起
-        用例须验证 /v1/chat/completions 与 /v1/messages 双协
-        议，用户指定）：
-        1. chat 协议（OpenAI 官方区间 [0, 2)）——放行轮
-           temperature=1.5（工单原值，[0, 2) 内合法点）→ HTTP
-           200 + 正文非空 + 自然结束；越界轮 2.0（上界半开不
-           含 2）与 -0.5（负向越界）→ HTTP 400 + 错误体指明参
-           数名 temperature（大小写不敏感）+ 含合法区间痕迹
-           （断言口径：错误体含上界数字 2——排除通用「模型服
-           务调用失败」不含参数名与区间的缺陷形态）
+        客户问题（工单 P1 R-02+A-03 · temperature=1.5 被拒绝（原
+        厂接受），参数校验）：官方行为 HTTP 200（原厂取值区间
+        [0, 2]，1.5 合法）；贵方最新实测（A-03，2026-11-03）chat
+        三发 temperature=1.5 全部 HTTP 400，错误体「temperature
+        超出范围 [0, 1]」(bad_response_status_code)——本地收紧
+        到 [0, 1]；历史形态（R-02）6 发全部 400 通用「模型服务
+        调用失败」(upstream_error)。整改建议（即预期结果，用户
+        指定）：放开 temperature 到原厂支持的 [0, 2] 区间（原合
+        法区间 [0, 2) 调整为 [0, 2]——上界端点 2.0 移入放行），
+        或按原厂取值原样透传，不做本地收紧；保留非法参数校验
+        （越界 400 并指明参数名与合法区间）。
+        本用例按整改建议设计双向验收（参数校验为确定性行为；
+        chat 放行点按工单 A-03 三发依序复现，其余组合每组合
+        1 次——K6 先例）双协议覆盖（chat + msg——K31 起用例
+        须验证 /v1/chat/completions 与 /v1/messages 双协议，
+        用户指定）：
+        1. chat 协议（原厂区间 [0, 2]，含上界端点）——
+           a. 工单 A-03 三发复现（缺陷复现轮）：temperature=
+              1.5、content="只回复:好"、max_tokens=32——请求
+              体按工单原样（字段序 model/messages/max_tokens/
+              temperature，工单未带 stream——不传）→ HTTP
+              200（1.5 被接受，与原厂一致；400 即本地收紧缺
+              陷复现——A-03 形态「temperature 超出范围
+              [0, 1]」留证）+ 响应体为合法 JSON 且 choices
+              非空；正文/finish_reason 留观察不计判据（max_
+              tokens=32 小配额下默认思考计入共享配额（R-01
+              未整改）易 length/空正文——K31 域形态，非本例
+              判据）
+           b. 边界放行轮：temperature=2.0（区间上界端点——原
+              [0, 2) 口径越界点移入放行，测试自构造轮非工单
+              原发）→ HTTP 200 + 正文非空 + 自然结束
+              （finish_reason=stop——端点放行后正常生成）
+           c. 越界轮（保留非法校验，用户指定）：2.5（上界外）
+              与 -0.5（负向）→ HTTP 400 + 错误体指明参数名
+              temperature（大小写不敏感）+ 含上界数字 2（区
+              间痕迹断言口径；A-03 形态错误体含 request id
+              数字串，数字断言可能恒满足——辅助下限口径，
+              本地收紧主判据在放行轮 200）
         2. msg 协议（/anthropic/v1/messages，Anthropic 官方区
-           间 [0, 1] 分别校验）——放行轮 temperature=0.5（工
-           单原值 1.5 在该协议官方语义下越界，不可作放行点）
-           → HTTP 200 + 正文非空 + stop_reason 自然结束；越
-           界轮 1.5（工单原值，[0, 1] 越界——与 chat 侧同值
-           不同判，验证网关按协议语义分别校验而非一刀切）、
-           2.0 与 -0.5 → HTTP 400 + 错误体指明参数名
-           temperature + 含上界数字 1（该协议区间痕迹）
+           间 [0, 1] 分别校验——A-03 未涉及 msg，维持原口径）
+           ——放行轮 temperature=0.5（工单原值 1.5 在该协议
+           官方语义下越界，不可作放行点）→ HTTP 200 + 正文非
+           空 + stop_reason 自然结束；越界轮 1.5（工单原值，
+           [0, 1] 越界——与 chat 侧同值不同判，验证网关按协
+           议语义分别校验而非一刀切）、2.0 与 -0.5 → HTTP
+           400 + 错误体指明参数名 temperature + 含上界数字 1
+           （该协议区间痕迹）
         请求：非流式、单 user 闲聊、手工 payload 直发
         （temperature 直进 payload——工单原值原样保留并豁免全
-        局采样覆盖；top_p/seed 工单未指定，不注入；chat 侧
-        max_tokens/thinking 工单未指定，不传；msg 侧
-        max_tokens 为协议必需字段）；相邻间隔 3s。模型名由环
-        境注入。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察
-        期）
+        局采样覆盖；top_p/seed 工单未指定，不注入；A-03 复现
+        轮 max_tokens=32 工单原值；chat 边界/越界轮 max_tokens/
+        thinking 工单未指定，不传；msg 侧 max_tokens 为协议必需
+        字段）；相邻间隔 3s（A-03 工单三发采集间隔 1s，节奏非
+        判据）。模型名由环境注入。GLM-5.3 专用。（不进 smoke
+        集：新用例首跑观察期）
         """
-        # K32: chat 协议工单原值——OpenAI 官方区间 [0, 2) 内合
-        # 法点
+        # K32: chat 协议工单原值——原厂区间 [0, 2]（含上界端
+        # 点）内合法点（A-03：原厂 HTTP 200 接受）
         K32_LEGAL_VALUE = 1.5
-        # K32: chat 协议越界点（[0, 2) 半开区间——上界 2 不含、
-        # 负数不含）
-        K32_OUT_OF_RANGE = (2.0, -0.5)
+        # K32: 工单 A-03 复现轮——原样请求体（content/
+        # max_tokens 工单原值；三发依序复现）
+        K32_A03_PROMPT = "只回复:好"
+        K32_A03_MAX_TOKENS = 32
+        K32_A03_ROUNDS = 3
+        # K32: chat 协议区间上界端点——[0, 2] 含 2.0（原
+        # [0, 2) 口径越界点移入放行，测试自构造边界轮）
+        K32_UPPER_BOUND = 2.0
+        # K32: chat 协议越界点（[0, 2] 闭区间外——上界外不
+        # 含、负数不含；保留非法参数校验，用户指定）
+        K32_OUT_OF_RANGE = (2.5, -0.5)
         # K32: msg 协议（Anthropic 官方区间 [0, 1]）放行点——工
         # 单原值 1.5 在该协议官方语义下越界，取 [0, 1] 内合法
-        # 中位点
+        # 中位点（A-03 未涉及 msg，维持原口径）
         K32_MSG_LEGAL_VALUE = 0.5
         # K32: msg 协议越界点——工单原值 1.5（[0, 1] 越界，与
         # chat 侧同值不同判——验证网关按协议语义分别校验）+ 2.0
@@ -9380,38 +9476,54 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         K32_PROMPT = "请用一句话介绍你自己。"
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - temperature 官方区间放行与越"
-            "界校验（工单 P1 R-02：双协议——chat 按 OpenAI 区间 "
-            "[0, 2)：放行 1 发 + 越界 2 发；msg 按 Anthropic 区间 "
-            "[0, 1]：放行 1 发 + 越界 3 发）==="
+            "=== 测试开始: 客户问题 - temperature 原厂区间 [0, 2] "
+            "放行与越界校验（工单 P1 R-02+A-03：chat 侧工单三发复"
+            "现 1.5（预期 200）+ 边界 2.0 放行 + 越界 2.5/-0.5；"
+            "msg 按 Anthropic 区间 [0, 1]：放行 0.5 + 越界 1.5/"
+            "2.0/-0.5）==="
         )
 
         url = f"{api_client.api_prefix}/chat/completions"
 
         def send_round(
-            tag: str, temperature: float
+            tag: str,
+            temperature: float,
+            prompt: str = K32_PROMPT,
+            max_tokens: Optional[int] = None,
+            with_stream: bool = True,
         ):
-            """K32 单轮：构造带指定 temperature 的请求直发"""
+            """K32 chat 单轮：构造带指定 temperature 的请求直发
+            （A-03 复现轮按工单原样：max_tokens 进 payload、
+            stream 不传；其余轮最小形态 + stream=False）"""
             TestLogger.log_request(
                 test_logger,
-                [{"role": "user", "content": K32_PROMPT}],
+                [{"role": "user", "content": prompt}],
                 {
                     "endpoint": "/v1/chat/completions",
                     "temperature": temperature,
-                    "max_tokens": "(原始未指定——不传)",
+                    "max_tokens": (
+                        max_tokens
+                        if max_tokens is not None
+                        else "(原始未指定——不传)"
+                    ),
                     "top_p": "(原始未指定——不注入)",
                     "seed": "(原始未指定——不注入)",
                 },
             )
             # K32: 手工构造 payload 直发（temperature 直进 payload
-            # ——工单原值原样保留；max_tokens/thinking/stream 工单
-            # 未指定——不传）
+            # ——工单原值原样保留；top_p/seed 工单未指定——不注
+            # 入；A-03 复现轮 max_tokens=32 工单原值、stream 工
+            # 单未带不传，其余轮 max_tokens/thinking 不传、
+            # stream=False 非流式直发）
             payload: Dict[str, Any] = {
                 "model": api_client.model_name,
-                "messages": [{"role": "user", "content": K32_PROMPT}],
-                "temperature": temperature,
-                "stream": False,
+                "messages": [{"role": "user", "content": prompt}],
             }
+            if max_tokens is not None:
+                payload["max_tokens"] = max_tokens
+            payload["temperature"] = temperature
+            if with_stream:
+                payload["stream"] = False
             started = time.time()
             try:
                 response = api_client._post_with_retry(
@@ -9428,16 +9540,77 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             )
             return response, elapsed
 
-        # ── 放行轮：temperature=1.5（工单原值）──────────────
-        tag = f"放行/temperature={K32_LEGAL_VALUE}"
-        response, elapsed = send_round(tag, K32_LEGAL_VALUE)
-        # 断言1：合法值应 200 放行（客户缺陷形态：6 发全部 400
-        # 通用「模型服务调用失败」upstream_error）
+        # ── 工单 A-03 三发复现：temperature=1.5（缺陷复现轮
+        # ——工单原样请求体，预期与原厂一致 HTTP 200）─────────
+        # 断言口径（整改建议即预期结果）：A-03 判据为 HTTP 状态
+        # 语义——1.5 被接受=200（400 即本地收紧缺陷复现）
+        for i in range(1, K32_A03_ROUNDS + 1):
+            if i > 1:
+                time.sleep(3)
+            tag = (
+                f"复现{i}/{K32_A03_ROUNDS}/"
+                f"temperature={K32_LEGAL_VALUE}"
+            )
+            response, elapsed = send_round(
+                tag,
+                K32_LEGAL_VALUE,
+                prompt=K32_A03_PROMPT,
+                max_tokens=K32_A03_MAX_TOKENS,
+                with_stream=False,
+            )
+            # 断言1：合法值应 200 放行（A-03 缺陷形态：三发全部
+            # 400「temperature 超出范围 [0, 1]」——本地收紧到
+            # [0, 1]；整改预期：放开到原厂 [0, 2] 或原样透传）
+            assert response.status_code == 200, (
+                f"[{tag}] 缺陷复现：原厂区间 [0, 2] 内合法值被拒"
+                f"——实际 HTTP {response.status_code}: "
+                f"{response.text[:400]}（工单 A-03 形态：三发全部"
+                f" 400「temperature 超出范围 [0, 1]」——本地收"
+                f"紧；历史 R-02 形态：6 发通用『模型服务调用失"
+                f"败』upstream_error）"
+            )
+            # 断言2：响应体为合法 JSON 且 choices 非空（200 须
+            # 为有效补全结构）
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            assert data, f"[{tag}] 响应体应为合法 JSON"
+            choices = data.get("choices") or []
+            assert choices, f"[{tag}] 响应缺少 choices: {data!r}"
+            choice = choices[0] or {}
+            content = (choice.get("message") or {}).get("content") or ""
+            finish_reason = choice.get("finish_reason")
+            # 正文/finish_reason 留观察（不计判据）——max_
+            # tokens=32 小配额下默认思考计入共享配额（R-01 未整
+            # 改）易 length/空正文，属 K31 域形态；A-03 判据为
+            # HTTP 状态语义（1.5 被接受=200）
+            if content.strip():
+                test_logger.info(
+                    f"[{tag}] 观察: 正文 {len(content)} 字符、"
+                    f"finish_reason={finish_reason!r}, "
+                    f"elapsed={elapsed:.1f}s"
+                )
+            else:
+                test_logger.warning(
+                    f"[{tag}] 观察: 正文为空、finish_reason="
+                    f"{finish_reason!r}（max_tokens=32 小配额+"
+                    f"默认思考计入配额——K31 域形态，非本例判"
+                    f"据）, elapsed={elapsed:.1f}s"
+                )
+
+        # ── 边界放行轮：temperature=2.0（区间上界端点——原
+        # [0, 2) 口径越界点移入放行，用户指定 [0, 2] 含端点；
+        # 测试自构造轮非工单原发）───────────────────────────
+        time.sleep(3)
+        tag = f"边界/temperature={K32_UPPER_BOUND}"
+        response, elapsed = send_round(tag, K32_UPPER_BOUND)
+        # 断言1：区间端点应 200 放行（[0, 2] 闭区间含 2.0）
         assert response.status_code == 200, (
-            f"[{tag}] 缺陷复现：官方区间 [0, 2) 内合法值被拒——"
-            f"实际 HTTP {response.status_code}: "
-            f"{response.text[:400]}（客户实测形态：6 发全部 400、通"
-            f"用『模型服务调用失败』upstream_error）"
+            f"[{tag}] 缺陷复现：原厂区间 [0, 2] 含上界端点，"
+            f"2.0 应放行——实际 HTTP {response.status_code}: "
+            f"{response.text[:400]}（用户指定口径：原合法区间 "
+            f"[0, 2) 调整为 [0, 2]，不做本地收紧）"
         )
         try:
             data = response.json()
@@ -9453,10 +9626,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         assert content.strip(), (
             f"[{tag}] 正文为空（finish_reason={finish_reason!r}）"
         )
-        # 断言3：自然结束
+        # 断言3：自然结束（区间端点放行后的正常生成不应触顶/
+        # 异常终止）
         assert finish_reason == "stop", (
             f"[{tag}] 应自然结束，实际 finish_reason="
-            f"{finish_reason!r}（合法 temperature 下的正常生成不应"
+            f"{finish_reason!r}（区间端点放行后的正常生成不应"
             f"触顶/异常终止）"
         )
         test_logger.info(
@@ -9464,7 +9638,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（finish_reason=stop）, elapsed={elapsed:.1f}s"
         )
 
-        # ── 越界轮：2.0（上界）/ -0.5（负向）─────────────────
+        # ── 越界轮：2.5（上界外）/ -0.5（负向）——保留非法参
+        # 数校验（用户指定）───────────────────────────────────
         # 断言口径（整改建议即预期结果）：越界回 400 + 错误体指明
         # 参数名与合法区间——通用「模型服务调用失败」(upstream_
         # error) 不含参数名与区间，属缺陷形态
@@ -9473,11 +9648,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             tag = f"越界/temperature={value}"
             response, elapsed = send_round(tag, value)
             body = response.text
-            # 断言1：越界值必须 400 拒绝（[0, 2) 不含该点）
+            # 断言1：越界值必须 400 拒绝（[0, 2] 闭区间不含该点）
             assert response.status_code == 400, (
-                f"[{tag}] 越界值应 HTTP 400 拒绝（官方区间 [0, 2) "
-                f"不含该点——越界被静默放行/其他状态均为整改未达"
-                f"标），实际 HTTP {response.status_code}: "
+                f"[{tag}] 越界值应 HTTP 400 拒绝（原厂区间 "
+                f"[0, 2] 不含该点——越界被静默放行/其他状态均"
+                f"为整改未达标），实际 HTTP {response.status_code}: "
                 f"{body[:400]}"
             )
             # 断言2：错误体须指明参数名（大小写不敏感）
@@ -9488,10 +9663,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"{body[:300]}"
             )
             # 断言3：错误体须含合法区间痕迹（上界数字 2——如
-            # "[0, 2)" / "0 to 2" / "less than 2" 等文案均满足）
+            # "[0, 2]" / "0 to 2" 等文案均满足；辅助下限口径：
+            # A-03 形态错误体含 request id 数字串（2026…），数
+            # 字断言可能恒满足——本地收紧（如 [0, 1] 文案）主
+            # 判据在放行轮 200，此处如未满足仍如实 FAIL 复核）
             assert "2" in body, (
                 f"[{tag}] 错误体未指明合法区间（整改要求：指明参数"
-                f"名与合法区间 [0, 2)——断言口径为错误体含上界数字 "
+                f"名与合法区间 [0, 2]——断言口径为错误体含上界数字 "
                 f"2）: {body[:300]}"
             )
             test_logger.info(
@@ -9634,15 +9812,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"间, elapsed={elapsed:.1f}s"
             )
         test_logger.info(
-            f"客户问题整改验证通过（双协议）: chat 协议 "
-            f"temperature={K32_LEGAL_VALUE} 按 OpenAI 官方区间 "
-            f"[0, 2) 放行、越界点 {K32_OUT_OF_RANGE[0]}/"
-            f"{K32_OUT_OF_RANGE[1]} 均 400 且错误体指明参数名与"
-            f"区间；msg 协议 temperature={K32_MSG_LEGAL_VALUE} "
-            f"按 Anthropic 官方区间 [0, 1] 放行、越界点 "
-            f"{K32_MSG_OUT_OF_RANGE[0]}/{K32_MSG_OUT_OF_RANGE[1]}/"
-            f"{K32_MSG_OUT_OF_RANGE[2]} 均 400 且错误体指明参数名"
-            f"与区间——网关按协议语义分别校验，参数校验整改达标"
+            f"客户问题整改验证通过（双协议）: chat 协议工单 A-03 "
+            f"三发 temperature={K32_LEGAL_VALUE} 复现均 200（原厂 "
+            f"[0, 2] 放行）、区间端点 {K32_UPPER_BOUND} 放行、越"
+            f"界点 {K32_OUT_OF_RANGE[0]}/{K32_OUT_OF_RANGE[1]} 均 "
+            f"400 且错误体指明参数名与区间；msg 协议 temperature="
+            f"{K32_MSG_LEGAL_VALUE} 按 Anthropic 官方区间 [0, 1] "
+            f"放行、越界点 {K32_MSG_OUT_OF_RANGE[0]}/"
+            f"{K32_MSG_OUT_OF_RANGE[1]}/{K32_MSG_OUT_OF_RANGE[2]} "
+            f"均 400 且错误体指明参数名与区间——网关按协议语义分"
+            f"别校验，参数校验整改达标"
         )
 
     @pytest.mark.k_customer_issue
@@ -9651,69 +9830,194 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_top_logprobs_stable_support(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K33 [P2]: 客户问题 - top_logprobs=5 稳定放行与 logprobs
-        结构核验
+        """K33 [P2]: 客户问题 - top_logprobs=5 稳定放行与结构核验
+        （未开 logprobs 也接受，chat+msg 双协议）
 
-        客户问题（工单 P2 R-03 · top_logprobs=5 时拒时放，参数校
-        验）：官方行为 HTTP 200、返回 logprobs.top_logprobs；贵
-        方实测同参数 12 发中 9 发 HTTP 400、3 发 HTTP 200，行为
-        不稳定。整改建议：统一行为；若上游确实不支持，错误体应
-        说明能力缺失而非参数非法，避免客户端反复重试。本用例
-        预期按官方行为断言（用户指定）——12 发全部应 200 且返
-        回 logprobs.top_logprobs，任一发 400 即缺陷复现（时拒
-        时放/未统一）。
+        客户问题（工单 P2 R-03+A-04 · top_logprobs=5 被拒/时拒
+        时放，参数校验）：官方行为不变——top_logprobs=5 官方
+        HTTP 200 接受（未开 logprobs 时也接受）；贵方最新实测
+        （A-04，2026-11-03）chat 三发 top_logprobs=5 单独出现
+        （无 logprobs）全部 HTTP 400，错误体「top_logprobs is
+        only allowed when logprobs is enabled」
+        (top_logprobs_requires_logprobs)——对未开 logprobs 的
+        top_logprobs 额外拒绝；历史形态（R-03）同参数
+        （logprobs=true + top_logprobs=5 成对）12 发中 9 发
+        400、3 发 200，时拒时放。整改建议（即预期结果）：按官
+        方行为处理 top_logprobs（未开 logprobs 时也接受），不额
+        外拒绝；统一行为；若上游确实不支持，错误体应说明能力缺
+        失而非参数非法，避免客户端反复重试。
         双协议覆盖（chat + msg——K31 起用例须验证
         /v1/chat/completions 与 /v1/messages 双协议，用户指定）：
-        chat 协议（工单参数原样）：/v1/chat/completions 非流
-        式、单 user 闲聊、logprobs=true + top_logprobs=5（工
-        单原值，二者依 OpenAI 规范成对出现）；max_tokens/
-        thinking/采样参数工单未指定——不传（不注入）。
-        msg 协议（/anthropic/v1/messages）：该协议无 logprobs
-        参数语义（Anthropic 官方未知字段应 400 拒绝）——12 发
-        同参数（max_tokens 为协议必需字段），硬断言统一行为：
-        要么全部 400 且错误体指明字段（含 "logprobs"，能力缺
-        失说明口径——整改建议两分支之一），要么全部 200 且正
-        文非空（网关忽略该参数统一作答）；200/400 混现（时拒
-        时放）即 FAIL——不稳定性缺陷在两协议均不得复现。
-        chat 硬断言（12 发逐一判定，任一失败即 FAIL 并报告第
-        几发）：
-        1. HTTP 200（缺陷形态：同参数 12 发中 9 发 400——时拒
-           时放，整改要求统一行为）
-        2. choices[0].logprobs 存在且含 top_logprobs（官方行
-           为：返回 logprobs.top_logprobs；兼容两种结构——新式
-           logprobs.content[].top_logprobs 与旧式 logprobs.
-           top_logprobs）
-        3. top_logprobs 数组非空、元素为候选对象（dict）、长
-           度 ≤ 5（top_logprobs=5 语义——返回每 token 的
-           top-N 概率）
-        4. 正文非空、finish_reason ∈ {tool_calls, stop, eos,
-           ended, length}（K2 宽松口径——本用例主题为参数放
-           行稳定性，非生成质量）
+        1. chat 协议——
+           a. 工单 A-04 三发复现（缺陷复现轮）：top_logprobs=5
+              单独出现（无 logprobs 字段）、content="只回复:好"、
+              max_tokens=32——请求体按工单原样（字段序
+              model/messages/max_tokens/top_logprobs，工单未带
+              stream——不传）→ HTTP 200（未开 logprobs 也接受，
+              与官方一致；400 即额外拒绝缺陷复现——A-04 形态
+              「top_logprobs is only allowed when logprobs is
+              enabled」留证）+ 响应体合法 JSON 且 choices 非空；
+              正文/finish_reason/logprobs 结构留观察不计判据
+              （max_tokens=32 小配额下默认思考计入共享配额易
+              length/空正文——K31 域形态；logprobs 未开时官方
+              200 响应结构形态未采集——客户预期仅定义接受语
+              义，与 K32/K35 断言收缩同理）
+           b. R-03 稳定性轮 12 发：logprobs=true + top_logprobs=5
+              成对（工单原值，依 OpenAI 规范）非流式 → HTTP 200
+              + choices[0].logprobs 含 top_logprobs（兼容新式
+              content[] 与旧式顶层两种结构）+ 候选对象 dict 且
+              项数 ≤5（top-N 语义）+ 正文非空 + finish_reason
+              宽松枚举（K2 口径）——任一发 400 即时拒时放缺陷
+              复现（报告第几发）
+        2. msg 协议（/anthropic/v1/messages——该协议无 logprobs
+           参数语义，Anthropic 官方未知字段应 400 拒绝）——
+           a. A-04 镜像轮 3 发：top_logprobs=5 单独出现（无
+              logprobs），content="只回复:好"（字符串——工单
+              原样），max_tokens=512（协议必需字段套件值——工
+              单 32 为 chat 小配额口径，取 512 避免 200 分支空
+              正文误判）→ 硬断言统一行为：三发全 400 且错误体
+              指明字段（含 "logprobs"——top_logprobs 子串覆
+              盖，能力缺失/未知字段说明口径）或三发全 200 且
+              正文非空；混现即 FAIL
+           b. R-03 稳定性轮 12 发同参数（logprobs=true +
+              top_logprobs=5 成对，max_tokens 为协议必需字段）
+              → 同上统一行为断言——时拒时放（200/400 混现）即
+              FAIL，不稳定性缺陷在两协议均不得复现
         观察记录（不计判据）：每发 finish_reason、logprobs 长度
         与 top_logprobs 项数、usage、耗时；结束统计 200/结构齐
         备计数。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察
-        期；P2 选测——双协议 24 发长耗时）
+        期；P2 选测——双协议 30 发长耗时）
         """
-        # K33: 工单原值——top_logprobs（与 logprobs=true 成对）
+        # K33: 工单原值——top_logprobs（R-03 轮与 logprobs=true
+        # 成对；A-04 轮单独出现）
         K33_TOP_LOGPROBS = 5
-        # K33: 连发次数——对齐工单"12 发"口径（时拒时放须以同参
-        # 数多次暴露）
+        # K33: R-03 连发次数——对齐工单"12 发"口径（时拒时放须以
+        # 同参数多次暴露）
         K33_RUNS = 12
+        # K33: 工单 A-04 复现轮——top_logprobs 单独出现（无
+        # logprobs），原样请求体（content/max_tokens 工单原值；
+        # 三发依序复现）
+        K33_A04_PROMPT = "只回复:好"
+        K33_A04_MAX_TOKENS = 32
+        K33_A04_ROUNDS = 3
         # K33: msg 协议必需字段（Anthropic 无默认值）——单 user
-        # 闲聊最小合理值
+        # 闲聊最小合理值（A-04 镜像轮同值——工单 32 为 chat 小
+        # 配额口径，取 512 避免 200 分支空正文误判）
         K33_MSG_MAX_TOKENS = 512
         K33_PROMPT = "请用一句话介绍你自己。"
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - top_logprobs=5 稳定放行与 "
-            "logprobs 结构核验（工单 P2 R-03：双协议——chat 按官方"
-            "行为断言 12 发全部 200+返回 top_logprobs；msg 无该参数"
-            "语义，12 发须统一行为：全 400 指明字段或全 200 正常作"
-            "答，时拒时放即 FAIL）==="
+            "=== 测试开始: 客户问题 - top_logprobs=5 稳定放行与结"
+            "构核验（未开 logprobs 也接受）（工单 P2 R-03+A-04："
+            "chat 侧 A-04 工单三发复现 top_logprobs=5 单独出现"
+            "（无 logprobs，预期 200）+ R-03 成对 12 发 200+结构；"
+            "msg 侧 A-04 镜像 3 发 + R-03 成对 12 发统一行为——"
+            "混现即 FAIL）==="
         )
 
         url = f"{api_client.api_prefix}/chat/completions"
 
+        # ── 工单 A-04 三发复现（缺陷复现轮）：top_logprobs=5 单
+        # 独出现（无 logprobs）——按官方行为应 200 接受，不额
+        # 外拒绝 ─────────────────────────────────────────────────
+        for i in range(1, K33_A04_ROUNDS + 1):
+            if i > 1:
+                time.sleep(3)
+            tag = f"A04复现{i}/{K33_A04_ROUNDS}发"
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K33_A04_PROMPT}],
+                {
+                    "endpoint": "/v1/chat/completions",
+                    "top_logprobs": K33_TOP_LOGPROBS,
+                    "logprobs": "(A-04 工单未带——不传)",
+                    "max_tokens": K33_A04_MAX_TOKENS,
+                    "temperature": "(原始未指定——不注入)",
+                    "top_p": "(原始未指定——不注入)",
+                    "seed": "(原始未指定——不注入)",
+                },
+            )
+            # K33: 工单 A-04 原样 payload 直发（top_logprobs 单独
+            # 直进 payload——工单原值原样保留；content/max_tokens
+            # 工单原值；logprobs/stream 工单未带——不传）
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [
+                    {"role": "user", "content": K33_A04_PROMPT}
+                ],
+                "max_tokens": K33_A04_MAX_TOKENS,
+                "top_logprobs": K33_TOP_LOGPROBS,
+            }
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{tag}] 请求发送异常（{url}）: {e}")
+            elapsed = time.time() - started
+            # 模型真实响应断言前打印（失败时同样可见）
+            test_logger.info(
+                f"[{tag}] 真实响应: HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"body={response.text[:800]!r}"
+            )
+            # 断言1：HTTP 200（A-04 缺陷形态：三发全部 400
+            # 「top_logprobs is only allowed when logprobs is
+            # enabled」——对未开 logprobs 的 top_logprobs 额外
+            # 拒绝；整改预期：未开 logprobs 时也接受，不额外
+            # 拒绝）
+            assert response.status_code == 200, (
+                f"[{tag}] 缺陷复现：未开 logprobs 的 "
+                f"top_logprobs={K33_TOP_LOGPROBS} 被额外拒绝——按"
+                f"官方行为应 200 接受（未开 logprobs 时也接受，"
+                f"不额外拒绝），实际 HTTP "
+                f"{response.status_code}: {response.text[:400]}"
+                f"（工单 A-04 形态：三发全部 400「top_logprobs "
+                f"is only allowed when logprobs is enabled」"
+                f"top_logprobs_requires_logprobs）"
+            )
+            # 断言2：响应体合法 JSON 且 choices 非空
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            assert data, f"[{tag}] 响应体应为合法 JSON"
+            choices = data.get("choices") or []
+            assert choices, f"[{tag}] 响应缺少 choices: {data!r}"
+            choice = choices[0] or {}
+            content = (choice.get("message") or {}).get("content") or ""
+            finish_reason = choice.get("finish_reason")
+            logprobs = choice.get("logprobs")
+            # 正文/finish_reason/logprobs 结构留观察（不计判据）
+            # ——max_tokens=32 小配额下默认思考计入共享配额
+            # （R-01 未整改）易 length/空正文（K31 域形态）；
+            # logprobs 未开时官方 200 响应结构形态未采集（客户
+            # 预期仅定义接受语义——与 K32/K35 断言收缩同理）
+            if content.strip():
+                test_logger.info(
+                    f"[{tag}] 观察: 正文 {len(content)} 字符、"
+                    f"finish_reason={finish_reason!r}、logprobs="
+                    f"{'有' if logprobs else '无'}"
+                    f", elapsed={elapsed:.1f}s"
+                )
+            else:
+                test_logger.warning(
+                    f"[{tag}] 观察: 正文为空、finish_reason="
+                    f"{finish_reason!r}（max_tokens=32 小配额+默"
+                    f"认思考计入配额——K31 域形态，非本例判据）"
+                    f", elapsed={elapsed:.1f}s"
+                )
+        test_logger.info(
+            f"A-04 复现轮通过: {K33_A04_ROUNDS} 发 top_logprobs="
+            f"{K33_TOP_LOGPROBS} 单独出现（无 logprobs）均 200——"
+            f"未开 logprobs 也接受，额外拒绝缺陷未复现"
+        )
+
+        # ── chat R-03 稳定性轮：logprobs=true + top_logprobs=5
+        # 成对（工单原值，依 OpenAI 规范）12 发——时拒时放须以同
+        # 参数多次暴露 ───────────────────────────────────────────
+        time.sleep(3)
         ok_count = 0
         for attempt in range(1, K33_RUNS + 1):
             if attempt > 1:
@@ -9846,8 +10150,119 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 该协议无 logprobs 参数语义，断言统一行为而非 200）──
         msg_url = f"{api_client.base_url}/anthropic/v1/messages"
 
-        # K33: msg 12 发先收集再判统一性（时拒时放须以 200/400
-        # 混现形态暴露——单发无法判定不稳定性）
+        # ── msg A-04 镜像轮（3 发）：top_logprobs=5 单独出现（无
+        # logprobs）——该协议无 logprobs 语义，断言统一行为（全
+        # 400 指明字段或全 200 正文非空，混现即 FAIL）───────
+        a04_msg_results = []
+        for i in range(1, K33_A04_ROUNDS + 1):
+            if i > 1:
+                time.sleep(3)
+            tag = f"msgA04镜像{i}/{K33_A04_ROUNDS}发"
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K33_A04_PROMPT}],
+                {
+                    "endpoint": "/anthropic/v1/messages",
+                    "protocol": "anthropic（x-api-key + "
+                                "anthropic-version 头）",
+                    "top_logprobs": K33_TOP_LOGPROBS,
+                    "logprobs": "(A-04 镜像——不传)",
+                    "max_tokens": K33_MSG_MAX_TOKENS,
+                    "temperature": "(原始未指定——不注入)",
+                    "top_p": "(原始未指定——不注入)",
+                    "seed": "(原始未指定——不注入)",
+                },
+            )
+            # K33: msg A-04 镜像 payload（top_logprobs 单独直进
+            # payload——被测维度与 chat A-04 一致；content 工单
+            # 原样字符串；max_tokens 取套件必需字段值 512——工
+            # 单 32 为 chat 小配额口径，取 512 避免 200 分支空
+            # 正文误判；logprobs/stream 不传）
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "max_tokens": K33_MSG_MAX_TOKENS,
+                "messages": [
+                    {"role": "user", "content": K33_A04_PROMPT}
+                ],
+                "top_logprobs": K33_TOP_LOGPROBS,
+            }
+            headers: Dict[str, Any] = {
+                "anthropic-version": "2023-06-01"
+            }
+            if api_client.api_key:
+                headers["x-api-key"] = api_client.api_key
+            started = time.time()
+            try:
+                response = api_client.session.post(
+                    msg_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=api_client.timeout,
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"[{tag}] 请求发送异常（{msg_url}）: {e}"
+                )
+            elapsed = time.time() - started
+            test_logger.info(
+                f"[{tag}] 真实响应: HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"body={response.text[:800]!r}"
+            )
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            content_arr = (data or {}).get("content") or []
+            text = "".join(
+                c.get("text") or ""
+                for c in content_arr
+                if isinstance(c, dict) and c.get("type") == "text"
+            ).strip()
+            a04_msg_results.append(
+                (tag, response.status_code, response.text, text)
+            )
+        # A-04 镜像统一性断言：3 发状态码须完全一致（混现=行
+        # 为不统一缺陷复现——整改要求统一行为）
+        a04_statuses = {r[1] for r in a04_msg_results}
+        assert len(a04_statuses) == 1, (
+            f"msg 协议 A-04 镜像行为不统一: {K33_A04_ROUNDS} 发"
+            f" top_logprobs 单独出现出现多种状态码 "
+            f"{sorted(a04_statuses)}——整改要求统一行为；逐发: "
+            f"{[(r[0], r[1]) for r in a04_msg_results]}"
+        )
+        if a04_msg_results[0][1] == 400:
+            # 分支A：全部 400——错误体须指明字段（含 "logprobs"，
+            # top_logprobs 子串覆盖——能力缺失/未知字段说明口径）
+            for tag, status, body, _ in a04_msg_results:
+                assert "logprobs" in body.lower(), (
+                    f"[{tag}] msg 协议 A-04 镜像 400 错误体未指明"
+                    f"字段 logprobs（整改建议：上游不支持时错误体"
+                    f"应说明能力缺失/指明字段，避免客户端反复重"
+                    f"试）: {body[:300]}"
+                )
+            test_logger.info(
+                f"msg A-04 镜像轮通过: {K33_A04_ROUNDS} 发全部 "
+                f"400 且错误体指明 logprobs 字段（能力缺失说明口"
+                f"径）——统一行为达标"
+            )
+        else:
+            # 分支B：全部 200——网关忽略该参数统一作答，每发正文
+            # 须非空（不得空作答）
+            for tag, status, body, text in a04_msg_results:
+                assert text, (
+                    f"[{tag}] msg 协议 A-04 镜像统一 200 作答但正"
+                    f"文为空: {body[:300]}"
+                )
+            test_logger.info(
+                f"msg A-04 镜像轮通过: {K33_A04_ROUNDS} 发全部 "
+                f"200 正常作答（网关忽略无语义参数、统一放行）"
+                f"——统一行为达标"
+            )
+
+        # ── msg R-03 稳定性轮：12 发先收集再判统一性（时拒时放
+        # 须以 200/400 混现形态暴露——单发无法判定不稳定性）──
+        time.sleep(3)
         msg_results = []
         for attempt in range(1, K33_RUNS + 1):
             if attempt > 1:
@@ -9962,10 +10377,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"达标"
             )
         test_logger.info(
-            f"客户问题整改验证通过（双协议）: chat {K33_RUNS} 发全"
-            f"部 200+返回 logprobs.top_logprobs；msg {K33_RUNS} "
-            f"发统一 HTTP {msg_status}——时拒时放缺陷在两协议均未"
-            f"复现"
+            f"客户问题整改验证通过（双协议）: chat A-04 复现 "
+            f"{K33_A04_ROUNDS} 发（top_logprobs 单独出现）均 200"
+            f"——未开 logprobs 也接受、额外拒绝缺陷未复现；chat "
+            f"R-03 {K33_RUNS} 发全部 200+返回 "
+            f"logprobs.top_logprobs；msg A-04 镜像 {K33_A04_ROUNDS} "
+            f"发统一 HTTP {a04_msg_results[0][1]}、msg R-03 "
+            f"{K33_RUNS} 发统一 HTTP {msg_status}——额外拒绝与时"
+            f"拒时放缺陷在两协议均未复现"
         )
 
     @pytest.mark.k_customer_issue
@@ -9974,110 +10393,125 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_multimodal_rejection_error_detail(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K34 [P2]: 客户问题 - 多模态拒绝错误体应指明媒体类型与字段
+        """K34 [P2]: 客户问题 - 多模态媒体块该拒未拒（msg 侧静
+        默丢弃返回 200）——须 400 明确拒绝（chat+msg 双协议）
 
-        客户问题（工单 P2 R-04 · 多模态拒绝的错误体未指明媒体类
-        型与字段，多模态）：官方 /v1/chat/completions 行为 HTTP
-        400，错误体指明 type 参数非法、取值范围 ['text']；贵方
-        实测 HTTP 400，chat 与 msg 双协议 8 发均为通用「模型服
-        务调用失败」(upstream_error)，未说明哪种媒体类型、哪个
-        字段不被支持。整改补充信息（用户后续提供）：GLM-5.3 为
-        纯文本模型，不支持任何多模态输入——凡收到图片、音频、
-        视频、文档等媒体块，无论 base64 内联还是远端 URL 传入，
-        须返回 400 明确拒绝并在错误体中指明不支持的媒体类型与
-        字段；不得 200 静默丢弃、不得降级为纯文本照常作答、也
-        不得只回通用「模型服务调用失败」使客户端无法判断原因；
-        官方 /v1/messages 侧对部分图片返回 200 属官方自身静默
-        丢弃，不作为判定基准（msg 侧仍按 400 断言）。
-        本用例按整改口径设计媒体类型 × 传入形态 × 双协议矩阵
-        （chat 4 轮 + msg 4 轮 = 8 发，对齐工单 8 发口径；确定
-        性校验行为每轮 1 发——K6/K32 先例）：
-        1. chat 协议（/v1/chat/completions）：image_url×base64
-           内联（代码生成 32x32 PNG data URL——K19 同款）、
-           image_url×远端 URL、input_audio×base64 内联（代码
-           生成最小 WAV）、video_url×远端 URL（视频 URL 参照
-           test_c 多模态视频理解 C5 同款公网地址——MDN
-           flower.mp4，同 video_url part 形态）
-        2. msg 协议（/anthropic/v1/messages，x-api-key +
-           anthropic-version 头——K3 先例）：image×base64
-           （source.type=base64、media_type=image/png）、image×
-           远端 URL（source.type=url）、document×base64
-           （media_type=application/pdf）、document×远端 URL
-           （source.type=url）
-        硬断言（每轮，任一失败即 FAIL 并报告轮标签）：
-        1. HTTP 400（200=媒体被静默忽略或降级纯文本作答——官方
-           msg 侧 200 属自身静默丢弃，不作判定基准；500 等=非
-           合规拒绝）
-        2. 错误体指明该轮媒体类型——含对应关键词 image/audio/
-           video/document（大小写不敏感；排除通用「模型服务调
-           用失败」upstream_error 不含任何媒体类型与字段的缺
-           陷形态）
+        客户问题（工单 P2 R-04 补充证据 · A-01 msg 协议多模态
+        静默丢弃，多模态）：
+        - 官方行为：glm-5.3 为非多模态模型——请求携带图片/音
+          频/视频/文档（base64 与 URL 两种载体）必须返回 400；
+          返回 2xx 即不合格
+        - 原始问题（贵方实测 A-01，2026-11-03 采集，5 发全
+          msg 协议）：HTTP 200——该拒未拒，媒体块被静默丢弃：
+          prompt_tokens 仅 17-43（媒体未进入分词器），正文自述
+          『没有收到视频/音频/文档』；同一素材在 chat 协议下
+          渠道返回 400——同一渠道、同一文件、两种协议两种结
+          果
+        - 整改建议（客户给出）：在 /v1/messages → OpenAI 转换
+          层对 media block（video/audio/document）做前置校验，
+          返回 400 并给出明确文案；不得剥离媒体块后继续转发；
+          URL 载体（http/https 媒体链接）同样必须返回 400，
+          不得自行抓取、转文字或降级为纯文本；另外 chat 协议
+          也应该相同的处理
+        本用例双协议各 5 发共 10 发（用户指定：message 协议和
+        chat 协议都要 5 轮请求）：msg 侧 5 发请求参数与类型依
+        客户原始请求依序（工单证据 A-01 全 msg——缺陷复现
+        轮）；chat 侧 5 发为同素材、同提示词、同块序镜像（整
+        改『chat 协议也应该相同的处理』——一致性核验轮）：
+        1. document×base64（application/pdf）+『文档中的文字
+           是什么?简答。』（媒体块在前——工单原序）
+        2. text + audio×base64（audio/wav）『这段音频是什么
+           类型的声音?简答。』（文本块在前——工单原序）
+        3. video×base64（video/mp4）+『简要描述视频内容。』
+        4. video×url +『简要描述视频内容。』（沿用本仓现有公
+           网视频地址——MDN flower.mp4；工单原 test-videos.
+           co.uk 地址不复用，用户指定保留现有 URL）
+        5. video×base64（video/mp4）+『这段视频前半段的底色
+           和中间显示的数字是什么？后半段的底色和中间显示的
+           数字是什么？按先后顺序一句话回答。』
+        chat part 映射（同素材同序镜像）：document → file part
+        （file_data data URL——OpenAI chat 协议文档输入标准
+        形态，内含 application/pdf）、audio → input_audio
+        （format=wav）、video → video_url（base64 发用 data
+        URL、URL 发用公网地址）。
+        媒体数据（用户指定）：工单未提供完整 data——以代码生
+        成有效 base64 数据（最小 PDF/WAV/MP4 容器，内存生成、
+        不落临时文件；拒绝校验发生在媒体块类型层，不依赖可解
+        码内容；msg/chat 双协议第 3/5 发共用同一生成 MP4——
+        判定在类型层，内容差异不影响拒绝行为）。
+        max_tokens=1024 工单原值（msg/chat 10 发同值镜像工单请
+        求，豁免注入）；请求体不含 stream 字段（工单原始格
+        式，两协议默认均非流式）；模型名由环境注入；thinking/
+        采样参数工单未含——不传（不注入）；相邻间隔 3s。
+        硬断言（每发，任一失败即 FAIL 并报告轮标签）：
+        1. HTTP 400（200=媒体被静默丢弃后纯文本作答——工单
+           A-01 缺陷形态（prompt_tokens 仅 17-43+正文自述未
+           收到），留 body 全文证；2xx 同判；500 等=非合规拒
+           绝）
+        2. 错误体指明该发媒体类型——对应关键词中英任一命中
+           （document/文档/pdf、audio/音频/语音、video/视频；
+           大小写不敏感——20261104 Jenkins 实测整改错误体为
+           中文「该模型不支持图片输入」，原纯英文关键词口径
+           误判，扩展中英双语匹配（用户指定）；排除通用「模
+           型服务调用失败」upstream_error 不含任何媒体类型的
+           缺陷形态）
         观察记录（不计判据，留日志）：错误体是否含 "text"（官
-        方行为口径——取值范围 ['text'] 痕迹）、完整错误体留痕。
-        视频轮远端 URL 参照 test_c 视频理解（C5）同款公网视频
-        地址；图片/文档远端 URL 用 example.com 占位（类型校验
-        在媒体块字段层，不依赖真实可下载资源）；媒体数据为代
-        码生成（PNG/WAV/最小 PDF，无外部依赖）；msg 协议
-        max_tokens=64 为 Anthropic 协议必需字段（最小合理值，
-        工单未指定）；thinking/采样参数工单未指定——不传（不注
-        入）；相邻间隔 3s。模型名由环境注入。GLM-5.3 专用。
-        （不进 smoke 集：新用例首跑观察期）
+        方行为口径——取值范围 ['text'] 痕迹）、完整错误体留
+        痕。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
         """
         K34_ANTHROPIC_VERSION = "2023-06-01"
-        # K34: msg 协议必需字段（Anthropic 无默认值）——拒绝类
-        # 请求最小合理值（工单未指定，非采样/生成参数）
-        K34_MAX_TOKENS_ANTHROPIC = 64
-        # K34: 图片/文档远端 URL 形态占位域（类型校验发生在媒体
-        # 块字段层，不依赖真实可下载资源）
-        K34_REMOTE_BASE = "https://example.com/"
-        # K34: 视频轮远端 URL——参照 test_c 多模态视频理解（C5）
-        # 同款公网视频地址（同 video_url part 形态）
+        # K34: max_tokens=1024——工单原始 5 发同值（msg 协议必
+        # 需字段，原值原样保留豁免注入）
+        K34_MAX_TOKENS = 1024
+        # K34: 视频轮远端 URL——沿用本仓现有公网视频地址（test_c
+        # 视频理解 C5 同款 MDN flower.mp4；用户指定保留现有
+        # URL——工单原 test-videos.co.uk 地址不复用）
         K34_VIDEO_URL = (
             "https://interactive-examples.mdn.mozilla.net"
             "/media/cc0-videos/flower.mp4"
         )
-        K34_PROMPT = "请描述这个媒体内容。"
+        # K34: 媒体类型中英关键词组（断言2 判定口径）——任一命
+        # 中即视为指明类型；20261104 Jenkins 实测贵方整改错误体
+        # 为中文（「该模型不支持图片输入」），原纯英文关键词口
+        # 径误判，扩展中英双语匹配（用户指定）；工单 A-01 5 发
+        # 覆盖 document/audio/video——无图片轮，image 关键词组
+        # 移除
+        K34_MEDIA_KEYWORDS = {
+            "audio": ("audio", "音频", "语音"),
+            "video": ("video", "视频"),
+            "document": ("document", "文档", "pdf"),
+        }
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - 多模态拒绝错误体应指明媒体"
-            "类型与字段（工单 P2 R-04：GLM-5.3 纯文本模型——任何媒"
-            "体块（图/音/视/文档）× base64 内联/远端 URL 传入均须 "
-            "400 明确拒绝并指明类型与字段；chat 4 轮 + msg 4 轮 = "
-            "8 发；官方 msg 侧对部分图片 200 属自身静默丢弃，不作"
-            "判定基准）==="
+            "=== 测试开始: 客户问题 - 多模态媒体块该拒未拒应 400 "
+            "明确拒绝（chat+msg 双协议各 5 发——用户指定；工单 "
+            "P2 R-04 补充证据 A-01：官方要求图/音/视/文档 × "
+            "base64/URL 载体必须 400，返回 2xx 即不合格；贵方 5 "
+            "发全 msg 均 200——prompt_tokens 仅 17-43、正文自述"
+            "未收到媒体；整改要求 chat 协议也应相同处理；msg 5 "
+            "发按工单原始记录依序复现 + chat 5 发同素材同序镜像"
+            "核验，媒体数据代码生成（内存生成、不落临时文件））"
+            "==="
         )
 
-        def make_png_data_url() -> str:
-            """生成 32x32 纯色 PNG 的 data URL（代码生成图片，
-            无外部依赖——K19 同款）"""
-            width = height = 32
-
-            def chunk(ctype: bytes, data: bytes) -> bytes:
-                return (
-                    struct.pack(">I", len(data))
-                    + ctype
-                    + data
-                    + struct.pack(
-                        ">I", zlib.crc32(ctype + data) & 0xFFFFFFFF
-                    )
-                )
-
-            ihdr = chunk(
-                b"IHDR",
-                struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0),
+        def make_mp4_b64() -> str:
+            """生成最小 MP4 容器 base64——代码生成视频，无外部
+            依赖（K34 双协议视频轮，工单 A-01 第 3/5 发素材；拒
+            绝校验发生在媒体块类型层，不依赖可解码的视频内容；
+            工单原始 data 未提供完整数据——按用户指定以代码生
+            成有效 base64 数据，内存生成、不落临时文件；ftyp
+            (ftyp isom 兼容 iso2/mp41)+free+mdat 最小容器骨
+            架）"""
+            ftyp = (
+                b"\x00\x00\x00\x18ftyp"
+                b"isom\x00\x00\x02\x00isomiso2mp41"
             )
-            row = b"\x00" + bytes((60, 120, 200)) * width
-            idat = chunk(b"IDAT", zlib.compress(row * height))
-            iend = chunk(b"IEND", b"")
-            png = b"\x89PNG\r\n\x1a\n" + ihdr + idat + iend
-            return (
-                "data:image/png;base64,"
-                + base64.b64encode(png).decode("ascii")
+            free = b"\x00\x00\x00\x08free"
+            payload = bytes(range(256)) * 4
+            mdat = (
+                struct.pack(">I", 8 + len(payload)) + b"mdat" + payload
             )
-
-        png_data_url = make_png_data_url()
-        # data URL 的 base64 段即 msg 协议 source.data（去前缀）
-        png_b64 = png_data_url.split("base64,", 1)[1]
+            return base64.b64encode(ftyp + free + mdat).decode("ascii")
 
         def make_wav_b64() -> str:
             """生成最小 WAV（8kHz 16bit 单声道 20ms 静音段）
@@ -10119,6 +10553,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         wav_b64 = make_wav_b64()
         pdf_b64 = make_pdf_b64()
+        # K34: 双协议第 3/5 发共用同一生成 MP4——拒绝判定在媒
+        # 体块类型层，工单两采集数据内容差异不影响拒绝行为
+        mp4_b64 = make_mp4_b64()
 
         def check_rejection(
             proto_tag: str,
@@ -10126,34 +10563,40 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             response,
             elapsed: float,
         ) -> None:
-            """K34 拒绝合规性与错误体质量断言（双协议各轮共用——
-            media_keyword 为该轮媒体类型关键词）"""
+            """K34 拒绝合规性与错误体质量断言（chat+msg 双协议
+            各发共用——media_keyword 为该发媒体类型，经
+            K34_MEDIA_KEYWORDS 展开中英关键词组，任一命中即视
+            为指明类型）"""
             body = response.text
             test_logger.info(
                 f"[{proto_tag}] 真实响应: HTTP "
                 f"{response.status_code}, elapsed={elapsed:.1f}s, "
                 f"body={body[:800]!r}"
             )
-            # 断言1：拒绝合规——HTTP 400（GLM-5.3 纯文本模型须
-            # 明确拒绝任何媒体块：200=媒体被静默忽略或降级为纯文
-            # 本照常作答、500 等=非合规拒绝；官方 msg 侧对部分图
-            # 片 200 属其自身静默丢弃，不作为判定基准）
+            # 断言1：拒绝合规——HTTP 400（官方要求：非多模态模型
+            # 收到媒体块（base64/URL 两种载体）必须 400，返回
+            # 2xx 即不合格；200=媒体被静默丢弃后纯文本作答——工
+            # 单 A-01 缺陷形态，500 等=非合规拒绝）
             assert response.status_code == 400, (
-                f"[{proto_tag}] 纯文本模型对多模态请求应 400 明确"
-                f"拒绝（无论 base64 内联还是远端 URL 传入），实际"
-                f" HTTP {response.status_code}: {body[:400]}"
-                f"（200=媒体被静默忽略/降级纯文本作答——官方 msg "
-                f"侧 200 属自身静默丢弃，不作判定基准；500 等=非"
-                f"合规拒绝）"
+                f"[{proto_tag}] 非多模态模型对媒体块请求应 400 明"
+                f"确拒绝（base64 与 URL 两种载体——官方要求返回 "
+                f"2xx 即不合格），实际 HTTP "
+                f"{response.status_code}: {body[:400]}"
+                f"（200=媒体被静默丢弃后纯文本作答——工单 A-01 缺"
+                f"陷形态：prompt_tokens 仅 17-43、正文自述未收到媒"
+                f"体；500 等=非合规拒绝）"
             )
-            # 断言2：错误体指明媒体类型（含该轮关键词，大小写不
-            # 敏感；缺陷形态：通用「模型服务调用失败」upstream_
-            # error 不含任何媒体类型与字段）
-            assert media_keyword in body.lower(), (
+            # 断言2：错误体指明媒体类型（该轮中英关键词组任一命
+            # 中，大小写不敏感——英文 lower 匹配、中文原样匹配
+            # 不受 lower 影响；缺陷形态：通用「模型服务调用失
+            # 败」upstream_error 不含任何媒体类型与字段）
+            keywords = K34_MEDIA_KEYWORDS[media_keyword]
+            assert any(k in body.lower() for k in keywords), (
                 f"[{proto_tag}] 错误体未指明不支持的媒体类型与字段"
-                f"（整改要求：指出媒体类型与字段，便于客户端定位"
-                f"；预期关键词 {media_keyword!r}；客户缺陷形态：通"
-                f"用『模型服务调用失败』upstream_error）: "
+                f"（整改要求：转换层前置校验并给出明确文案，便于"
+                f"客户端定位；预期关键词组 {keywords!r}——中英任"
+                f"一命中即达标；缺陷形态：通用『模型服务调用失"
+                f"败』upstream_error）: "
                 f"{body[:300]}"
             )
             # 观察记录：官方行为口径的取值范围痕迹（['text']）
@@ -10168,7 +10611,6 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     f"方行为口径——观察记录，不计判据）"
                 )
 
-        chat_url = f"{api_client.api_prefix}/chat/completions"
         msg_url = f"{api_client.base_url}/anthropic/v1/messages"
         msg_headers: Dict[str, Any] = {
             "anthropic-version": K34_ANTHROPIC_VERSION
@@ -10176,45 +10618,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         if api_client.api_key:
             msg_headers["x-api-key"] = api_client.api_key
 
-        def send_chat(tag: str, payload: Dict[str, Any]):
-            """K34 chat 协议单轮直发"""
-            TestLogger.log_request(
-                test_logger,
-                [
-                    {
-                        "role": "user",
-                        "content": f"[媒体 part + text]（{tag}）",
-                    }
-                ],
-                {
-                    "endpoint": "/v1/chat/completions",
-                    "round": tag,
-                    "stream": False,
-                    "max_tokens": "(原始未指定——不传)",
-                    "temperature": "(原始未指定——不注入)",
-                    "top_p": "(原始未指定——不注入)",
-                    "seed": "(原始未指定——不注入)",
-                },
-            )
-            started = time.time()
-            try:
-                response = api_client._post_with_retry(
-                    chat_url, payload, stream=False
-                )
-            except Exception as e:
-                pytest.fail(
-                    f"[{tag}] 请求发送异常（{chat_url}）: {e}"
-                )
-            return response, time.time() - started
-
         def send_msg(tag: str, payload: Dict[str, Any]):
-            """K34 msg 协议单轮直发（Anthropic 头——K3 先例）"""
+            """K34 msg 协议单发直发（Anthropic 头——K3 先例；工
+            单原始请求格式：max_tokens/messages/model，不含
+            stream 字段——msg 协议默认非流式）"""
             TestLogger.log_request(
                 test_logger,
                 [
                     {
                         "role": "user",
-                        "content": f"[媒体 part + text]（{tag}）",
+                        "content": f"[媒体块 + 文本]（{tag}）",
                     }
                 ],
                 {
@@ -10222,8 +10635,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     "protocol": "anthropic（x-api-key + "
                                 "anthropic-version 头）",
                     "round": tag,
-                    "max_tokens": K34_MAX_TOKENS_ANTHROPIC,
-                    "stream": False,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "stream": "(工单原始未含 stream 字段——非流式)",
                     "temperature": "(原始未指定——不注入)",
                     "top_p": "(原始未指定——不注入)",
                     "seed": "(原始未指定——不注入)",
@@ -10243,170 +10656,60 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 )
             return response, time.time() - started
 
-        def text_part() -> Dict[str, Any]:
-            return {"type": "text", "text": K34_PROMPT}
+        chat_url = f"{api_client.api_prefix}/chat/completions"
 
-        # K34: 媒体类型 × 传入形态 × 双协议矩阵——chat 4 轮 +
-        # msg 4 轮 = 8 发（对齐工单 8 发口径）；每轮 =
-        # （发送函数, 轮标签, 媒体类型关键词, payload）
-        chat_rounds = [
-            (
-                send_chat,
-                "chat/image_url×base64",
-                "image",
+        def send_chat(tag: str, payload: Dict[str, Any]):
+            """K34 chat 协议单发直发（工单请求的 chat 协议镜像
+            ——整改要求 chat 协议也应相同处理，一致性核验轮；
+            镜像工单请求格式：不含 stream 字段——chat 协议默认
+            非流式）"""
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {
+                        "role": "user",
+                        "content": f"[媒体 part + 文本]（{tag}）",
+                    }
+                ],
                 {
-                    "model": api_client.model_name,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": png_data_url
-                                    },
-                                },
-                                text_part(),
-                            ],
-                        }
-                    ],
-                    "stream": False,
+                    "endpoint": "/v1/chat/completions",
+                    "round": tag,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "stream": "(工单原始未含 stream 字段——非流式)",
+                    "temperature": "(原始未指定——不注入)",
+                    "top_p": "(原始未指定——不注入)",
+                    "seed": "(原始未指定——不注入)",
                 },
-            ),
-            (
-                send_chat,
-                "chat/image_url×URL",
-                "image",
-                {
-                    "model": api_client.model_name,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": (
-                                            K34_REMOTE_BASE + "test.png"
-                                        )
-                                    },
-                                },
-                                text_part(),
-                            ],
-                        }
-                    ],
-                    "stream": False,
-                },
-            ),
-            (
-                send_chat,
-                "chat/input_audio×base64",
-                "audio",
-                {
-                    "model": api_client.model_name,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_audio",
-                                    "input_audio": {
-                                        "data": wav_b64,
-                                        "format": "wav",
-                                    },
-                                },
-                                text_part(),
-                            ],
-                        }
-                    ],
-                    "stream": False,
-                },
-            ),
-            (
-                send_chat,
-                "chat/video_url×URL",
-                "video",
-                {
-                    "model": api_client.model_name,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "video_url",
-                                    "video_url": {
-                                        "url": K34_VIDEO_URL
-                                    },
-                                },
-                                text_part(),
-                            ],
-                        }
-                    ],
-                    "stream": False,
-                },
-            ),
-        ]
+            )
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    chat_url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"[{tag}] 请求发送异常（{chat_url}）: {e}"
+                )
+            return response, time.time() - started
+
+        def text_block(text: str) -> Dict[str, Any]:
+            """工单各发原文本块（msg 文本块/chat text part 同形
+            ——提示词原样保留）"""
+            return {"type": "text", "text": text}
+
+        # K34: 工单 A-01 原始记录 5 发依序复现（全 msg 协议；用
+        # 户指定——5 发请求参数与类型按客户原始请求依序，媒体块
+        # 与文本块顺序按工单原样：第 1 发媒体块在前、第 2 发文
+        # 本块在前）；每发 = （轮标签, 媒体类型键
+        # （K34_MEDIA_KEYWORDS 映射键）, payload——工单原始格
+        # 式：max_tokens/messages/model，不含 stream 字段）
         msg_rounds = [
             (
-                send_msg,
-                "msg/image×base64",
-                "image",
-                {
-                    "model": api_client.model_name,
-                    "max_tokens": K34_MAX_TOKENS_ANTHROPIC,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": "image/png",
-                                        "data": png_b64,
-                                    },
-                                },
-                                text_part(),
-                            ],
-                        }
-                    ],
-                    "stream": False,
-                },
-            ),
-            (
-                send_msg,
-                "msg/image×URL",
-                "image",
-                {
-                    "model": api_client.model_name,
-                    "max_tokens": K34_MAX_TOKENS_ANTHROPIC,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image",
-                                    "source": {
-                                        "type": "url",
-                                        "url": (
-                                            K34_REMOTE_BASE + "test.png"
-                                        ),
-                                    },
-                                },
-                                text_part(),
-                            ],
-                        }
-                    ],
-                    "stream": False,
-                },
-            ),
-            (
-                send_msg,
                 "msg/document×base64",
                 "document",
                 {
                     "model": api_client.model_name,
-                    "max_tokens": K34_MAX_TOKENS_ANTHROPIC,
+                    "max_tokens": K34_MAX_TOKENS,
                     "messages": [
                         {
                             "role": "user",
@@ -10421,56 +10724,283 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                                         "data": pdf_b64,
                                     },
                                 },
-                                text_part(),
+                                text_block(
+                                    "文档中的文字是什么?简答。"
+                                ),
                             ],
                         }
                     ],
-                    "stream": False,
                 },
             ),
             (
-                send_msg,
-                "msg/document×URL",
-                "document",
+                "msg/audio×base64",
+                "audio",
                 {
                     "model": api_client.model_name,
-                    "max_tokens": K34_MAX_TOKENS_ANTHROPIC,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                text_block(
+                                    "这段音频是什么类型的声音?简答。"
+                                ),
+                                {
+                                    "type": "audio",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "audio/wav",
+                                        "data": wav_b64,
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ),
+            (
+                "msg/video×base64",
+                "video",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
                     "messages": [
                         {
                             "role": "user",
                             "content": [
                                 {
-                                    "type": "document",
+                                    "type": "video",
                                     "source": {
-                                        "type": "url",
-                                        "url": (
-                                            K34_REMOTE_BASE + "test.pdf"
-                                        ),
+                                        "type": "base64",
+                                        "media_type": "video/mp4",
+                                        "data": mp4_b64,
                                     },
                                 },
-                                text_part(),
+                                text_block("简要描述视频内容。"),
                             ],
                         }
                     ],
-                    "stream": False,
+                },
+            ),
+            (
+                "msg/video×url",
+                "video",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "video",
+                                    "source": {
+                                        "type": "url",
+                                        "url": K34_VIDEO_URL,
+                                    },
+                                },
+                                text_block("简要描述视频内容。"),
+                            ],
+                        }
+                    ],
+                },
+            ),
+            (
+                "msg/video×base64(2)",
+                "video",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "video",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "video/mp4",
+                                        "data": mp4_b64,
+                                    },
+                                },
+                                text_block(
+                                    "这段视频前半段的底色和中间显示的"
+                                    "数字是什么？后半段的底色和中间显示"
+                                    "的数字是什么？按先后顺序一句话回"
+                                    "答。"
+                                ),
+                            ],
+                        }
+                    ],
                 },
             ),
         ]
 
+        # K34: chat 协议 5 发——同素材、同提示词、同块序的工单
+        # 镜像（整改『chat 协议也应该相同的处理』——一致性核
+        # 验轮；用户指定：message 协议和 chat 协议都要 5 轮请
+        # 求）；part 映射：document → file part（file_data data
+        # URL——OpenAI chat 协议文档输入标准形态，内含
+        # application/pdf）、audio → input_audio（format=wav）、
+        # video → video_url（base64 发用 data URL、URL 发用公
+        # 网地址）；每发 = （轮标签, 媒体类型键（K34_MEDIA_
+        # KEYWORDS 映射键）, payload——镜像工单请求格式：
+        # max_tokens/messages/model，不含 stream 字段）
+        chat_rounds = [
+            (
+                "chat/document×base64",
+                "document",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "file",
+                                    "file": {
+                                        "file_data": (
+                                            "data:application/pdf"
+                                            f";base64,{pdf_b64}"
+                                        ),
+                                    },
+                                },
+                                text_block(
+                                    "文档中的文字是什么?简答。"
+                                ),
+                            ],
+                        }
+                    ],
+                },
+            ),
+            (
+                "chat/audio×base64",
+                "audio",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                text_block(
+                                    "这段音频是什么类型的声音?简答。"
+                                ),
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": {
+                                        "data": wav_b64,
+                                        "format": "wav",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ),
+            (
+                "chat/video×base64",
+                "video",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "video_url",
+                                    "video_url": {
+                                        "url": (
+                                            "data:video/mp4"
+                                            f";base64,{mp4_b64}"
+                                        ),
+                                    },
+                                },
+                                text_block("简要描述视频内容。"),
+                            ],
+                        }
+                    ],
+                },
+            ),
+            (
+                "chat/video×url",
+                "video",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "video_url",
+                                    "video_url": {
+                                        "url": K34_VIDEO_URL
+                                    },
+                                },
+                                text_block("简要描述视频内容。"),
+                            ],
+                        }
+                    ],
+                },
+            ),
+            (
+                "chat/video×base64(2)",
+                "video",
+                {
+                    "model": api_client.model_name,
+                    "max_tokens": K34_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "video_url",
+                                    "video_url": {
+                                        "url": (
+                                            "data:video/mp4"
+                                            f";base64,{mp4_b64}"
+                                        ),
+                                    },
+                                },
+                                text_block(
+                                    "这段视频前半段的底色和中间显示的"
+                                    "数字是什么？后半段的底色和中间显示"
+                                    "的数字是什么？按先后顺序一句话回"
+                                    "答。"
+                                ),
+                            ],
+                        }
+                    ],
+                },
+            ),
+        ]
+        total_rounds = len(msg_rounds) + len(chat_rounds)
+
         total = 0
-        for sender, label, keyword, payload in chat_rounds + msg_rounds:
+        for label, keyword, payload in msg_rounds:
             if total:
                 time.sleep(3)
-            response, elapsed = sender(label, payload)
-            check_rejection(label, keyword, response, elapsed)
             total += 1
+            round_tag = f"{label} 第{total}/{total_rounds} 发"
+            response, elapsed = send_msg(round_tag, payload)
+            check_rejection(round_tag, keyword, response, elapsed)
+        for label, keyword, payload in chat_rounds:
+            if total:
+                time.sleep(3)
+            total += 1
+            round_tag = f"{label} 第{total}/{total_rounds} 发"
+            response, elapsed = send_chat(round_tag, payload)
+            check_rejection(round_tag, keyword, response, elapsed)
         test_logger.info(
-            f"客户问题整改验证通过: {total} 发（chat 4 轮——image_url"
-            f"×base64/URL、input_audio×base64、video_url×URL；msg "
-            f"4 轮——image×base64/URL、document×base64/URL）全部 "
-            f"400 合规拒绝，且错误体均指明对应媒体类型关键词——纯"
-            f"文本模型多模态拒绝整改达标，通用『模型服务调用失败』"
-            f"缺陷未复现"
+            f"客户问题整改验证通过: {total} 发（msg 5 发按工单 "
+            f"A-01 原始口径依序复现 + chat 5 发同素材同序镜像——"
+            f"双协议一致性核验，用户指定双协议各 5 发）全部 HTTP "
+            f"400 合规拒绝，且错误体均指明对应媒体类型（中英关键"
+            f"词任一命中）——媒体块静默丢弃（200 + prompt_tokens "
+            f"仅 17-43）缺陷未复现，转换层前置校验整改双协议达标"
         )
 
     @pytest.mark.k_customer_issue
@@ -10479,111 +11009,130 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_enable_thinking_param_rejection(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K35 [P1]: 客户问题 - enable_thinking 备选思考开关应与
-        官方一致拒绝
+        """K35 [P1]: 客户问题 - 关闭思考应按原厂 400 拒绝
+        （enable_thinking=false 与 thinking.type=disabled 双路径，
+        chat+msg 双协议）
 
-        客户问题（工单 P1 R-07 · 备选思考开关 enable_thinking 放
-        行行为不一致，接口协议）：
-        - 官方行为：HTTP 400——拒绝该参数（enable_thinking 为非
-          官方/备选思考开关，官方对未知参数直接拒绝）
-        - 贵方实测：HTTP 200——放行并按默认思考处理（静默接受）
-        - 整改建议：与官方一致拒绝，或在文档中明确声明支持该参
-          数并保证语义等价；不得静默放行
-        本用例按官方一致行为断言（用户指定）双协议覆盖（chat +
-        msg——K31 起用例须验证双协议，用户指定）：
-        1. chat 协议：/v1/chat/completions 非流式请求带
-           enable_thinking=true（开关典型取值形态）→ 应 HTTP
-           400 + 错误体含 "enable_thinking"（大小写不敏感）
-        2. msg 协议：/anthropic/v1/messages（x-api-key +
+        客户问题（工单 P1 R-07 补充证据 A-02 · chat/msg 协议关
+        闭思考的请求被放行，接口协议）：
+        - 官方行为：原厂对关闭思考返回 400（原厂 HTTP 400）
+        - 贵方实测（A-02，2026-11-03 采集，2 发均 HTTP 200）：
+          渠道返回 200 并正常出文——chat 发 enable_thinking=
+          false 放行且响应带 reasoning_content（思考仍开启，
+          reasoning_tokens=91）；msg 发 thinking.type=disabled
+          放行且 content 带 thinking 块（思考仍开启）；对照记
+          为 http_status 400→200（HTTP 状态语义）
+        - 预期行为（整改）：统一关闭思考的拒绝口径——
+          enable_thinking=false 与 thinking.type=disabled 两条
+          路径均按原厂返回 400；不得一条拒一条放
+        本用例按客户原始请求 A-02 依序复现（用户指定——两条
+        路径都要按官方行为返回 400，覆盖两种协议）：
+        1. 路径1 chat 协议：/v1/chat/completions 非流式请求带
+           enable_thinking=false（工单原样：content="23+19 等
+           于多少？"、max_tokens=512、请求体不含 stream 字
+           段）→ 应 HTTP 400
+        2. 路径2 msg 协议：/anthropic/v1/messages（x-api-key +
            anthropic-version 头，K3 先例）非流式请求带
-           enable_thinking=true（max_tokens=1024 为协议必需字
-           段）→ 应 HTTP 400 + 错误体含 "enable_thinking"
-        硬断言（每协议，任一失败即 FAIL 并报告协议）：
-        1. HTTP 400（200=静默放行缺陷复现——贵方实测形态，整改
-           明令"不得静默放行"；500 等=非合规拒绝——整改要求
-           "与官方一致拒绝"）
-        2. 错误体含 "enable_thinking"（大小写不敏感；官方未知
-           参数拒绝文案均含参数名——如 "Unrecognized request
-           argument supplied: enable_thinking" / "unexpected
-           field"；排除通用「模型服务调用失败」不含参数名的缺
-           陷形态，客户端可据此定位）
-        整改备选分支（文档声明支持该参数并保证语义等价）为非
-        受测分支——按用户指定取官方一致分支断言。
-        enable_thinking=true 为该开关的典型取值（工单未附请求
-        样例；官方拒绝参数本身、与取值无关，单值即可判定静默
-        放行形态——K6/K32/K34 确定性参数校验先例，每协议 1
-        发）；thinking/采样参数工单未指定——不传（不注入）；
-        相邻间隔 3s。模型名由环境注入。GLM-5.3 专用。（不进
-        smoke 集：新用例首跑观察期）
+           thinking={"type": "disabled"}（工单原样：
+           content="23+19=?"、max_tokens=512、stream=false 显
+           式携带——工单原始格式）→ 应 HTTP 400
+        硬断言（每路径，任一失败即 FAIL 并报告协议与路径——
+        不得一条拒一条放）：
+        1. HTTP 400（200=放行缺陷复现——A-02 形态：200 且正
+           常出文（思考仍开启——reasoning_content/thinking
+           块）；500 等=非合规拒绝）
+        观察记录（不计判据，留日志）：错误体是否含参数名（路
+        径1 enable_thinking / 路径2 thinking——官方拒绝文案常
+        含参数名，客户端可据此定位；通用「模型服务调用失
+        败」不含参数名）、完整错误体留痕。
+        max_tokens=512 工单 2 发同值（豁免注入）；提示词与请
+        求体按工单原样（msg 侧 content 为字符串——工单原始格
+        式；两发提示词不同——工单原样）；采样参数工单未含
+        ——不传（不注入）；相邻间隔 3s。模型名由环境注入。
+        GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
         """
-        # K35: 备选思考开关典型取值（官方拒绝参数本身，与取值
-        # 无关——单值即可判定静默放行形态）
-        K35_ENABLE_THINKING = True
-        # K35: msg 协议必需字段（Anthropic 无默认值）——单句
-        # 闲聊最小合理值（K32 msg 先例）
-        K35_MSG_MAX_TOKENS = 1024
-        K35_PROMPT = "请用一句话介绍你自己。"
+        # K35: 工单 A-02 两发同值 max_tokens=512（原值原样保留
+        # 豁免注入；chat 侧工单原样携带，msg 侧协议必需字段）
+        K35_MAX_TOKENS = 512
+        # K35: 工单 A-02 原始提示词（两发不同——工单原样逐字保
+        # 留，含 chat 发全角问号/msg 发 ASCII 形态）
+        K35_CHAT_PROMPT = "23+19 等于多少？"
+        K35_MSG_PROMPT = "23+19=?"
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - enable_thinking 备选思考开关应"
-            "与官方一致拒绝（工单 P1 R-07：官方 400 拒绝该参数；贵方"
-            "实测 200 静默放行——按官方一致行为断言；chat + msg 双协"
-            "议各 1 发；判据：400+错误体含 enable_thinking）==="
+            "=== 测试开始: 客户问题 - 关闭思考应按原厂 400 拒绝"
+            "（工单 P1 R-07 补充证据 A-02：官方原厂对关闭思考返回 "
+            "400；贵方实测 chat enable_thinking=false 与 msg "
+            "thinking.type=disabled 两发均 200 正常出文——http_"
+            "status 400→200；统一关闭思考拒绝口径，不得一条拒一条"
+            "放；chat + msg 双协议各 1 发按工单原始请求复现；判据："
+            "每路径 HTTP 400）==="
         )
 
         def check_rejection(
-            proto_tag: str, response, elapsed: float
+            proto_tag: str, param_name: str, response, elapsed: float
         ) -> None:
-            """K35 拒绝一致性与错误体质量断言（双协议共用）"""
+            """K35 关闭思考拒绝一致性断言（双协议两路径共用——
+            param_name 为该路径参数名，仅作错误体观察痕迹）"""
             body = response.text
             test_logger.info(
                 f"[{proto_tag}] 真实响应: HTTP "
                 f"{response.status_code}, elapsed={elapsed:.1f}s, "
                 f"body={body[:800]!r}"
             )
-            # 断言1：与官方一致拒绝——HTTP 400（200=静默放行缺
-            # 陷复现——贵方实测形态：放行并按默认思考处理；500
-            # 等=非合规拒绝）
+            # 断言1：统一关闭思考拒绝口径——HTTP 400（官方：原
+            # 厂对关闭思考返回 400；200=放行缺陷复现——A-02 形
+            # 态：200 且正常出文（思考仍开启——reasoning_
+            # content/thinking 块）；500 等=非合规拒绝；不得一
+            # 条拒一条放）
             assert response.status_code == 400, (
-                f"[{proto_tag}] enable_thinking 为非官方参数，官方"
-                f"行为 HTTP 400 拒绝——按官方一致行为断言，实际 "
+                f"[{proto_tag}] 官方（原厂）对关闭思考返回 400——"
+                f"统一关闭思考拒绝口径（不得一条拒一条放），实际 "
                 f"HTTP {response.status_code}: {body[:400]}"
-                f"（200=静默放行缺陷复现——贵方实测形态；500 等="
-                f"非合规拒绝）"
+                f"（200=放行缺陷复现——工单 A-02 形态：200 且正常"
+                f"出文、思考仍开启（reasoning_content/thinking 块）"
+                f"；500 等=非合规拒绝）"
             )
-            # 断言2：错误体指明参数名（官方拒绝文案均含参数名；
-            # 缺陷形态：通用「模型服务调用失败」upstream_error
-            # 不含参数名，客户端无法定位）
-            assert "enable_thinking" in body.lower(), (
-                f"[{proto_tag}] 错误体未指明参数名 enable_thinking"
-                f"（官方未知参数拒绝文案均含参数名——如 "
-                f"\"Unrecognized request argument supplied: "
-                f"enable_thinking\"，客户端据此定位；客户缺陷形"
-                f"态：通用『模型服务调用失败』不含参数名）: "
-                f"{body[:300]}"
-            )
+            # 观察记录：错误体参数名痕迹（官方拒绝文案常含参数
+            # 名——客户端可据此定位；通用「模型服务调用失败」
+            # upstream_error 不含参数名；不计判据）
+            if param_name in body.lower():
+                test_logger.info(
+                    f"[{proto_tag}] 错误体含参数名痕迹 "
+                    f"'{param_name}'（增强信息，不计判据）"
+                )
+            else:
+                test_logger.warning(
+                    f"[{proto_tag}] 错误体未含参数名痕迹 "
+                    f"'{param_name}'（观察记录，不计判据）"
+                )
 
-        # ── chat 协议：/v1/chat/completions + enable_thinking ──
+        # ── 路径1 chat 协议：/v1/chat/completions +
+        # enable_thinking=false（工单 A-02 第 1 发原样）──
         chat_url = f"{api_client.api_prefix}/chat/completions"
         TestLogger.log_request(
             test_logger,
-            [{"role": "user", "content": K35_PROMPT}],
+            [{"role": "user", "content": K35_CHAT_PROMPT}],
             {
                 "endpoint": "/v1/chat/completions",
-                "enable_thinking": K35_ENABLE_THINKING,
-                "max_tokens": "(原始未指定——不传)",
+                "enable_thinking": False,
+                "max_tokens": K35_MAX_TOKENS,
+                "stream": "(工单原始未含 stream 字段——非流式)",
                 "temperature": "(原始未指定——不注入)",
                 "top_p": "(原始未指定——不注入)",
                 "seed": "(原始未指定——不注入)",
             },
         )
-        # K35: 手工 payload 直发（enable_thinking 直进 payload——
-        # 工单原值原样保留；thinking/采样参数未指定——不传不注入）
+        # K35: 手工 payload 直发（工单 A-02 原始格式：messages/
+        # max_tokens/enable_thinking/model，不含 stream 字段——
+        # 工单原样；采样参数未含——不传不注入）
         chat_payload: Dict[str, Any] = {
+            "messages": [
+                {"role": "user", "content": K35_CHAT_PROMPT}
+            ],
+            "max_tokens": K35_MAX_TOKENS,
+            "enable_thinking": False,
             "model": api_client.model_name,
-            "messages": [{"role": "user", "content": K35_PROMPT}],
-            "enable_thinking": K35_ENABLE_THINKING,
-            "stream": False,
         }
         started = time.time()
         try:
@@ -10594,11 +11143,17 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             pytest.fail(
                 f"[chat] 请求发送异常（{chat_url}）: {e}"
             )
-        check_rejection("chat", response, time.time() - started)
+        check_rejection(
+            "chat·enable_thinking=false",
+            "enable_thinking",
+            response,
+            time.time() - started,
+        )
 
         time.sleep(3)
 
-        # ── msg 协议：/anthropic/v1/messages + enable_thinking ──
+        # ── 路径2 msg 协议：/anthropic/v1/messages +
+        # thinking.type=disabled（工单 A-02 第 2 发原样）──
         msg_url = f"{api_client.base_url}/anthropic/v1/messages"
         msg_headers: Dict[str, Any] = {
             "anthropic-version": "2023-06-01"
@@ -10607,32 +11162,29 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             msg_headers["x-api-key"] = api_client.api_key
         TestLogger.log_request(
             test_logger,
-            [{"role": "user", "content": K35_PROMPT}],
+            [{"role": "user", "content": K35_MSG_PROMPT}],
             {
                 "endpoint": "/anthropic/v1/messages",
                 "protocol": "anthropic（x-api-key + "
                             "anthropic-version 头）",
-                "enable_thinking": K35_ENABLE_THINKING,
-                "max_tokens": K35_MSG_MAX_TOKENS,
+                "thinking.type": "disabled",
+                "max_tokens": K35_MAX_TOKENS,
+                "stream": False,
                 "temperature": "(原始未指定——不注入)",
                 "top_p": "(原始未指定——不注入)",
                 "seed": "(原始未指定——不注入)",
             },
         )
-        # K35: msg 协议手工 payload 直发（enable_thinking 直进
-        # payload——工单原值原样保留；max_tokens 为协议必需字段）
+        # K35: msg 协议手工 payload 直发（工单 A-02 原始格式：
+        # messages/max_tokens/thinking/model/stream——content 为
+        # 字符串、stream=false 显式携带，均工单原样）
         msg_payload: Dict[str, Any] = {
-            "model": api_client.model_name,
-            "max_tokens": K35_MSG_MAX_TOKENS,
             "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": K35_PROMPT}
-                    ],
-                }
+                {"role": "user", "content": K35_MSG_PROMPT}
             ],
-            "enable_thinking": K35_ENABLE_THINKING,
+            "max_tokens": K35_MAX_TOKENS,
+            "thinking": {"type": "disabled"},
+            "model": api_client.model_name,
             "stream": False,
         }
         started = time.time()
@@ -10647,11 +11199,17 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             pytest.fail(
                 f"[msg] 请求发送异常（{msg_url}）: {e}"
             )
-        check_rejection("msg", response, time.time() - started)
+        check_rejection(
+            "msg·thinking.type=disabled",
+            "thinking",
+            response,
+            time.time() - started,
+        )
         test_logger.info(
-            "客户问题整改验证通过: chat 与 msg 双协议 enable_thinking"
-            "请求均与官方一致 400 拒绝，且错误体指明参数名——静默放"
-            "行缺陷未复现，客户端可据此定位非官方参数"
+            "客户问题整改验证通过: chat（enable_thinking=false）与 "
+            "msg（thinking.type=disabled）两路径均按原厂 HTTP 400 拒"
+            "绝——统一关闭思考拒绝口径落地（不得一条拒一条放），放"
+            "行（200 正常出文）缺陷未复现"
         )
 
     @pytest.mark.k_customer_issue
@@ -11188,4 +11746,410 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "chat（finish_reason=stop）与 msg（stop_reason="
             "end_turn）双协议下终止语义均对齐官方，正文非空——思"
             "考 token 误判 length 截断缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_n2_request_hang_timeout(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K37 [P0]: 客户问题 - n=2 请求挂死须限时返回并对齐官方
+
+        客户问题（工单 P0 · n=2 请求挂死：无响应直至超时，异常）：
+        - 官方行为：原厂 n=2 HTTP 200（返回 1 个 choice）
+        - 贵方实测：无响应直至超时——参数电池 3/3 轮 TimeoutError
+          （已重试 1 次仍超时）；协议电池 2 例 ReadTimeout，直连
+          300s 超时；该挂死同时导致模块 4 的 n=2 探针被记为
+          『无效』而未计失败
+        - 整改建议：定位 n=2 路径的阻塞点（疑似上游对 n>1 未返
+          回/连接不复位）。要求：n=2 在 30s 内返回 200 或明确
+          4xx，不得无限挂起；客户端侧需加硬超时，避免单例拖死
+          整轮
+        本用例按官方行为进行预期断言（用户指定——优先官方行为），
+        chat 单协议 2 发对齐工单口径（055/056 两采集，同请求形态
+        ——两次独立采集非重试），硬断言每发：
+        1. 30s 硬超时（整改要求"30s 内返回"+"客户端侧硬超时"——
+           requests timeout=30s，超时即 FAIL：挂死缺陷复现；工
+           单原客户端 300s 超时拖死整轮的形态不得复现，超时显
+           式计入失败——纠正工单所述探针被记为『无效』而未计失
+           败的漏报形态）
+        2. HTTP 200（官方行为；4xx=整改下限"明确 4xx"达标但与
+           官方 200 不一致——仍 FAIL 交人工分派分支口径，K35 官
+           方一致分支同口径）
+        3. choices 恰 1 个（官方 n=2 返回 1 个 choice）
+        观察记录（不计判据）：finish_reason 与正文——max_tokens=16
+        为工单原值，极小配额下默认思考计入易空正文+length（K31 域
+        形态），不构成本例『挂死/返回』判据，避免缺陷归属混淆；
+        elapsed 留痕——requests 读超时按字节间隔计时，已返回但总
+        时长超 30s 的字节缓流形态留观察人工分派，不作硬断言避免
+        边界抖动误报。
+        工单原值原样保留：messages="说一句话。"、max_tokens=16、
+        n=2（豁免注入，无全局注入口）；thinking/采样参数工单未含
+        ——不传（不注入）；单发直发不重试（_post_with_retry 的
+        重试会掩盖单发挂死证据并使超时等待翻倍 30s×2）；相邻间隔
+        3s。chat 单协议：n 为 OpenAI 协议参数，Anthropic
+        /v1/messages 无 n 参数语义——工单证据仅 chat，msg 侧对
+        未知参数的行为已由 K33 分支 B（统一忽略）与 K35
+        （enable_thinking 拒绝域）覆盖，补 msg 轮并入他例域、不
+        构成 n>1 路径挂死的判定证据。模型名由环境注入。GLM-5.3
+        专用。（不进 smoke 集：新用例首跑观察期）
+        """
+        # K37: 工单原值——n=2（挂死复现参数，055/056 两采集同形态）
+        K37_N = 2
+        # K37: 工单原值原样保留（豁免注入——工单原始请求字段）
+        K37_MAX_TOKENS = 16
+        # K37: 工单原值
+        K37_PROMPT = "说一句话。"
+        # K37: 30s 硬超时（整改要求：n=2 在 30s 内返回 200 或明确
+        # 4xx，不得无限挂起；客户端侧硬超时避免单例拖死整轮——工
+        # 单原客户端 read timeout=300s 拖死整轮的形态不得复现）
+        K37_HARD_TIMEOUT = 30
+        # K37: 2 发对齐工单口径（055/056 两次独立采集，非重试）
+        K37_ROUNDS = 2
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - n=2 请求挂死须限时返回并对齐官"
+            "方（工单 P0：官方 n=2 → 200+1 choice；贵方实测无响应直"
+            "至 300s 超时、重试仍超时；整改要求 30s 内返回 200 或明"
+            "确 4xx、不得无限挂起、客户端硬超时；chat 2 发对齐工单 "
+            "055/056 口径；超时即 FAIL 挂死复现）==="
+        )
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+
+        for round_no in range(1, K37_ROUNDS + 1):
+            if round_no > 1:
+                time.sleep(3)
+            round_tag = f"chat/n=2 第{round_no}/{K37_ROUNDS} 发"
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K37_PROMPT}],
+                {
+                    "endpoint": "/v1/chat/completions",
+                    "round": f"第{round_no}/{K37_ROUNDS} 发",
+                    "n": K37_N,
+                    "stream": False,
+                    "max_tokens": K37_MAX_TOKENS,
+                    "temperature": "(原始未指定——不注入)",
+                    "top_p": "(原始未指定——不注入)",
+                    "seed": "(原始未指定——不注入)",
+                },
+            )
+            # K37: 工单原值原样保留（messages/max_tokens/n）——单
+            # 发直发不重试，requests timeout=30s 硬超时
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K37_PROMPT}],
+                "max_tokens": K37_MAX_TOKENS,
+                "n": K37_N,
+                "stream": False,
+            }
+            started = time.time()
+            try:
+                response = api_client.session.post(
+                    chat_url,
+                    json=payload,
+                    timeout=K37_HARD_TIMEOUT,
+                )
+            except requests.exceptions.Timeout as e:
+                # 断言1：30s 硬超时——超时即挂死缺陷复现（工单形
+                # 态：无响应直至超时；整改明令不得无限挂起；超时
+                # 显式计入失败，纠正工单『探针被记为无效而未计
+                # 失败』漏报形态）
+                test_logger.error(
+                    f"[{round_tag}] {K37_HARD_TIMEOUT}s 硬超时内无任何"
+                    f"响应（挂死形态——请求已发出、无响应字节）: {e}"
+                )
+                pytest.fail(
+                    f"[{round_tag}] 挂死缺陷复现——n=2 请求 "
+                    f"{K37_HARD_TIMEOUT}s 内无响应（requests 超时："
+                    f"{e}；工单形态：n=2 无响应直至 300s 超时、重试"
+                    f"仍超时；整改要求：30s 内返回 200 或明确 4xx，"
+                    f"不得无限挂起——客户端硬超时已按整改要求实施，"
+                    f"超时如实计入失败、不拖死整轮）"
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"[{round_tag}] 请求发送异常（{chat_url}）: {e}"
+                )
+            elapsed = time.time() - started
+            body = response.text
+            test_logger.info(
+                f"[{round_tag}] 真实响应: HTTP "
+                f"{response.status_code}, elapsed={elapsed:.1f}s, "
+                f"body={body[:800]!r}"
+            )
+            # 断言1（补充留痕）：已返回但总时长超 30s 的字节缓流
+            # 形态——观察记录交人工分派（requests 读超时按字节间
+            # 隔计时，非总时长），不作硬断言避免边界抖动误报
+            if elapsed > K37_HARD_TIMEOUT:
+                test_logger.warning(
+                    f"[{round_tag}] 已返回但总耗时 {elapsed:.1f}s 超 "
+                    f"{K37_HARD_TIMEOUT}s（字节缓流未触发读超时——"
+                    f"罕见形态，留观察人工分派）"
+                )
+            # 断言2：对齐官方——HTTP 200（官方 n=2 → 200；4xx=整
+            # 改下限达标但与官方不一致，如实 FAIL 交人工分派）
+            assert response.status_code == 200, (
+                f"[{round_tag}] n=2 官方行为 HTTP 200（返回 1 个 "
+                f"choice），实际 HTTP {response.status_code}: "
+                f"{body[:400]}"
+                f"（若为明确 4xx——整改下限『不无限挂起』达标，"
+                f"但与官方 200 不一致：按官方行为断言（用户指定）"
+                f"如实 FAIL，交人工分派整改分支口径）"
+            )
+            # 断言3：对齐官方——choices 恰 1 个
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                pytest.fail(
+                    f"[{round_tag}] 响应体非 JSON，无法核对 choices: "
+                    f"{body[:300]!r}"
+                )
+            choices = data.get("choices") or []
+            assert len(choices) == 1, (
+                f"[{round_tag}] 官方 n=2 返回恰 1 个 choice，实际 "
+                f"{len(choices)} 个: {body[:400]}"
+            )
+            # 观察记录：finish_reason 与正文——max_tokens=16 工单
+            # 原值极小配额下默认思考计入易空正文+length（K31 域
+            # 形态），非本例『挂死/返回』判据
+            choice = choices[0] if isinstance(choices[0], dict) else {}
+            message = choice.get("message") or {}
+            content = message.get("content") or ""
+            test_logger.info(
+                f"[{round_tag}] 官方对齐核验: choices={len(choices)},"
+                f" finish_reason={choice.get('finish_reason')!r}, "
+                f"正文 {len(str(content).strip())} 字符"
+                f"（观察不计判据——16 配额默认思考计入易空正文+"
+                f"length，属 K31 域形态）"
+            )
+        test_logger.info(
+            f"客户问题整改验证通过: {K37_ROUNDS} 发（工单 055/056 口"
+            f"径）全部在 {K37_HARD_TIMEOUT}s 硬超时内返回，且对齐官方"
+            f" HTTP 200 + 恰 1 个 choice——n=2 路径挂死（无响应直至"
+            f"超时）缺陷未复现，无限挂起形态未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_max_completion_tokens_alias_single_token(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K38 [P0]: 客户问题 - max_completion_tokens 别名单
+        token 请求不挂起（与 tokens 主路径同延迟水平）
+
+        客户问题（工单 A-A01，异常）：
+        - 官方判定通过：max_completion_tokens 别名为单 token
+          请求——被接受并按 max_tokens 语义立即截断返回
+        - 贵方实测：客户原始请求 1 发即挂起——180s 请求超
+          时、无响应（HTTP 0，采集未落盘）
+        - 预期行为（整改）：不得触发 180s 级挂起；需与 tokens
+          主路径同延迟水平
+        本用例按原始请求与预期行为验收（用户指定），chat 单协议
+        2 发（别名轮 1 发对齐工单口径 + 主路径轮 1 发延迟对照基
+        线）：
+        1. 别名轮（工单原样——单 user "Write a long essay
+           about turbines." + max_completion_tokens=1，字段序
+           model/messages/max_completion_tokens，无 stream 字
+           段）：30s 硬超时（requests timeout=30s——对齐 K37
+           先例，远低于工单 180s 挂起水平）内返回，超时即 FAIL
+           挂起缺陷复现；单发直发不重试（重试掩盖挂起证据且
+           超时等待翻倍）
+        2. 别名轮 HTTP 200（官方判定通过）+ 响应体合法 JSON +
+           usage.completion_tokens<=2（别名生效——单 token 截
+           断；字段被丢弃则长文数百 token）
+        3. 主路径轮（同 prompt，max_tokens=1 对照基线）：30s 硬
+           超时内返回 + HTTP 200
+        4. 同延迟水平判据（客户预期）：别名 elapsed <= 主路径
+           elapsed*3+10s（宽容因子——网络抖动；挂起形态由 30s
+           硬超时兜底；字节缓流形态留观察人工分派，K37 口径）
+        观察记录（不计判据）：finish_reason 与正文（1 配额默认
+        思考计入易空正文+length——K31 域形态，非本例判据）、两
+        轮 elapsed 留痕。chat 单协议（max_completion_tokens
+        为 OpenAI Chat Completions 别名字段，Anthropic
+        /v1/messages 无该字段——max_tokens 即协议必需主路径字
+        段，msg 未知参数行为由 K33/K35 覆盖）。模型名由环境注
+        入；thinking/采样参数工单未含——不传（不注入）；相邻
+        间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑观
+        察期）
+        """
+        # K38: 工单 A-A01 原样提示词（单 user 消息）
+        K38_PROMPT = "Write a long essay about turbines."
+        # K38: 工单原值——max_completion_tokens=1（别名字段）
+        K38_MAX_COMPLETION_TOKENS = 1
+        # K38: 主路径对照同值——max_tokens=1（同 prompt 同预算）
+        K38_MAIN_PATH_MAX_TOKENS = 1
+        # K38: 30s 硬超时（对齐 K37 先例；工单挂起形态 180s 无
+        # 响应——远低于该水平即判挂起复现；单发直发不重试）
+        K38_HARD_TIMEOUT = 30
+        # K38: 同延迟水平宽容因子与缓冲（客户预期"与 tokens 主
+        # 路径同延迟水平"——3 倍+10s 容网络抖动）
+        K38_PARITY_FACTOR = 3
+        K38_PARITY_BUFFER = 10
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - max_completion_tokens 别名单"
+            " token 请求不挂起（工单 A-A01：官方判定通过——别名为单"
+            " token 请求立即截断返回；贵方实测 1 发 180s 超时无响应；"
+            "预期不挂起、与 tokens 主路径同延迟水平；chat 2 发=别名"
+            "轮 1 发工单口径+主路径轮 1 发延迟对照；30s 硬超时，超"
+            "时即 FAIL 挂起复现）==="
+        )
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+
+        def send_leg(
+            leg_tag: str, token_field: str, token_value: int
+        ) -> Dict[str, Any]:
+            """K38: 单发直发（不重试——重试掩盖挂起证据且超时
+            等待翻倍，K37 口径），30s 硬超时；返回 {data,
+            elapsed}（超时/异常/非 200/非 JSON 即时 FAIL）"""
+            TestLogger.log_request(
+                test_logger,
+                [{"role": "user", "content": K38_PROMPT}],
+                {
+                    "endpoint": "/v1/chat/completions",
+                    "round": leg_tag,
+                    token_field: token_value,
+                    "stream": "(工单未带——不传)",
+                    "temperature": "(原始未指定——不注入)",
+                    "top_p": "(原始未指定——不注入)",
+                    "seed": "(原始未指定——不注入)",
+                },
+            )
+            # K38: 工单原样 payload——别名轮字段序 model/messages/
+            # max_completion_tokens（A-A01 原序），主路径轮同序
+            # 以 max_tokens 替换（对照口径唯一差异）；stream/
+            # 采样参数工单未带——不传
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K38_PROMPT}],
+                token_field: token_value,
+            }
+            started = time.time()
+            try:
+                response = api_client.session.post(
+                    chat_url,
+                    json=payload,
+                    timeout=K38_HARD_TIMEOUT,
+                )
+            except requests.exceptions.Timeout as e:
+                # 断言1：30s 硬超时——超时即挂起缺陷复现（工单
+                # 形态：180s 无响应、HTTP 0）
+                test_logger.error(
+                    f"[{leg_tag}] {K38_HARD_TIMEOUT}s 硬超时内无任何"
+                    f"响应（挂起形态——请求已发出、无响应字节）: {e}"
+                )
+                pytest.fail(
+                    f"[{leg_tag}] 挂起缺陷复现——{token_field}="
+                    f"{token_value} 请求 {K38_HARD_TIMEOUT}s 内无响应"
+                    f"（requests 超时：{e}；工单 A-A01 形态："
+                    f"max_completion_tokens=1 单发 180s 超时无响应"
+                    f"（HTTP 0）；预期行为：不得触发 180s 级挂起"
+                    f"——超时如实计入失败、不拖死整轮）"
+                )
+            except Exception as e:
+                pytest.fail(
+                    f"[{leg_tag}] 请求发送异常（{chat_url}）: {e}"
+                )
+            elapsed = time.time() - started
+            body = response.text
+            test_logger.info(
+                f"[{leg_tag}] 真实响应: HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s, body={body[:800]!r}"
+            )
+            # 断言1（补充留痕）：字节缓流形态——已返回但总时长超
+            # 30s（requests 读超时按字节间隔计时，非总时长），观
+            # 察交人工分派（K37 口径）
+            if elapsed > K38_HARD_TIMEOUT:
+                test_logger.warning(
+                    f"[{leg_tag}] 已返回但总耗时 {elapsed:.1f}s 超 "
+                    f"{K38_HARD_TIMEOUT}s（字节缓流未触发读超时——"
+                    f"罕见形态，留观察人工分派）"
+                )
+            # 断言2：HTTP 200（官方判定通过——别名单 token 请求
+            # 被接受；4xx=别名被拒，与官方通过口径不一致）
+            assert response.status_code == 200, (
+                f"[{leg_tag}] 官方判定通过（max_completion_tokens 别"
+                f"名为单 token 请求被接受），实际 HTTP "
+                f"{response.status_code}: {body[:400]}"
+            )
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError:
+                pytest.fail(
+                    f"[{leg_tag}] 响应体非 JSON: {body[:300]!r}"
+                )
+            return {"data": data, "elapsed": elapsed}
+
+        # ── 轮一：别名轮（工单 A-A01 原样，1 发对齐工单口径）──
+        alias_tag = (
+            "chat/别名轮（max_completion_tokens=1 工单原样）"
+        )
+        alias_r = send_leg(
+            alias_tag, "max_completion_tokens", K38_MAX_COMPLETION_TOKENS
+        )
+        alias_data = alias_r["data"]
+        alias_elapsed = alias_r["elapsed"]
+        choices = alias_data.get("choices") or []
+        assert choices, f"[{alias_tag}] 响应缺少 choices: {alias_data!r}"
+        # 断言3：别名生效——usage.completion_tokens<=2（单 token
+        # 截断；字段被丢弃则长文数百 token；usage 未携带/非数值
+        # 时判据降级为延迟判据并留观察，不因缺 usage 误报）
+        alias_usage = alias_data.get("usage") or {}
+        alias_ct = alias_usage.get("completion_tokens")
+        if isinstance(alias_ct, (int, float)):
+            assert alias_ct <= 2, (
+                f"[{alias_tag}] 别名未生效——max_completion_tokens=1 "
+                f"未按单 token 截断（completion_tokens={alias_ct}，"
+                f"疑似字段被丢弃后长文输出；官方判定通过口径：别名"
+                f"为单 token 请求立即截断）"
+            )
+        else:
+            test_logger.info(
+                f"[{alias_tag}] 观察: 响应未携带数值型 usage."
+                f"completion_tokens——别名截断判据降级为延迟判据"
+            )
+        # 观察记录：finish_reason 与正文（1 配额默认思考计入易空
+        # 正文+length——K31 域形态，非本例判据）
+        choice0 = choices[0] if isinstance(choices[0], dict) else {}
+        content0 = (choice0.get("message") or {}).get("content") or ""
+        test_logger.info(
+            f"[{alias_tag}] finish_reason="
+            f"{choice0.get('finish_reason')!r}, 正文 "
+            f"{len(str(content0).strip())} 字符, "
+            f"completion_tokens={alias_ct!r}, "
+            f"elapsed={alias_elapsed:.1f}s"
+            f"（观察不计判据——1 配额默认思考计入易空正文+"
+            f"length，属 K31 域形态）"
+        )
+
+        time.sleep(3)
+
+        # ── 轮二：主路径轮（同 prompt max_tokens=1 对照基线）──
+        main_tag = "chat/主路径轮（max_tokens=1 对照基线）"
+        main_r = send_leg(main_tag, "max_tokens", K38_MAIN_PATH_MAX_TOKENS)
+        main_elapsed = main_r["elapsed"]
+
+        # ── 断言4：同延迟水平（客户预期"与 tokens 主路径同延迟
+        # 水平"——3 倍+10s 容网络抖动；挂起形态已由 30s 硬超时
+        # 兜底，两判据互补）──
+        parity_limit = K38_PARITY_FACTOR * main_elapsed + K38_PARITY_BUFFER
+        assert alias_elapsed <= parity_limit, (
+            f"[{alias_tag}] 别名路径延迟 {alias_elapsed:.1f}s 超同延迟"
+            f"水平宽容线（主路径 {main_elapsed:.1f}s × "
+            f"{K38_PARITY_FACTOR} + {K38_PARITY_BUFFER}s = "
+            f"{parity_limit:.1f}s）——预期行为：与 tokens 主路径同延"
+            f"迟水平（别名轮 elapsed={alias_elapsed:.1f}s）"
+        )
+        test_logger.info(
+            f"客户问题整改验证通过: 别名单 token 请求未挂起——别名"
+            f"轮 {alias_elapsed:.1f}s、主路径轮 {main_elapsed:.1f}s"
+            f"（同延迟水平：别名 <= 主路径×{K38_PARITY_FACTOR}+"
+            f"{K38_PARITY_BUFFER}s），30s 硬超时内全部返回且别名按"
+            f"单 token 截断——max_completion_tokens 别名 180s 级"
+            f"挂起缺陷未复现"
         )
