@@ -1482,6 +1482,56 @@ TEST_CATEGORIES = {
                 "max_completion_tokens_alias_single_token",
                 "P0",
             ),
+            (
+                "K39",
+                "历史 assistant 消息 reasoning/reasoning_content "
+                "双字段共存兼容核验（同值/异值 × 两字段序）",
+                "客户问题（工单 AGDC2-47，接口协议）：多轮对话历史 "
+                "assistant 消息同时携带 reasoning 与 reasoning_"
+                "content（合法 JSON 两个不同键）即 HTTP 400、错误码 "
+                "json_parse_error、提示 duplicate field reasoning_"
+                "content——两字段值相同或不同均报错；单字段（仅 "
+                "reasoning 或仅 reasoning_content）调用成功；客户"
+                "生产调用大量报错。官方 API 验证结论（AGDC2-47 测"
+                "试资料，2026-11-05 Kimi K3 官方端点）：同一请求形"
+                "态 14 组合（字段变体 × 默认/关闭思考）全部 HTTP "
+                "200、finish_reason=stop、回答 3——双字段共存不必"
+                "然导致错误（含双字段同值/异值 × 两字段序全部 "
+                "200）。预期行为（整改）：历史消息同时存在 "
+                "reasoning 与 reasoning_content，无论两字段值相同"
+                "或不同、哪个字段在前，均不得 400，应正常请求成"
+                "功。本用例按官方验证请求原样复现（用户指定：只测"
+                "双字段共存场景——单字段/无字段场景不测；调整两字"
+                "段顺序 × 覆盖同值/异值），chat 单协议 4 发（相邻"
+                "间隔 3s），同一三消息结构（user What is 1 + 1? "
+                "Reply with only the number. / assistant "
+                "content=2 携双思考字段 / user Add 1 to the "
+                "previous answer. Reply with only the number.），"
+                "请求体官方验证原样（字段序 model/stream/max_"
+                "tokens=512/messages，stream=false，thinking 默认"
+                "模式不传）：同值/reasoning 在前、同值/reasoning_"
+                "content 在前（两字段均 1 + 1 = 2.）、异值/"
+                "reasoning 在前、异值/reasoning_content 在前"
+                "（reasoning=Compute the sum.、reasoning_content="
+                "The answer is two.）。硬断言每发：HTTP 200（400 "
+                "json_parse_error/duplicate field reasoning_"
+                "content=缺陷复现）+ 响应体合法 + choices 非空 + "
+                "正文非空（空正文+finish=length 留观察——512 预算"
+                "默认思考计入耗尽属 K31 域形态；空正文且 finish≠"
+                "length 即 FAIL）。finish_reason/回答含 3（官方"
+                "验证回答为 3——生成质量非本例判据）留观察。显式关"
+                "闭思考模式不测（官方双模式均 200 证明字段兼容性"
+                "与模式正交；K35 已确立网关对关闭思考 400 拒绝口"
+                "径——另一缺陷域）；chat 单协议（Anthropic /v1/"
+                "messages 无 reasoning 字段形态——思考经 thinking "
+                "content block 承载，msg 未知参数行为由 K33/K35 "
+                "覆盖）；模型名由环境注入；thinking/采样参数官方"
+                "验证请求未含——不注入；适用 GLM-5.3 与 Kimi K3"
+                "（双 marker GLM53+KimiK3——工单缺陷经 Kimi K3 官"
+                "方端点验证，请求同构无模型分支）",
+                "reasoning_dual_field_history_accepted",
+                "P0",
+            ),
         ],
     },
 }

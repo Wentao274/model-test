@@ -78,6 +78,7 @@
 | K36 | finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） | 客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=stop（20_chat_stream_002 / 20_chat_ms_001 / 20_chat_structured_002 三例）；贵方实测同一请求渠道返回 finish_reason=length，官方返回 stop（三例一致复现）；整改建议：对齐 finish_reason 判定——思考 token 不应把正常结束的请求判成 length 截断；按官方行为进行预期断言（用户指定）；适用 GLM-5.3 | 流式（SSE 收集终止字段与正文增量）、多段（单条 user 消息 content 数组多段文本）、结构化（chat response_format=json_object / msg 无该参数按 K31 先例 prompt 引导）三种请求形态 × chat+msg 双协议各 1 发（共 6 发）；硬断言每形态 × 每协议：终止语义对齐官方——chat finish_reason=='stop' / msg stop_reason=='end_turn'（Anthropic 协议自然结束语义——msg 侧的 stop 等价；length/max_tokens=缺陷复现：思考 token 计入判定把正常结束的请求误判截断）+ 正文非空（正常结束的佐证；正文空+length 为 K31 思考耗光形态，非本例口径）；max_tokens=512（工单未附原始 payload——适中值：正文远低于配额而计入思考的实现易触顶误判，对判定语义敏感且不致正文真实截断）；thinking/采样参数未指定不传不注入；相邻间隔 3s | P1 |
 | K37 | n=2 请求挂死限时返回与官方一致（单 choice） | 客户问题（工单 P0，n=2 请求挂死）：官方行为原厂 n=2 HTTP 200（返回 1 个 choice）；贵方实测无响应直至超时——参数电池 3/3 轮 TimeoutError（已重试 1 次仍超时）、协议电池 2 例 ReadTimeout、直连 300s 超时，挂死同时导致模块 4 的 n=2 探针被记为『无效』而未计失败；整改建议：定位 n=2 路径阻塞点（疑似上游对 n>1 未返回/连接不复位）；要求 n=2 在 30s 内返回 200 或明确 4xx、不得无限挂起，客户端侧加硬超时；适用 GLM-5.3 | chat 单协议 2 发对齐工单口径（055/056 两次独立采集，非重试；n 为 OpenAI 协议参数、msg 无 n 语义——工单证据仅 chat，msg 未知参数行为由 K33/K35 覆盖）；按官方行为断言（用户指定）；硬断言每发：①30s 硬超时——单发直发不重试（requests timeout=30s，重试掩盖挂死证据且超时等待翻倍），超时即 FAIL 挂死缺陷复现（纠正工单『探针被记为无效而未计失败』漏报形态）②HTTP 200（4xx=整改下限『明确 4xx』达标但与官方不一致，如实 FAIL 交人工分派分支口径——K35 官方一致分支同口径）③choices 恰 1 个（官方行为）；工单原值原样保留（"说一句话。"/max_tokens=16/n=2——豁免注入）；finish_reason/正文留观察（16 配额默认思考计入易空正文+length——K31 域形态非本例判据）；elapsed 留痕（requests 读超时按字节间隔计时，字节缓流形态留观察人工分派）；thinking/采样参数未含不注入；相邻间隔 3s | P0 |
 | K38 | max_completion_tokens 别名单 token 请求不挂起（与 tokens 主路径同延迟水平） | 客户问题（工单 A-A01，异常）：官方判定通过——max_completion_tokens 别名为单 token 请求，被接受并按 max_tokens 语义立即截断返回；贵方实测客户原始请求 1 发即挂起——180s 请求超时、无响应（HTTP 0，采集未落盘）；预期行为（整改）：不得触发 180s 级挂起；需与 tokens 主路径同延迟水平；适用 GLM-5.3 | chat 单协议 2 发（别名轮工单原样 1 发对齐工单口径 + 主路径轮同 prompt max_tokens=1 对照基线 1 发；max_completion_tokens 为 OpenAI 别名字段、Anthropic /v1/messages 无该字段——max_tokens 即协议必需主路径字段，msg 未知参数行为由 K33/K35 覆盖）；别名轮请求体工单原样（单 user "Write a long essay about turbines."、max_completion_tokens=1，字段序 model/messages/max_completion_tokens，无 stream 字段），模型名由环境注入，采样参数原始未指定——保持不注入；单发直发不重试（重试掩盖挂起证据且超时等待翻倍），requests timeout=30s 硬超时；硬断言：别名轮 30s 内返回（超时即 FAIL 挂起复现——工单 180s 无响应形态）+ HTTP 200（官方判定通过）+ 响应体合法 + usage.completion_tokens<=2（别名生效——单 token 截断；字段被丢弃则长文数百 token，usage 未携带时判据降级为延迟判据留观察）；主路径轮 30s 内返回 + 200；同延迟水平判据：别名 elapsed <= 主路径 elapsed×3+10s（容网络抖动）；finish_reason/正文留观察（1 配额默认思考计入易空正文+length——K31 域形态非本例判据）；字节缓流形态留观察人工分派（K37 口径）；相邻间隔 3s | P0 |
+| K39 | 历史 assistant 消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 两字段序） | 客户问题（工单 AGDC2-47，接口协议）：官方行为（AGDC2-47 测试资料·官方 API 验证结论，2026-11-05 Kimi K3 官方端点）——同一历史 assistant 消息同时包含 reasoning 与 reasoning_content，无论内容相同或不同、哪个字段在前均接受，14 组合（字段变体 × 默认/关闭思考）全部 HTTP 200、finish_reason=stop、回答 3；贵方实测：双字段共存即 HTTP 400、错误码 json_parse_error、提示 duplicate field reasoning_content——两字段值相同或不同均报错，单字段（仅 reasoning 或仅 reasoning_content）调用成功，客户生产调用产生较多报错；预期行为（整改）：双字段共存无论值相同或不同、字段顺序如何均不得 400，应正常请求成功；适用 GLM-5.3 与 Kimi K3（双 marker GLM53+KimiK3，用户指定双模型覆盖） | chat 单协议 4 发（相邻间隔 3s；用户指定：只测双字段共存场景——单字段/无字段场景不测；调整两字段顺序 × 覆盖同值/异值），同一三消息结构（AGDC2-47 官方验证请求原样：user "What is 1 + 1? Reply with only the number." / assistant content="2"+双思考字段 / user "Add 1 to the previous answer. Reply with only the number."），请求体官方验证原样（字段序 model/stream/max_tokens=512/messages，stream=false，thinking 默认模式不传），模型名由环境注入，采样参数官方验证请求未含——保持不注入；场景：同值/reasoning 在前、同值/reasoning_content 在前（两字段均 "1 + 1 = 2."）、异值/reasoning 在前、异值/reasoning_content 在前（reasoning="Compute the sum."、reasoning_content="The answer is two."）；硬断言每发（任一失败即 FAIL 报告场景序）：HTTP 200（400 json_parse_error/duplicate field reasoning_content=缺陷复现——同条消息两思考字段被解析层视为同字段别名而拒绝）+ 响应体合法 JSON + choices 非空 + 正文非空（空正文+finish=length 留观察——512 预算默认思考计入耗尽属 K31 域形态；空正文且 finish≠length 即 FAIL）；finish_reason/回答含 3（官方验证回答为 3——生成质量非本例判据）/正文长度留观察；关闭思考模式不测（官方双模式均 200 证明字段兼容性与模式正交；K35 已确立网关对关闭思考 400 拒绝口径——另一缺陷域）；chat 单协议（Anthropic /v1/messages 无 reasoning 字段形态——思考经 thinking content block 承载，msg 未知参数行为由 K33/K35 覆盖） | P0 |
 
 ## 运行方式
 
@@ -3209,4 +3210,87 @@ reason、logprobs 有无、耗时——max_tokens=32 小配额下默认思考计
   径同延迟水平』，正文质量不判（K31 域另测）
 - marker：`GLM53`（K 套件按模型分组标记；工单未指定模型，按新
   用例惯例归 GLM-5.3）
+- 不进 smoke 集：新用例首跑观察期
+
+### test_reasoning_dual_field_history_accepted (K39)
+
+**背景**：
+- 客户问题（工单 AGDC2-47 · 历史 assistant 消息 reasoning/reasoning_content 双字段共存 400，接口协议）：
+  - 官方行为（AGDC2-47 测试资料·官方 API 验证结论，2026-11-05 Kimi K3 官方端点）：同一历史 assistant 消息同时包含 `reasoning` 与 `reasoning_content`，无论内容相同或不同、哪个字段在前，官方 API 均接受——14 组合（字段变体 × 默认/关闭思考）全部 HTTP 200、`finish_reason=stop`、回答 3，无 400/`json_parse_error`/`duplicate field`
+  - 贵方实测：双字段共存即 HTTP 400、错误码 `json_parse_error`、提示 `duplicate field reasoning_content`——两字段值相同或不同均报错；仅 reasoning 或仅 reasoning_content 单字段调用成功；客户生产调用产生较多报错
+  - 预期行为（整改）：历史消息同时存在 reasoning 与 reasoning_content，无论两字段值相同或不同，均不得 400 响应，应正常请求成功
+- 原始请求形态（AGDC2-47 官方验证请求原样）：
+  `{"model":"...","stream":false,"max_tokens":512,"messages":[{"role":"user","content":"What is 1 + 1? Reply with only the number."},{"role":"assistant","content":"2","reasoning":"...","reasoning_content":"..."},{"role":"user","content":"Add 1 to the previous answer. Reply with only the number."}]}`
+- 适用模型：GLM-5.3 与 Kimi K3（双 marker `GLM53` + `KimiK3`，用户指定双模型覆盖——工单缺陷经 Kimi K3 官方端点验证，字段解析为接口层通用逻辑，请求同构无模型分支）
+
+**测试断言点**（每发，任一失败即 FAIL 并报告场景序）：
+1. HTTP 200：双字段共存历史被正常接受（400 `json_parse_error`/`duplicate field reasoning_content` = 缺陷复现）
+2. 响应体合法 JSON 且 choices 非空
+3. 正文非空（空正文 + finish=length 留观察——K31 域豁免；空正文且 finish≠length 即 FAIL）
+
+**请求构造**（chat 单协议 4 发，相邻间隔 3s；用户指定：只测双字段共存场景——单字段/无字段场景不测；调整两字段顺序 × 覆盖两字段值相同和不同）：
+- 端点：`{api_prefix}/chat/completions`，非流式（`stream=false`）
+- 同一三消息结构（官方验证请求原样）：user "What is 1 + 1? Reply with only the number." / assistant `content="2"` 携双思考字段 / user "Add 1 to the previous answer. Reply with only the number."
+- 请求体字段序官方验证原样：model/stream/max_tokens=512/messages；模型名由环境注入；thinking 默认模式不传；采样参数未含——不注入
+- 场景矩阵（assistant 消息内双思考字段键序按场景——dict 插入序即 JSON 上送序）：
+  | 场景 | reasoning | reasoning_content | 键序 |
+  |------|-----------|-------------------|------|
+  | 1 同值/reasoning 在前 | "1 + 1 = 2." | "1 + 1 = 2." | reasoning 先 |
+  | 2 同值/reasoning_content 在前 | "1 + 1 = 2." | "1 + 1 = 2." | reasoning_content 先 |
+  | 3 异值/reasoning 在前 | "Compute the sum." | "The answer is two." | reasoning 先 |
+  | 4 异值/reasoning_content 在前 | "Compute the sum." | "The answer is two." | reasoning_content 先 |
+
+**判定矩阵**：
+| 形态 | 判定 |
+|------|------|
+| HTTP 400（json_parse_error/duplicate field reasoning_content） | FAIL——缺陷复现（工单 AGDC2-47 形态） |
+| 其他非 200 | FAIL |
+| HTTP 200 + choices 非空 + 正文非空 | PASS——双字段共存被兼容接受 |
+| HTTP 200 + 正文空 + finish=length | 观察留痕（warning）——512 预算思考计入耗尽的 K31 域形态，非本例判据 |
+| HTTP 200 + 正文空 + finish≠length | FAIL——非截断的空正文为异常形态 |
+| 回答不含 3 | 观察留痕——生成质量非本例判据 |
+| 发送异常（连接错误等） | FAIL |
+
+**设计决策记录**：
+- **P0**（K25 同域先例——历史思考字段兼容；客户生产大量报错）
+- **双 marker `GLM53` + `KimiK3`（用户指定双模型覆盖）**：工
+  单缺陷经 Kimi K3 官方端点验证——字段解析为接口层通用逻辑
+  （与模型无关），同时适用 GLM-5.3 与 Kimi K3；请求同构（模
+  型名由环境注入），无模型分支（对照 K13 双标记先例）；
+  pytest.ini KimiK3 枚举同步收录 K39
+- **只测双字段共存场景（用户指定）**：单字段（仅 reasoning/仅
+  reasoning_content）客户实测已成功、官方亦 200——无缺陷维度，
+  不重复验证；无字段场景同理由不测
+- **字段顺序 × 同值/异值全矩阵 4 发**：客户报错与值异同无关
+  （同/异值均 400），但字段序与值异同为解析层别名处理的两个
+  潜在分支——官方验证对四组合全 200，回归须全覆盖；键序经
+  dict 插入序控制（reasoning 在前/reasoning_content 在前）
+- **请求体官方验证原样**（三消息结构/stream=false/max_tokens=
+  512/字段序）——与 AGDC2-47 测试资料保存的请求逐字段一致，
+  便于对客户实际端点对照复现
+- **关闭思考模式不测**：官方验证双模式（默认/关闭）均 200 证
+  明字段兼容性与思考模式正交；K35 已确立本网关对关闭思考
+  400 拒绝口径——该模式属另一缺陷域，混入将判据冲突
+- **chat 单协议**：reasoning/reasoning_content 为 chat 历史
+  消息字段，Anthropic /v1/messages 协议无该字段形态（思考经
+  thinking content block 承载）——msg 未知参数行为由 K33 分支
+  B 与 K35 覆盖（K37/K38 同理口径）
+- **正文非空判据带 K31 域豁免**：512 预算默认思考计入可能耗
+  尽（空正文+length）——该形态 warning 留观交人工分派，不判
+  失败；非 length 的空正文（200 无截断却无正文）属异常如实
+  FAIL
+- **回答含 3 留观察**：官方验证回答为 3，但生成质量非本例
+  判据（K37/K25 域分离先例）——多轮上下文是否被真实处理由
+  200+正文非空保障
+
+**观察记录（不计判据，留日志）**：每发真实响应体前 800 字符、
+elapsed、finish_reason、正文长度、回答是否含 3、K31 域空正文
+warning
+
+**注意事项**：
+- 双字段共存是 JSON 合法形态（两个不同键各出现一次），非同名
+  键重复——与 K25（同名键字面重复）为相邻但不同的缺陷维度
+- marker：`GLM53` + `KimiK3`（K 套件按模型分组标记；用户指定
+  双模型覆盖——工单缺陷经 Kimi K3 官方端点验证，同时适用
+  GLM-5.3 与 Kimi K3，请求同构无模型分支）
 - 不进 smoke 集：新用例首跑观察期

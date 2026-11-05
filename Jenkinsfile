@@ -51,7 +51,7 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K38，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K39，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
         booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
@@ -196,7 +196,8 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_enable_thinking_param_rejection',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_finish_reason_stop_semantics',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_n2_request_hang_timeout',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_max_completion_tokens_alias_single_token'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_max_completion_tokens_alias_single_token',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_dual_field_history_accepted'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

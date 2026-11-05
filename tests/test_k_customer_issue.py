@@ -3,7 +3,7 @@ K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
- K37、K38 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36 为 P1，K33/K34 为 P2。
+ K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -822,6 +822,47 @@ K. 客户问题复现测试
   型名由环境注入；thinking/采样参数工单未含——不传（不注
   入）；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例
   首跑观察期）
+- K39: 历史 assistant 消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 两字段序） [P0]
+  客户问题（工单 AGDC2-47，接口协议）：多轮对话历史 assistant
+  消息同时携带 reasoning 与 reasoning_content（合法 JSON 两个
+  不同键——部分客户端/上游分别使用两字段名，历史拼接时共
+  存）即 HTTP 400、错误码 json_parse_error、提示 duplicate
+  field reasoning_content——两字段值相同或不同均报错；单字
+  段（仅 reasoning 或仅 reasoning_content）调用成功；客户生
+  产调用大量报错。官方 API 验证结论（AGDC2-47 测试资料，
+  2026-11-05 Kimi K3 官方端点）：同一请求形态 14 组合（字段
+  变体 × 默认/关闭思考）全部 HTTP 200、finish_reason=stop、
+  回答 3——双字段共存不必然导致错误（含双字段同值/异值 ×
+  两字段序全部 200）。预期行为（整改）：历史消息同时存在
+  reasoning 与 reasoning_content，无论两字段值相同或不同、
+  哪个字段在前，均不得 400，应正常请求成功。本用例按官方验
+  证请求原样复现（用户指定：只测双字段共存场景，不测单字段/
+  无字段；调整两字段顺序 × 覆盖同值/异值），chat 单协议 4
+  发（相邻间隔 3s），同一三消息结构（user "What is 1 + 1?
+  Reply with only the number." / assistant content="2"+双
+  思考字段 / user "Add 1 to the previous answer. Reply with
+  only the number."），请求体官方验证原样（字段序 model/
+  stream/max_tokens=512/messages，stream=false，thinking 默
+  认模式不传）：同值/reasoning 在前、同值/reasoning_content
+  在前（两字段均 "1 + 1 = 2."）、异值/reasoning 在前、异值/
+  reasoning_content 在前（reasoning="Compute the sum."、
+  reasoning_content="The answer is two."）。硬断言每发：HTTP
+  200（400 json_parse_error/duplicate field reasoning_
+  content=缺陷复现）+ 响应体合法 + choices 非空 + 正文非空
+  （空正文+finish=length 留观察——512 预算默认思考计入耗尽
+  属 K31 域形态；空正文且 finish≠length 即 FAIL）。finish_
+  reason/回答含 3（官方验证回答为 3——生成质量非本例判据）/
+  正文长度留观察。显式关闭思考模式不测（官方双模式均 200 证
+  明字段兼容性与模式正交；K35 已确立网关对关闭思考 400 拒
+  绝口径——另一缺陷域）；chat 单协议（reasoning/
+  reasoning_content 为 chat 历史消息字段，Anthropic
+  /v1/messages 无该字段形态——思考经 thinking content block
+  承载，msg 未知参数行为由 K33/K35 覆盖）；模型名由环境注
+  入；thinking/采样参数官方验证请求未含——不传（不注入）；
+  相邻间隔 3s。双 marker GLM53 + KimiK3——工单缺陷经 Kimi
+  K3 官方端点验证，字段解析为接口层通用逻辑（与模型无关），
+  同时适用 GLM-5.3 与 Kimi K3（请求同构，模型名由环境注入，
+  无模型分支）。（不进 smoke 集：新用例首跑观察期；4 请求）
 """
 
 import base64
@@ -12152,4 +12193,233 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"{K38_PARITY_BUFFER}s），30s 硬超时内全部返回且别名按"
             f"单 token 截断——max_completion_tokens 别名 180s 级"
             f"挂起缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.KimiK3
+    @pytest.mark.p0
+    def test_reasoning_dual_field_history_accepted(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K39 [P0]: 客户问题 - 历史 assistant 消息 reasoning/
+        reasoning_content 双字段共存兼容接受
+
+        客户问题（工单 AGDC2-47，接口协议）：
+        - 官方行为（AGDC2-47 测试资料·官方 API 验证结论，
+          2026-11-05 Kimi K3 官方端点）：同一历史 assistant 消息
+          同时包含 reasoning 与 reasoning_content，无论内容相同
+          或不同、哪个字段在前，官方 API 均接受——14 组合（字段
+          变体 × 默认/关闭思考）全部 HTTP 200、finish_reason=
+          stop、回答 3，无 400/json_parse_error/duplicate field
+        - 贵方实测：双字段共存即 HTTP 400、错误码
+          json_parse_error、提示 duplicate field reasoning_
+          content——两字段值相同或不同均报错；仅 reasoning 或仅
+          reasoning_content 单字段调用成功；客户生产调用产生
+          较多报错
+        - 预期行为（整改）：历史消息同时存在 reasoning 与
+          reasoning_content，无论两字段值相同或不同，均不得
+          400 响应，应正常请求成功
+        本用例按官方验证请求原样复现（用户指定：只测双字段共存
+        场景——单字段/无字段场景不测；调整两字段顺序 × 覆盖
+        两字段值相同和不同），chat 单协议 4 发（相邻间隔 3s），
+        同一三消息结构（user "What is 1 + 1? Reply with only
+        the number." / assistant content="2"+双思考字段 / user
+        "Add 1 to the previous answer. Reply with only the
+        number."），请求体官方验证原样（字段序 model/stream/
+        max_tokens/messages，stream=false、max_tokens=512，
+        thinking 默认模式不传）：
+        1. 同值/reasoning 在前（两字段均 "1 + 1 = 2."）
+        2. 同值/reasoning_content 在前
+        3. 异值/reasoning 在前（reasoning="Compute the sum."、
+           reasoning_content="The answer is two."）
+        4. 异值/reasoning_content 在前
+        硬断言每发：HTTP 200（400 json_parse_error/duplicate
+        field reasoning_content=缺陷复现——同条消息两思考字段
+        被解析层视为同字段别名而拒绝）+ 响应体合法 JSON +
+        choices 非空 + 正文非空（空正文+finish=length 留观察
+        ——512 预算默认思考计入耗尽属 K31 域形态非本例判据；
+        空正文且 finish≠length 即 FAIL）。
+        观察记录（不计判据）：finish_reason、回答是否含 3（官
+        方验证回答为 3——生成质量非本例判据）、正文长度。显式
+        关闭思考模式不测（官方双模式均 200 证明字段兼容性与模
+        式正交；K35 已确立网关对关闭思考 400 拒绝口径——另一
+        缺陷域）。chat 单协议（reasoning/reasoning_content 为
+        chat 历史消息字段，Anthropic /v1/messages 无该字段形
+        态——思考经 thinking content block 承载，msg 未知参数
+        行为由 K33/K35 覆盖）。模型名由环境注入；thinking/采
+        样参数官方验证请求未含——不传（不注入）；双 marker
+        GLM53 + KimiK3——工单缺陷经 Kimi K3 官方端点验证，字
+        段解析为接口层通用逻辑（与模型无关），同时适用
+        GLM-5.3 与 Kimi K3（请求同构，无模型分支）。（不进
+        smoke 集：新用例首跑观察期）
+        """
+        # K39: 三消息结构（AGDC2-47 官方验证请求原样——user 提
+        # 问/assistant content=2 携双思考字段/user 追问）
+        K39_Q1 = "What is 1 + 1? Reply with only the number."
+        K39_Q2 = (
+            "Add 1 to the previous answer. Reply with only the "
+            "number."
+        )
+        K39_ASSISTANT_CONTENT = "2"
+        # K39: 官方验证原始口径（4 发一致：stream=false、
+        # max_tokens=512）
+        K39_MAX_TOKENS = 512
+        # K39: 双字段同值内容（官方验证原样）
+        K39_SAME_VALUE = "1 + 1 = 2."
+        # K39: 双字段异值内容（官方验证原样）
+        K39_DIFF_REASONING = "Compute the sum."
+        K39_DIFF_REASONING_CONTENT = "The answer is two."
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 历史 assistant 消息 reasoning"
+            "/reasoning_content 双字段共存兼容（工单 AGDC2-47：双字段"
+            "共存即 400 json_parse_error duplicate field reasoning_"
+            "content、同值/异值均报错、单字段正常；官方 API 验证同形态"
+            " 14 组合全部 200；预期双字段共存无论值同异、字段顺序均正"
+            "常成功；chat 4 发=同值/异值 × reasoning/reasoning_"
+            "content 在前，单字段场景不测（用户指定））==="
+        )
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+
+        # K39: 场景矩阵（用户指定——只测双字段共存：两字段顺序 ×
+        # 同值/异值）；reasoning_first 控制双思考字段键序（dict
+        # 插入序即 JSON 上送序）
+        scenarios = (
+            ("同值/reasoning 在前", K39_SAME_VALUE, K39_SAME_VALUE, True),
+            (
+                "同值/reasoning_content 在前",
+                K39_SAME_VALUE,
+                K39_SAME_VALUE,
+                False,
+            ),
+            (
+                "异值/reasoning 在前",
+                K39_DIFF_REASONING,
+                K39_DIFF_REASONING_CONTENT,
+                True,
+            ),
+            (
+                "异值/reasoning_content 在前",
+                K39_DIFF_REASONING,
+                K39_DIFF_REASONING_CONTENT,
+                False,
+            ),
+        )
+
+        for idx, (label, reasoning_val, rc_val, reasoning_first) in enumerate(
+            scenarios, 1
+        ):
+            if idx > 1:
+                time.sleep(3)
+            tag = f"chat/场景{idx}（{label}）"
+            assistant_msg: Dict[str, Any] = {
+                "role": "assistant",
+                "content": K39_ASSISTANT_CONTENT,
+            }
+            if reasoning_first:
+                assistant_msg["reasoning"] = reasoning_val
+                assistant_msg["reasoning_content"] = rc_val
+            else:
+                assistant_msg["reasoning_content"] = rc_val
+                assistant_msg["reasoning"] = reasoning_val
+            TestLogger.log_request(
+                test_logger,
+                [
+                    {"role": "user", "content": K39_Q1},
+                    assistant_msg,
+                    {"role": "user", "content": K39_Q2},
+                ],
+                {
+                    "endpoint": "/v1/chat/completions",
+                    "scenario": label,
+                    "max_tokens": K39_MAX_TOKENS,
+                    "stream": False,
+                    "thinking": "(默认模式——不传)",
+                    "temperature": "(原始未指定——不注入)",
+                    "top_p": "(原始未指定——不注入)",
+                    "seed": "(原始未指定——不注入)",
+                },
+            )
+            # K39: 官方验证请求原样（字段序 model/stream/max_tokens/
+            # messages；assistant 内双思考字段键序按场景——dict
+            # 插入序即 JSON 序）；thinking/采样参数未含——不传
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "stream": False,
+                "max_tokens": K39_MAX_TOKENS,
+                "messages": [
+                    {"role": "user", "content": K39_Q1},
+                    assistant_msg,
+                    {"role": "user", "content": K39_Q2},
+                ],
+            }
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    chat_url, payload, stream=False
+                )
+            except Exception as e:
+                pytest.fail(f"[{tag}] 请求发送异常（{chat_url}）: {e}")
+            elapsed = time.time() - started
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            test_logger.info(
+                f"[{tag}] 真实响应: HTTP {response.status_code}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"body={response.text[:800]!r}"
+            )
+            # 断言1：HTTP 200——400 json_parse_error/duplicate
+            # field reasoning_content 即缺陷复现（工单形态：同条
+            # 消息两思考字段被解析层视为同字段别名而拒绝）
+            assert response.status_code == 200, (
+                f"[{tag}] 双字段共存历史应正常请求成功（官方 API 验"
+                f"证同形态全部 200），实际 HTTP "
+                f"{response.status_code}: {response.text[:400]}"
+                f"（工单 AGDC2-47 形态：json_parse_error/duplicate "
+                f"field reasoning_content=缺陷复现；预期：无论两字段"
+                f"值相同或不同、字段顺序如何均不得 400）"
+            )
+            assert data, f"[{tag}] 响应体应为合法 JSON"
+            choices = data.get("choices") or []
+            assert choices, f"[{tag}] 响应缺少 choices: {data!r}"
+            choice = choices[0] or {}
+            message = choice.get("message") or {}
+            content = message.get("content") or ""
+            finish_reason = choice.get("finish_reason")
+            # 断言2：正文非空（正常请求成功判定）——空正文+
+            # finish=length 留观察（512 预算默认思考计入耗尽属
+            # K31 域形态非本例判据）；空正文且 finish≠length 即
+            # FAIL（非截断的空正文为异常形态）
+            if not content.strip():
+                if finish_reason == "length":
+                    test_logger.warning(
+                        f"[{tag}] 正文空且 finish=length——512 预算"
+                        f"被思考计入耗尽（K31 域形态，留观察不计判"
+                        f"据，交人工分派）"
+                    )
+                else:
+                    pytest.fail(
+                        f"[{tag}] 正文为空且 finish_reason="
+                        f"{finish_reason!r}（非 length 截断的空正文"
+                        f"——异常形态，不属 K31 域豁免口径）: "
+                        f"{data!r}"
+                    )
+            # 观察记录：finish_reason/回答含 3（官方验证回答为 3
+            # ——生成质量非本例判据）/正文长度
+            test_logger.info(
+                f"[{tag}] 通过: finish_reason={finish_reason!r}, "
+                f"正文 {len(content.strip())} 字符"
+                f"（含预期答案 3: {'3' in content}——观察不计判"
+                f"据）, elapsed={elapsed:.1f}s"
+            )
+        test_logger.info(
+            f"客户问题整改验证通过: {len(scenarios)} 发（双字段共"
+            f"存：同值/异值 × reasoning/reasoning_content 在前）"
+            f"全部 HTTP 200 正常请求成功——历史消息 reasoning/"
+            f"reasoning_content 双字段共存 400（json_parse_error/"
+            f"duplicate field reasoning_content）缺陷未复现"
         )

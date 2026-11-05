@@ -21,7 +21,7 @@
 
 ---
 
-## 二、测试点总览（9 大类 × 124 个测试点）
+## 二、测试点总览（9 大类 × 125 个测试点）
 
 ### 分类概览
 
@@ -35,7 +35,7 @@
 | F. API 兼容性   | 7    | OpenAI 兼容（含 /v1/responses 新一代接口）、参数一致性     |
 | G. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 38   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（[0, 2] 含端点，chat+msg 双协议）、top_logprobs 稳定放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（流式/多段/结构化 × 双协议）、n=2 请求挂死限时返回与官方一致核验（30s 硬超时 + 单 choice）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）），P0 为主持续追加 |
+| K. 客户问题复现 | 39   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（[0, 2] 含端点，chat+msg 双协议）、top_logprobs 稳定放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（流式/多段/结构化 × 双协议）、n=2 请求挂死限时返回与官方一致核验（30s 硬超时 + 单 choice）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）），P0 为主持续追加 |
 
 ---
 
@@ -197,7 +197,7 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | H10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | H11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（H8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 客户问题复现（38 项）
+### K. 客户问题复现（39 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
@@ -243,6 +243,7 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K36 | finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） | 客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=stop（20_chat_stream_002 / 20_chat_ms_001 / 20_chat_structured_002 三例）；贵方实测同一请求渠道返回 finish_reason=length，官方返回 stop（三例一致复现）；整改建议：对齐 finish_reason 判定——思考 token 不应把正常结束的请求判成 length 截断；按官方行为进行预期断言（用户指定）；适用 GLM-5.3 | 流式（chat SSE 收集 choices[].finish_reason 与 delta.content——K24 先例；msg SSE 收集 message_delta.delta.stop_reason 与 content_block_delta 正文——K3 先例）、多段（单条 user 消息 content 数组多段文本）、结构化（chat response_format=json_object；msg 无该参数按 K31 先例 prompt 引导）三种请求形态 × chat+msg 双协议各 1 发（共 6 发，相邻间隔 3s）；硬断言每形态 × 每协议：终止语义对齐官方——chat finish_reason=='stop' / msg stop_reason=='end_turn'（Anthropic 自然结束语义——msg 侧 stop 等价；length/max_tokens=缺陷复现：思考 token 计入判定把正常结束的请求误判截断）+ 正文非空（正常结束的佐证；正文空+length 为 K31 思考耗光形态，非本例口径）；max_tokens=512（工单未附原始 payload——适中值：正文远低于配额而计入思考的实现易触顶误判，对判定语义敏感且不致正文真实截断）；thinking/采样参数未指定不传不注入 | P1  |
 | K37 | n=2 请求挂死限时返回与官方一致（单 choice） | 客户问题（工单 P0，n=2 请求挂死）：官方 n=2 HTTP 200（返回 1 个 choice），贵方实测无响应直至超时——参数电池 3/3 轮 TimeoutError（已重试 1 次仍超时）、协议电池 2 例 ReadTimeout、直连 300s 超时，挂死同时导致模块 4 的 n=2 探针被记为『无效』而未计失败；整改建议：定位 n=2 路径阻塞点（疑似上游对 n>1 未返回/连接不复位）；要求 n=2 在 30s 内返回 200 或明确 4xx、不得无限挂起，客户端侧加硬超时；按官方行为断言（用户指定）；适用 GLM-5.3 | chat 单协议 2 发对齐工单口径（055/056 两次独立采集非重试；n 为 OpenAI 参数、msg 无 n 语义——msg 未知参数行为由 K33/K35 覆盖）；单发直发不重试（重试掩盖挂死证据且超时等待翻倍），requests timeout=30s 硬超时；硬断言每发：30s 内返回（超时即 FAIL 挂死复现——纠正『无效不计失败』漏报形态）+ HTTP 200（4xx=整改下限达标但与官方不一致，如实 FAIL 交人工分派）+ choices 恰 1 个；工单原值原样保留（说一句话。/max_tokens=16/n=2——豁免注入）；finish_reason/正文留观察（16 配额默认思考计入易空正文+length——K31 域形态非本例判据）、elapsed 留痕（字节缓流形态人工分派）；thinking/采样参数未含不注入；相邻间隔 3s | P0  |
 | K38 | max_completion_tokens 别名单 token 请求不挂起（与 tokens 主路径同延迟水平） | 客户问题（工单 A-A01，异常）：官方判定通过——max_completion_tokens 别名为单 token 请求，被接受并按 max_tokens 语义立即截断返回；贵方实测客户原始请求 1 发即挂起——180s 请求超时、无响应（HTTP 0，采集未落盘）；预期行为（整改）：不得触发 180s 级挂起、需与 tokens 主路径同延迟水平；适用 GLM-5.3 | chat 单协议 2 发（别名轮工单原样 1 发对齐工单口径 + 主路径轮同 prompt max_tokens=1 对照基线 1 发；max_completion_tokens 为 OpenAI 别名字段、Anthropic /v1/messages 无该字段——msg 未知参数行为由 K33/K35 覆盖）；别名轮请求体工单原样（单 user "Write a long essay about turbines."、max_completion_tokens=1、字段序 model/messages/max_completion_tokens、无 stream 字段），模型名由环境注入，采样参数原始未指定——保持不注入；单发直发不重试（重试掩盖挂起证据且超时等待翻倍），requests timeout=30s 硬超时；硬断言：别名轮 30s 内返回（超时即 FAIL 挂起复现——工单 180s 无响应形态）+ HTTP 200（官方判定通过）+ 响应体合法 + usage.completion_tokens<=2（别名生效——单 token 截断；字段被丢弃则长文数百 token，usage 未携带时判据降级为延迟判据留观察）；主路径轮 30s 内返回 + 200；同延迟水平判据：别名 elapsed <= 主路径 elapsed×3+10s（容网络抖动）；finish_reason/正文留观察（1 配额默认思考计入易空正文+length——K31 域形态非本例判据）；字节缓流形态留观察人工分派（K37 口径）；相邻间隔 3s | P0  |
+| K39 | 历史 assistant 消息 reasoning/reasoning_content 双字段共存兼容接受（同值/异值 × 两字段序） | 客户问题（工单 AGDC2-47，接口协议）：官方行为（AGDC2-47 测试资料·官方 API 验证结论，2026-11-05 Kimi K3 官方端点）——同一历史 assistant 消息同时包含 reasoning 与 reasoning_content，无论内容相同或不同、哪个字段在前均接受，14 组合（字段变体 × 默认/关闭思考）全部 HTTP 200、finish_reason=stop、回答 3；贵方实测：双字段共存即 HTTP 400、错误码 json_parse_error、提示 duplicate field reasoning_content——两字段值相同或不同均报错；仅 reasoning 或仅 reasoning_content 单字段调用成功；客户生产调用产生较多报错；预期行为（整改）：双字段共存无论两字段值相同或不同、字段顺序如何均不得 400，应正常请求成功；适用 GLM-5.3 与 Kimi K3（双 marker GLM53+KimiK3，用户指定双模型覆盖） | chat 单协议 4 发（相邻间隔 3s；用户指定：只测双字段共存场景——单字段/无字段场景不测；调整两字段顺序 × 覆盖同值/异值），同一三消息结构（AGDC2-47 官方验证请求原样：user "What is 1 + 1? Reply with only the number." / assistant content="2"+双思考字段 / user "Add 1 to the previous answer. Reply with only the number."），请求体官方验证原样（字段序 model/stream/max_tokens=512/messages，stream=false，thinking 默认模式不传），模型名由环境注入，采样参数未含——不注入；场景：同值/reasoning 在前、同值/reasoning_content 在前（两字段均 "1 + 1 = 2."）、异值/reasoning 在前、异值/reasoning_content 在前（reasoning="Compute the sum."、reasoning_content="The answer is two."）；硬断言每发：HTTP 200（400 json_parse_error/duplicate field reasoning_content=缺陷复现——同条消息两思考字段被解析层视为同字段别名而拒绝）+ 响应体合法 + choices 非空 + 正文非空（空正文+finish=length 留观察——512 预算默认思考计入耗尽属 K31 域形态；空正文且 finish≠length 即 FAIL）；finish_reason/回答含 3（官方验证回答为 3——生成质量非本例判据）留观察；关闭思考模式不测（官方双模式均 200 证明字段兼容性与模式正交；K35 已确立关闭思考 400 拒绝口径——另一缺陷域）；chat 单协议（Anthropic /v1/messages 无 reasoning 字段形态——思考经 thinking content block 承载，msg 未知参数行为由 K33/K35 覆盖） | P0  |
 
 ---
 
@@ -290,7 +291,7 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 
 ## 五、测试执行优先级建议
 
-### P0（上线必测，59 项）
+### P0（上线必测，60 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -302,10 +303,10 @@ E1, E4           稳定性 2 项（E1 空输入、E4 特殊字符注入；E2/E3/
 F1, F3, F4, F6, F7   API 兼容 5 项（F3 模型列表升至 P0，F7 Responses API 新增）
 G1, G4, G5, G6, G7, G8, G9, G12  Chat Completions API 质量评估 8 项（G2 降为 P1，G8 升至 P0）
                      clear_thinking 参数行为 0 项（H 类全部降为 P1/P2，仅做选测）
-K1-K7, K10-K30, K37, K38  客户问题复现 30 项（均 P0，客户报障必测）
+K1-K7, K10-K30, K37-K39  客户问题复现 31 项（均 P0，客户报障必测）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 30 = 59 项。
+总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 31 = 60 项。
 
 ### P1（选测，48 项）
 
