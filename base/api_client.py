@@ -183,7 +183,11 @@ class ModelAPIClient:
             return {thinking_key: enabled}
 
     def _post_with_retry(
-        self, url: str, payload: dict, stream: bool = False
+        self,
+        url: str,
+        payload: dict,
+        stream: bool = False,
+        timeout: Optional[int] = None,
     ) -> requests.Response:
         """发送 POST 请求，遇到瞬时网络错误（如连接被对端重置）时自动重试。
 
@@ -191,10 +195,15 @@ class ModelAPIClient:
             url: 请求地址
             payload: 请求体
             stream: 是否流式
+            timeout: 本次请求超时（秒）——None 沿用全局 self.timeout；
+                用例级硬超时覆盖入口（仅覆盖该次调用，不改全局值、
+                不影响其他用例；K32 先例）。ReadTimeout 不在重试范
+                围（见 _RETRYABLE_EXCEPTIONS），超时即抛出
 
         Returns:
             requests.Response 对象
         """
+        post_timeout = self.timeout if timeout is None else timeout
         last_exc = None
         attempts = self.retry_times + 1
         for attempt in range(1, attempts + 1):
@@ -202,7 +211,7 @@ class ModelAPIClient:
                 return self.session.post(
                     url,
                     json=payload,
-                    timeout=self.timeout,
+                    timeout=post_timeout,
                     stream=stream,
                 )
             except _RETRYABLE_EXCEPTIONS as e:

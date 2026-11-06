@@ -649,50 +649,51 @@ K. 客户问题复现测试
   1.5（工单原值，[0, 1] 越界——与 chat 侧同值不同判，验证
   网关按协议语义分别校验而非一刀切）与 2.0、-0.5 → 400+错
   误体指明参数名 temperature+含上界数字 1（区间痕迹）。非流
-  式直发；工单原始值 temperature/max_tokens 原样保留并豁免
-  全局采样覆盖；top_p/seed 工单未指定，不注入；msg 协议
-  max_tokens 为必需字段；A-03 工单三发采集间隔 1s（节奏非判
-  据），复现按套件相邻 3s。GLM-5.3 专用。（不进 smoke 集：
-  新用例首跑观察期）
-- K33: top_logprobs=5 稳定放行与结构核验（未开 logprobs 也接
-  受，chat+msg 双协议） [P2]
-  客户问题（工单 P2 R-03+A-04，参数校验）：官方行为不变——
+  式直发，每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定覆盖全
+  局 timeout——小请求正常返回毫秒级-秒级，挂起/严重延迟快
+  速失败：超时即 FAIL 留痕，仅本用例生效、不影响他例）；工
+  单原始值 temperature/max_tokens 原样保留并豁免全局采样覆
+  盖；top_p/seed 工单未指定，不注入；msg 协议 max_tokens 为
+  必需字段；A-03 工单三发采集间隔 1s（节奏非判据），复现按
+  套件相邻 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑观
+  察期）
+- K33: top_logprobs=5 放行核验（未开 logprobs 也接受，chat+msg
+  双协议） [P2]
+  客户问题（工单 P2 A-04，参数校验）：官方行为不变——
   top_logprobs=5 官方 HTTP 200 接受（未开 logprobs 时也接
   受）；贵方最新实测（A-04，2026-11-03）chat 三发
   top_logprobs=5 单独出现（无 logprobs）全部 HTTP 400，错误体
   「top_logprobs is only allowed when logprobs is enabled」
   (top_logprobs_requires_logprobs)——对未开 logprobs 的
-  top_logprobs 额外拒绝；历史形态（R-03）同参数（logprobs=
-  true + top_logprobs=5 成对）12 发中 9 发 400、3 发 200，时
-  拒时放。整改建议（即预期结果）：按官方行为处理 top_logprobs
-  （未开 logprobs 时也接受），不额外拒绝；统一行为；若上游
-  确实不支持，错误体应说明能力缺失而非参数非法，避免客户端
-  反复重试。双协议覆盖（chat + msg——K31 起用例须验证双协
-  议，用户指定）：chat 协议——A-04 三发复现 top_logprobs=5 单
-  独出现（无 logprobs 字段）、content="只回复:好"、max_
-  tokens=32（请求体工单原样：字段序 model/messages/max_
-  tokens/top_logprobs、无 stream 字段）→ 200+choices 非空
-  （正文/finish_reason/logprobs 结构留观察不计判据——小配
-  额+默认思考计入易 length，K31 域形态；客户预期仅定义接受
-  语义，与 K32/K35 断言收缩同理）；R-03 稳定性轮 12 发成对
-  （logprobs=true + top_logprobs=5 工单原值，依 OpenAI 规范）
-  → 硬断言每发 200、choices[0].logprobs 含 top_logprobs（兼
-  容新式 content[] 与旧式顶层两种结构）、候选对象数 ≤5
-  （top-N 语义）、正文非空+finish_reason 宽松枚举（K2 口
-  径）——任一发 400 即时拒时放缺陷复现。msg 协议
+  top_logprobs 额外拒绝。整改建议（即预期结果）：按官方行为
+  处理 top_logprobs（未开 logprobs 时也接受），不额外拒绝；
+  若上游确实不支持，错误体应说明能力缺失而非参数非法，避免
+  客户端反复重试。用户判定口径（2026-11-06）：top_logprobs=5
+  不要拒绝、按官方 HTTP 200 即可；正文为空不判定失败（R-03
+  轮移除，仅保留 A-04 请求——用户指定 2026-11-06）。双协议
+  覆盖（chat + msg——K31 起用例须验证双协议，用户指定）：chat
+  协议——A-04 三发复现 top_logprobs=5 单独出现（无 logprobs
+  字段）、content="只回复:好"、max_tokens=32（请求体工单原
+  样：字段序 model/messages/max_tokens/top_logprobs、无
+  stream 字段）→ 200+choices 非空（正文/finish_reason/
+  logprobs 结构留观察不计判据——小配额+默认思考计入易
+  length，K31 域形态；客户预期仅定义接受语义，与 K32/K35
+  断言收缩同理）；msg 协议
   （/anthropic/v1/messages）无 logprobs 参数语义（Anthropic
   官方未知字段应 400 拒绝）——A-04 镜像 3 发（top_logprobs
   单独出现、content 工单原样字符串、max_tokens=512 套件必
-  需字段值——工单 32 为 chat 小配额口径）与 R-03 成对 12 发
-  均硬断言统一行为：要么全部 400 且错误体指明字段（含
+  需字段值——工单 32 为 chat 小配额口径）硬断言统一行为：
+  要么全部 400 且错误体指明字段（含
   "logprobs"，top_logprobs 子串覆盖，能力缺失说明口径——整
-  改建议两分支之一），要么全部 200 且正文非空（网关忽略该
-  参数统一作答）；混现（时拒时放）即 FAIL——不稳定性与额
-  外拒绝缺陷在两协议均不得复现；msg 协议 max_tokens 为必需
+  改建议两分支之一），要么全部 200（网关忽略该参数统一作
+  答）；正文为空不判定失败（用户口径：top_logprobs=5 不拒
+  绝、官方 200 即可——空正文留观察，用户指定 2026-11-06）；
+   混现（时拒时放）即 FAIL——额外拒绝与行
+  为不统一缺陷在两协议均不得复现；msg 协议 max_tokens 为必需
   字段。max_tokens/thinking/采样参数工单未指定——不传（不注
   入）；A-04 工单三发采集间隔 1s（节奏非判据），复现按套件
   相邻 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期；
-  P2 选测——双协议 30 发长耗时）
+  P2 选测——双协议 6 发）
 - K34: 多模态媒体块该拒未拒（msg 侧静默丢弃返回 200）应 400
   明确拒绝（chat+msg 双协议） [P2]
   客户问题（工单 P2 R-04 补充证据 A-01，多模态）：官方行为
@@ -778,24 +779,28 @@ K. 客户问题复现测试
   致正文真实截断）；thinking/采样参数工单未指定——不传（不注
   入）；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑
   观察期）
-- K37: n=2 请求挂死限时返回与官方一致（单 choice） [P0]
-  客户问题（工单 P0，异常）：官方 n=2 HTTP 200（返回 1 个
-  choice）；贵方实测无响应直至超时——参数电池 3/3 轮 TimeoutError
-  （已重试 1 次仍超时）、协议电池 2 例 ReadTimeout、直连 300s 超
-  时，挂死同时导致模块 4 的 n=2 探针被记为『无效』而未计失败。整
-  改建议：定位 n=2 路径阻塞点（疑似上游对 n>1 未返回/连接不复
-  位）；要求 n=2 在 30s 内返回 200 或明确 4xx、不得无限挂起，客
-  户端侧加硬超时。本用例按官方行为断言（用户指定）chat 2 发对齐
-  工单 055/056 口径，工单原值原样保留（"说一句话。"/
-  max_tokens=16/n=2），单发直发不重试，requests timeout=30s 硬超
-  时——超时即 FAIL 挂死复现（纠正『无效不计失败』漏报形态）；硬
-  断言每发：30s 内返回 + HTTP 200（4xx=整改下限达标但与官方不
-  一致，如实 FAIL 交人工分派）+ choices 恰 1 个；finish_reason/
-  正文留观察（16 配额默认思考计入易空正文+length——K31 域形
-  态，非本例判据）；chat 单协议（n 为 OpenAI 参数、msg 无该语
-  义——msg 未知参数行为由 K33/K35 覆盖）；thinking/采样参数未
-  含——不传（不注入）；相邻间隔 3s。GLM-5.3 专用。（不进
-  smoke 集：新用例首跑观察期）
+- K37: n=2 请求应 400 拒绝且不挂死（返回提示信息） [P0]
+  客户问题（工单 P0，异常）：贵方实测 n=2 请求无响应直至超时——
+  参数电池 3/3 轮 TimeoutError（已重试 1 次仍超时）、协议电池
+  2 例 ReadTimeout、直连 300s 超时，挂死同时导致模块 4 的 n=2
+  探针被记为『无效』而未计失败；官方行为为 200+1 choice。客户
+  明确需求（2026-11-06，契约口径）：当 n=2 时 400 拒绝，并返
+  回相应的提示信息，但不能卡死（示例响应：HTTP 400
+  {"code":1210,"message":"参数有误：glm-5.3 仅支持 n=1，收到
+  n=2 (request id: ...)"}）——客户明确需求优先于官方对齐（用
+  户指定按新契约断言，替代原官方 200+单 choice 口径）。本用例
+  chat 2 发对齐工单 055/056 口径，工单原值原样保留（"说一句
+  话。"/max_tokens=16/n=2），单发直发不重试，requests
+  timeout=30s 硬超时——超时即 FAIL 挂死复现（纠正『无效不
+  计失败』漏报形态）；硬断言每发：30s 内返回 + HTTP 400（200
+  放行=未按客户契约拒绝；500 等=非合规拒绝）+ 提示信息指明
+  n 参数限制（响应体合法 JSON、message 非空且含 "n=1"/
+  "n=2" 子串，大小写不敏感——客户示例：参数有误：glm-5.3 仅
+  支持 n=1，收到 n=2）；错误码 code（如 1210——平台错误码口
+  径不硬绑）/request id/elapsed 留观察；chat 单协议（n 为
+  OpenAI 参数、msg 无该语义——msg 未知参数行为由 K33/K35 覆
+  盖）；thinking/采样参数未含——不传（不注入）；相邻间隔 3s。
+  GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
 - K38: max_completion_tokens 别名单 token 请求不挂起（与 tokens 主路径同延迟水平） [P0]
   客户问题（工单 A-A01，异常）：官方判定通过——max_completion_
   tokens 别名为单 token 请求，被接受并按 max_tokens 语义立即截
@@ -821,7 +826,9 @@ K. 客户问题复现测试
   协议必需主路径字段，msg 未知参数行为由 K33/K35 覆盖）；模
   型名由环境注入；thinking/采样参数工单未含——不传（不注
   入）；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例
-  首跑观察期）
+  首跑观察期）。暂挂 SKIP（用户指定 2026-11-06）：官方环境复
+  测同形请求亦超时——官方判定基线（别名立即截断返回）失效，
+  判定口径待澄清后恢复执行
 - K39: 历史 assistant 消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 两字段序） [P0]
   客户问题（工单 AGDC2-47，接口协议）：多轮对话历史 assistant
   消息同时携带 reasoning 与 reasoning_content（合法 JSON 两个
@@ -9485,9 +9492,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         局采样覆盖；top_p/seed 工单未指定，不注入；A-03 复现
         轮 max_tokens=32 工单原值；chat 边界/越界轮 max_tokens/
         thinking 工单未指定，不传；msg 侧 max_tokens 为协议必需
-        字段）；相邻间隔 3s（A-03 工单三发采集间隔 1s，节奏非
-        判据）。模型名由环境注入。GLM-5.3 专用。（不进 smoke
-        集：新用例首跑观察期）
+        字段）；每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定
+        覆盖全局 timeout——本例小请求正常返回毫秒级-秒级，挂
+        起/严重延迟快速失败：超时即 FAIL（异常信号留痕）并报
+        告超时值，仅本用例生效、不影响他例）；相邻间隔 3s
+        （A-03 工单三发采集间隔 1s，节奏非判据）。模型名由环
+        境注入。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察
+        期）
         """
         # K32: chat 协议工单原值——原厂区间 [0, 2]（含上界端
         # 点）内合法点（A-03：原厂 HTTP 200 接受）
@@ -9515,6 +9526,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 闲聊最小合理值
         K32_MSG_MAX_TOKENS = 1024
         K32_PROMPT = "请用一句话介绍你自己。"
+        # K32: 每发 60s 硬超时（用例内自定覆盖全局 timeout——本
+        # 例全部为小请求：越界轮 400 参数校验层毫秒级、A-03 轮
+        # max_tokens=32 秒级、放行轮单句闲聊秒级，无需按全局
+        # 1200s 等待——挂起/严重延迟快速失败（超时即 FAIL 留
+        # 痕）；仅本用例生效，不影响其他用例（_post_with_retry
+        # 的 timeout 参数默认 None=沿用全局值））
+        K32_HARD_TIMEOUT = 60
 
         test_logger.info(
             "=== 测试开始: 客户问题 - temperature 原厂区间 [0, 2] "
@@ -9568,7 +9586,18 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             started = time.time()
             try:
                 response = api_client._post_with_retry(
-                    url, payload, stream=False
+                    url,
+                    payload,
+                    stream=False,
+                    timeout=K32_HARD_TIMEOUT,
+                )
+            except requests.exceptions.Timeout as e:
+                # K32: 60s 硬超时——小请求正常返回毫秒级-秒级，
+                # 零字节无响应即挂起/严重延迟异常信号，快速失败
+                pytest.fail(
+                    f"[{tag}] {K32_HARD_TIMEOUT}s 硬超时内无响应"
+                    f"（requests 超时：{e}——异常信号：挂起或严重"
+                    f"延迟；本例小请求正常返回为毫秒级-秒级）"
                 )
             except Exception as e:
                 pytest.fail(f"[{tag}] 请求发送异常（{url}）: {e}")
@@ -9766,7 +9795,16 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     msg_url,
                     json=payload,
                     headers=headers,
-                    timeout=api_client.timeout,
+                    timeout=K32_HARD_TIMEOUT,
+                )
+            except requests.exceptions.Timeout as e:
+                # K32: 60s 硬超时（与 chat 侧同口径）——小请求正
+                # 常返回毫秒级-秒级，零字节无响应即挂起/严重延
+                # 迟异常信号，快速失败
+                pytest.fail(
+                    f"[{tag}] {K32_HARD_TIMEOUT}s 硬超时内无响应"
+                    f"（requests 超时：{e}——异常信号：挂起或严重"
+                    f"延迟；本例小请求正常返回为毫秒级-秒级）"
                 )
             except Exception as e:
                 pytest.fail(
@@ -9871,22 +9909,23 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_top_logprobs_stable_support(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K33 [P2]: 客户问题 - top_logprobs=5 稳定放行与结构核验
+        """K33 [P2]: 客户问题 - top_logprobs=5 放行核验
         （未开 logprobs 也接受，chat+msg 双协议）
 
-        客户问题（工单 P2 R-03+A-04 · top_logprobs=5 被拒/时拒
-        时放，参数校验）：官方行为不变——top_logprobs=5 官方
-        HTTP 200 接受（未开 logprobs 时也接受）；贵方最新实测
-        （A-04，2026-11-03）chat 三发 top_logprobs=5 单独出现
-        （无 logprobs）全部 HTTP 400，错误体「top_logprobs is
+        客户问题（工单 P2 A-04 · top_logprobs=5 被拒，参数校
+        验）：官方行为不变——top_logprobs=5 官方 HTTP 200 接受
+        （未开 logprobs 时也接受）；贵方最新实测（A-04，
+        2026-11-03）chat 三发 top_logprobs=5 单独出现（无
+        logprobs）全部 HTTP 400，错误体「top_logprobs is
         only allowed when logprobs is enabled」
         (top_logprobs_requires_logprobs)——对未开 logprobs 的
-        top_logprobs 额外拒绝；历史形态（R-03）同参数
-        （logprobs=true + top_logprobs=5 成对）12 发中 9 发
-        400、3 发 200，时拒时放。整改建议（即预期结果）：按官
-        方行为处理 top_logprobs（未开 logprobs 时也接受），不额
-        外拒绝；统一行为；若上游确实不支持，错误体应说明能力缺
-        失而非参数非法，避免客户端反复重试。
+        top_logprobs 额外拒绝。整改建议（即预期结果）：按官方
+        行为处理 top_logprobs（未开 logprobs 时也接受），不额
+        外拒绝；若上游确实不支持，错误体应说明能力缺失而非参
+        数非法，避免客户端反复重试。用户判定口径（2026-11-06）：
+        top_logprobs=5 不要拒绝、按官方 HTTP 200 即可；正文为
+        空不判定失败（R-03 轮移除，仅保留 A-04 请求——用户指
+        定 2026-11-06）。
         双协议覆盖（chat + msg——K31 起用例须验证
         /v1/chat/completions 与 /v1/messages 双协议，用户指定）：
         1. chat 协议——
@@ -9903,38 +9942,25 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
               length/空正文——K31 域形态；logprobs 未开时官方
               200 响应结构形态未采集——客户预期仅定义接受语
               义，与 K32/K35 断言收缩同理）
-           b. R-03 稳定性轮 12 发：logprobs=true + top_logprobs=5
-              成对（工单原值，依 OpenAI 规范）非流式 → HTTP 200
-              + choices[0].logprobs 含 top_logprobs（兼容新式
-              content[] 与旧式顶层两种结构）+ 候选对象 dict 且
-              项数 ≤5（top-N 语义）+ 正文非空 + finish_reason
-              宽松枚举（K2 口径）——任一发 400 即时拒时放缺陷
-              复现（报告第几发）
         2. msg 协议（/anthropic/v1/messages——该协议无 logprobs
-           参数语义，Anthropic 官方未知字段应 400 拒绝）——
-           a. A-04 镜像轮 3 发：top_logprobs=5 单独出现（无
-              logprobs），content="只回复:好"（字符串——工单
-              原样），max_tokens=512（协议必需字段套件值——工
-              单 32 为 chat 小配额口径，取 512 避免 200 分支空
-              正文误判）→ 硬断言统一行为：三发全 400 且错误体
-              指明字段（含 "logprobs"——top_logprobs 子串覆
-              盖，能力缺失/未知字段说明口径）或三发全 200 且
-              正文非空；混现即 FAIL
-           b. R-03 稳定性轮 12 发同参数（logprobs=true +
-              top_logprobs=5 成对，max_tokens 为协议必需字段）
-              → 同上统一行为断言——时拒时放（200/400 混现）即
-              FAIL，不稳定性缺陷在两协议均不得复现
-        观察记录（不计判据）：每发 finish_reason、logprobs 长度
-        与 top_logprobs 项数、usage、耗时；结束统计 200/结构齐
-        备计数。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察
-        期；P2 选测——双协议 30 发长耗时）
+            参数语义，Anthropic 官方未知字段应 400 拒绝）——
+            a. A-04 镜像轮 3 发：top_logprobs=5 单独出现（无
+               logprobs），content="只回复:好"（字符串——工单
+               原样），max_tokens=512（协议必需字段套件值——工
+               单 32 为 chat 小配额口径，取 512 避免 200 分支空
+               正文误判）→ 硬断言统一行为：三发全 400 且错误体
+               指明字段（含 "logprobs"——top_logprobs 子串覆
+               盖，能力缺失/未知字段说明口径）或三发全 200；
+               正文为空不判定失败（用户口径：top_logprobs=5
+               不拒绝、官方 200 即可——空正文留观察，用户指
+               定 2026-11-06）；混现即 FAIL
+        观察记录（不计判据）：每发 finish_reason、logprobs 有
+        无、usage、耗时。GLM-5.3 专用。（不进 smoke 集：新用例
+        首跑观察期；P2 选测——双协议 6 发）
         """
-        # K33: 工单原值——top_logprobs（R-03 轮与 logprobs=true
-        # 成对；A-04 轮单独出现）
+        # K33: 工单原值——top_logprobs（A-04 轮单独出现，无
+        # logprobs）
         K33_TOP_LOGPROBS = 5
-        # K33: R-03 连发次数——对齐工单"12 发"口径（时拒时放须以
-        # 同参数多次暴露）
-        K33_RUNS = 12
         # K33: 工单 A-04 复现轮——top_logprobs 单独出现（无
         # logprobs），原样请求体（content/max_tokens 工单原值；
         # 三发依序复现）
@@ -9945,15 +9971,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 闲聊最小合理值（A-04 镜像轮同值——工单 32 为 chat 小
         # 配额口径，取 512 避免 200 分支空正文误判）
         K33_MSG_MAX_TOKENS = 512
-        K33_PROMPT = "请用一句话介绍你自己。"
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - top_logprobs=5 稳定放行与结"
-            "构核验（未开 logprobs 也接受）（工单 P2 R-03+A-04："
-            "chat 侧 A-04 工单三发复现 top_logprobs=5 单独出现"
-            "（无 logprobs，预期 200）+ R-03 成对 12 发 200+结构；"
-            "msg 侧 A-04 镜像 3 发 + R-03 成对 12 发统一行为——"
-            "混现即 FAIL）==="
+            "=== 测试开始: 客户问题 - top_logprobs=5 放行核验"
+            "（未开 logprobs 也接受）（工单 P2 A-04：chat 侧工单"
+            "三发复现 top_logprobs=5 单独出现（无 logprobs，预期"
+            "200）；msg 侧 A-04 镜像 3 发统一行为——混现即"
+            " FAIL）==="
         )
 
         url = f"{api_client.api_prefix}/chat/completions"
@@ -10055,137 +10079,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"未开 logprobs 也接受，额外拒绝缺陷未复现"
         )
 
-        # ── chat R-03 稳定性轮：logprobs=true + top_logprobs=5
-        # 成对（工单原值，依 OpenAI 规范）12 发——时拒时放须以同
-        # 参数多次暴露 ───────────────────────────────────────────
         time.sleep(3)
-        ok_count = 0
-        for attempt in range(1, K33_RUNS + 1):
-            if attempt > 1:
-                time.sleep(3)
-            tag = f"第{attempt}/{K33_RUNS}发"
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": K33_PROMPT}],
-                {
-                    "endpoint": "/v1/chat/completions",
-                    "logprobs": True,
-                    "top_logprobs": K33_TOP_LOGPROBS,
-                    "max_tokens": "(原始未指定——不传)",
-                    "temperature": "(原始未指定——不注入)",
-                    "top_p": "(原始未指定——不注入)",
-                    "seed": "(原始未指定——不注入)",
-                },
-            )
-            # K33: 手工构造 payload 直发（logprobs+top_logprobs 直
-            # 进 payload——工单原值原样；max_tokens/thinking/stream
-            # 工单未指定——不传）
-            payload: Dict[str, Any] = {
-                "model": api_client.model_name,
-                "messages": [{"role": "user", "content": K33_PROMPT}],
-                "logprobs": True,
-                "top_logprobs": K33_TOP_LOGPROBS,
-                "stream": False,
-            }
-            started = time.time()
-            try:
-                response = api_client._post_with_retry(
-                    url, payload, stream=False
-                )
-            except Exception as e:
-                pytest.fail(f"[{tag}] 请求发送异常（{url}）: {e}")
-            elapsed = time.time() - started
-            try:
-                data = response.json()
-            except ValueError:
-                data = None
-            # 模型真实响应断言前打印（失败时同样可见）
-            test_logger.info(
-                f"[{tag}] 真实响应: HTTP {response.status_code}, "
-                f"elapsed={elapsed:.1f}s, "
-                f"body={response.text[:800]!r}"
-            )
-            # 断言1：HTTP 200（工单缺陷形态：12 发中 9 发 400——
-            # 时拒时放；整改要求统一行为，按官方行为应全部 200）
-            assert response.status_code == 200, (
-                f"[{tag}] 缺陷复现：top_logprobs="
-                f"{K33_TOP_LOGPROBS} 同参数时拒时放（工单实测 12 发"
-                f"中 9 发 400）——按官方行为应全部 200，实际 HTTP "
-                f"{response.status_code}: {response.text[:400]}"
-            )
-            assert data, f"[{tag}] 响应体应为合法 JSON"
-            choices = data.get("choices") or []
-            assert choices, f"[{tag}] 响应缺少 choices: {data!r}"
-            choice = choices[0] or {}
-            content = (choice.get("message") or {}).get("content") or ""
-            finish_reason = choice.get("finish_reason")
-            # 断言4：正文非空 + finish_reason 宽松枚举（K2 口径）
-            assert content.strip(), (
-                f"[{tag}] 正文为空（finish_reason="
-                f"{finish_reason!r}）"
-            )
-            assert finish_reason in (
-                "tool_calls",
-                "stop",
-                "eos",
-                "ended",
-                "length",
-            ), (
-                f"[{tag}] finish_reason 异常: {finish_reason!r}"
-            )
-            # 断言2：logprobs 存在且含 top_logprobs（官方行为；兼
-            # 容新式 content[].top_logprobs 与旧式顶层 top_logprobs）
-            logprobs = choice.get("logprobs")
-            assert isinstance(logprobs, dict), (
-                f"[{tag}] 官方行为应返回 logprobs，实际缺失: "
-                f"{choice!r}"
-            )
-            top_lists: List[Any] = []
-            content_arr = logprobs.get("content")
-            if isinstance(content_arr, list) and content_arr:
-                for item in content_arr:
-                    if isinstance(item, dict):
-                        tl = item.get("top_logprobs")
-                        if isinstance(tl, list) and tl:
-                            top_lists.append(tl)
-            if not top_lists:
-                tl = logprobs.get("top_logprobs")
-                if isinstance(tl, list) and tl:
-                    top_lists.append(tl)
-            assert top_lists, (
-                f"[{tag}] 官方行为应返回 logprobs.top_logprobs，实"
-                f"际缺失或为空（logprobs={logprobs!r}）——若上游不"
-                f"支持应统一说明能力缺失，不得时拒时放"
-            )
-            # 断言3：候选对象结构 + 长度 ≤ 5（top_logprobs=5 语义）
-            for tl in top_lists:
-                assert all(isinstance(x, dict) for x in tl), (
-                    f"[{tag}] top_logprobs 元素应为候选对象（token/"
-                    f"logprob），实际: {tl!r}"
-                )
-                assert len(tl) <= K33_TOP_LOGPROBS, (
-                    f"[{tag}] top_logprobs 项数 {len(tl)} 超过 "
-                    f"top_logprobs={K33_TOP_LOGPROBS}（参数语义未"
-                    f"生效）"
-                )
-            usage = data.get("usage") or {}
-            # 观察记录：logprobs 规模与 usage 留痕
-            test_logger.info(
-                f"[{tag}] 通过: 正文 {len(content)} 字符、"
-                f"finish_reason={finish_reason!r}、logprobs "
-                f"content {len(content_arr) if isinstance(content_arr, list) else 0} 项、"
-                f"top_logprobs 各项 {[len(t) for t in top_lists]}"
-                f"（≤{K33_TOP_LOGPROBS}）、"
-                f"completion_tokens={usage.get('completion_tokens')}"
-                f", elapsed={elapsed:.1f}s"
-            )
-            ok_count += 1
-        test_logger.info(
-            f"chat 协议整改验证通过: {ok_count}/{K33_RUNS} 发全部 "
-            f"HTTP 200 且返回 logprobs.top_logprobs（各候选项数 "
-            f"≤{K33_TOP_LOGPROBS}）——top_logprobs="
-            f"{K33_TOP_LOGPROBS} 行为已统一，时拒时放缺陷未复现"
-        )
 
         # ── msg 协议轮（/anthropic/v1/messages——K3 先例构造；
         # 该协议无 logprobs 参数语义，断言统一行为而非 200）──
@@ -10193,7 +10087,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         # ── msg A-04 镜像轮（3 发）：top_logprobs=5 单独出现（无
         # logprobs）——该协议无 logprobs 语义，断言统一行为（全
-        # 400 指明字段或全 200 正文非空，混现即 FAIL）───────
+        # 400 指明字段或全 200——正文为空不判定失败，混现即
+        # FAIL）──────────────────────────────────────────────
         a04_msg_results = []
         for i in range(1, K33_A04_ROUNDS + 1):
             if i > 1:
@@ -10288,144 +10183,32 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"径）——统一行为达标"
             )
         else:
-            # 分支B：全部 200——网关忽略该参数统一作答，每发正文
-            # 须非空（不得空作答）
+            # 分支B：全部 200——网关忽略该参数统一放行即达标；
+            # 正文为空不判定失败（用户口径：top_logprobs=5 不
+            # 拒绝、官方 200 即可——空正文留观察，用户指定
+            # 2026-11-06）
+            a04_empty_count = 0
             for tag, status, body, text in a04_msg_results:
-                assert text, (
-                    f"[{tag}] msg 协议 A-04 镜像统一 200 作答但正"
-                    f"文为空: {body[:300]}"
-                )
+                if not text:
+                    a04_empty_count += 1
+                    test_logger.warning(
+                        f"[{tag}] 观察: 统一 200 作答但正文为空"
+                        f"（不判定失败——用户口径，留观察）: "
+                        f"{body[:300]}"
+                    )
             test_logger.info(
                 f"msg A-04 镜像轮通过: {K33_A04_ROUNDS} 发全部 "
-                f"200 正常作答（网关忽略无语义参数、统一放行）"
-                f"——统一行为达标"
+                f"200 统一放行（其中 {a04_empty_count} 发正文为"
+                f"空留观察）——统一行为达标"
             )
 
-        # ── msg R-03 稳定性轮：12 发先收集再判统一性（时拒时放
-        # 须以 200/400 混现形态暴露——单发无法判定不稳定性）──
-        time.sleep(3)
-        msg_results = []
-        for attempt in range(1, K33_RUNS + 1):
-            if attempt > 1:
-                time.sleep(3)
-            tag = f"msg第{attempt}/{K33_RUNS}发"
-            TestLogger.log_request(
-                test_logger,
-                [{"role": "user", "content": K33_PROMPT}],
-                {
-                    "endpoint": "/anthropic/v1/messages",
-                    "protocol": "anthropic（x-api-key + "
-                                "anthropic-version 头）",
-                    "logprobs": True,
-                    "top_logprobs": K33_TOP_LOGPROBS,
-                    "max_tokens": K33_MSG_MAX_TOKENS,
-                    "temperature": "(原始未指定——不注入)",
-                    "top_p": "(原始未指定——不注入)",
-                    "seed": "(原始未指定——不注入)",
-                },
-            )
-            # K33: msg 协议手工 payload 直发（logprobs+top_logprobs
-            # 直进 payload——工单原值原样保留；max_tokens 为协议必
-            # 需字段；thinking/stream 工单未指定——不传）
-            payload: Dict[str, Any] = {
-                "model": api_client.model_name,
-                "max_tokens": K33_MSG_MAX_TOKENS,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": K33_PROMPT}
-                        ],
-                    }
-                ],
-                "logprobs": True,
-                "top_logprobs": K33_TOP_LOGPROBS,
-                "stream": False,
-            }
-            headers: Dict[str, Any] = {
-                "anthropic-version": "2023-06-01"
-            }
-            if api_client.api_key:
-                headers["x-api-key"] = api_client.api_key
-            started = time.time()
-            try:
-                response = api_client.session.post(
-                    msg_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=api_client.timeout,
-                )
-            except Exception as e:
-                pytest.fail(
-                    f"[{tag}] 请求发送异常（{msg_url}）: {e}"
-                )
-            elapsed = time.time() - started
-            test_logger.info(
-                f"[{tag}] 真实响应: HTTP {response.status_code}, "
-                f"elapsed={elapsed:.1f}s, "
-                f"body={response.text[:800]!r}"
-            )
-            try:
-                data = response.json()
-            except ValueError:
-                data = None
-            content_arr = (data or {}).get("content") or []
-            text = "".join(
-                c.get("text") or ""
-                for c in content_arr
-                if isinstance(c, dict) and c.get("type") == "text"
-            ).strip()
-            msg_results.append(
-                (tag, response.status_code, response.text, text)
-            )
-        # K33 断言（msg 统一性）：
-        # 1. 12 发状态码须完全一致（200/400 混现=时拒时放缺陷
-        #    在 msg 协议复现——整改要求统一行为）
-        statuses = {r[1] for r in msg_results}
-        assert len(statuses) == 1, (
-            f"msg 协议时拒时放缺陷复现: {K33_RUNS} 发同参数出现多"
-            f"种状态码 {sorted(statuses)}——整改要求统一行为；逐"
-            f"发: {[(r[0], r[1]) for r in msg_results]}"
-        )
-        msg_status = msg_results[0][1]
-        if msg_status == 400:
-            # 分支A：全部 400——错误体须指明字段（含 "logprobs"，
-            # 能力缺失说明口径——整改建议两分支之一）
-            for tag, status, body, _ in msg_results:
-                assert "logprobs" in body.lower(), (
-                    f"[{tag}] msg 协议 400 错误体未指明字段 "
-                    f"logprobs（整改建议：上游不支持时错误体应说"
-                    f"明能力缺失/指明字段，避免客户端反复重试；客"
-                    f"户缺陷形态：通用『模型服务调用失败』不含字"
-                    f"段名）: {body[:300]}"
-                )
-            test_logger.info(
-                f"msg 协议整改验证通过: {K33_RUNS} 发全部 400 且错"
-                f"误体指明 logprobs 字段（能力缺失说明口径）——统"
-                f"一行为达标"
-            )
-        else:
-            # 分支B：全部 200——网关忽略该参数统一作答，每发正文
-            # 须非空（不得空作答）
-            for tag, status, body, text in msg_results:
-                assert text, (
-                    f"[{tag}] msg 协议统一 200 作答但正文为空: "
-                    f"{body[:300]}"
-                )
-            test_logger.info(
-                f"msg 协议整改验证通过: {K33_RUNS} 发全部 200 正常"
-                f"作答（网关忽略无语义参数、统一放行）——统一行为"
-                f"达标"
-            )
         test_logger.info(
             f"客户问题整改验证通过（双协议）: chat A-04 复现 "
             f"{K33_A04_ROUNDS} 发（top_logprobs 单独出现）均 200"
-            f"——未开 logprobs 也接受、额外拒绝缺陷未复现；chat "
-            f"R-03 {K33_RUNS} 发全部 200+返回 "
-            f"logprobs.top_logprobs；msg A-04 镜像 {K33_A04_ROUNDS} "
-            f"发统一 HTTP {a04_msg_results[0][1]}、msg R-03 "
-            f"{K33_RUNS} 发统一 HTTP {msg_status}——额外拒绝与时"
-            f"拒时放缺陷在两协议均未复现"
+            f"——未开 logprobs 也接受、额外拒绝缺陷未复现；msg "
+            f"A-04 镜像 {K33_A04_ROUNDS} 发统一 HTTP "
+            f"{a04_msg_results[0][1]}——top_logprobs=5 不拒绝、正"
+            f"文为空不判定失败（用户口径，2026-11-06）"
         )
 
     @pytest.mark.k_customer_issue
@@ -11795,36 +11578,37 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     def test_n2_request_hang_timeout(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K37 [P0]: 客户问题 - n=2 请求挂死须限时返回并对齐官方
+        """K37 [P0]: 客户问题 - n=2 请求应 400 拒绝且不挂死
+        （返回提示信息）
 
         客户问题（工单 P0 · n=2 请求挂死：无响应直至超时，异常）：
+        - 原始问题：n=2 请求无响应直至超时——参数电池 3/3 轮
+          TimeoutError（已重试 1 次仍超时）、协议电池 2 例
+          ReadTimeout、直连 300s 超时；挂死同时导致模块 4 的
+          n=2 探针被记为『无效』而未计失败
         - 官方行为：原厂 n=2 HTTP 200（返回 1 个 choice）
-        - 贵方实测：无响应直至超时——参数电池 3/3 轮 TimeoutError
-          （已重试 1 次仍超时）；协议电池 2 例 ReadTimeout，直连
-          300s 超时；该挂死同时导致模块 4 的 n=2 探针被记为
-          『无效』而未计失败
-        - 整改建议：定位 n=2 路径的阻塞点（疑似上游对 n>1 未返
-          回/连接不复位）。要求：n=2 在 30s 内返回 200 或明确
-          4xx，不得无限挂起；客户端侧需加硬超时，避免单例拖死
-          整轮
-        本用例按官方行为进行预期断言（用户指定——优先官方行为），
-        chat 单协议 2 发对齐工单口径（055/056 两采集，同请求形态
-        ——两次独立采集非重试），硬断言每发：
-        1. 30s 硬超时（整改要求"30s 内返回"+"客户端侧硬超时"——
-           requests timeout=30s，超时即 FAIL：挂死缺陷复现；工
-           单原客户端 300s 超时拖死整轮的形态不得复现，超时显
-           式计入失败——纠正工单所述探针被记为『无效』而未计失
-           败的漏报形态）
-        2. HTTP 200（官方行为；4xx=整改下限"明确 4xx"达标但与
-           官方 200 不一致——仍 FAIL 交人工分派分支口径，K35 官
-           方一致分支同口径）
-        3. choices 恰 1 个（官方 n=2 返回 1 个 choice）
-        观察记录（不计判据）：finish_reason 与正文——max_tokens=16
-        为工单原值，极小配额下默认思考计入易空正文+length（K31 域
-        形态），不构成本例『挂死/返回』判据，避免缺陷归属混淆；
-        elapsed 留痕——requests 读超时按字节间隔计时，已返回但总
-        时长超 30s 的字节缓流形态留观察人工分派，不作硬断言避免
-        边界抖动误报。
+        - 客户明确需求（2026-11-06，契约口径）：当 n=2 时 400
+          拒绝，并返回相应的提示信息，但不能卡死；客户示例响
+          应：HTTP 400 {"code":1210,"message":"参数有误：
+          glm-5.3 仅支持 n=1，收到 n=2 (request id: ...)"}——
+          契约优先级：客户明确需求 > 官方对齐（用户指定按新契
+          约断言，替代原官方 200+单 choice 口径）
+        本用例 chat 单协议 2 发对齐工单口径（055/056 两采集，
+        同请求形态——两次独立采集非重试），硬断言每发：
+        1. 30s 硬超时（"不能卡死"——requests timeout=30s，超
+           时即 FAIL：挂死缺陷复现；工单原客户端 300s 超时拖死
+           整轮的形态不得复现，超时显式计入失败——纠正工单所
+           述探针被记为『无效』而未计失败的漏报形态）
+        2. HTTP 400（客户新契约：n=2 明确拒绝；200 放行=FAIL
+           ——未按客户契约拒绝；500 等=非合规拒绝）
+        3. 返回相应的提示信息（"并返回相应的提示信息"）——
+           响应体合法 JSON 且 message 非空并指明 n 参数限制
+           （含 "n=1" 或 "n=2" 子串，大小写不敏感——客户示
+           例：参数有误：glm-5.3 仅支持 n=1，收到 n=2）
+        观察记录（不计判据）：错误码 code（如 1210——平台错误
+        码口径不硬绑）、request id 痕迹、elapsed 留痕——已返
+        回但总时长超 30s 的字节缓流形态留观察人工分派，不作硬
+        断言避免边界抖动误报。
         工单原值原样保留：messages="说一句话。"、max_tokens=16、
         n=2（豁免注入，无全局注入口）；thinking/采样参数工单未含
         ——不传（不注入）；单发直发不重试（_post_with_retry 的
@@ -11842,19 +11626,20 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         K37_MAX_TOKENS = 16
         # K37: 工单原值
         K37_PROMPT = "说一句话。"
-        # K37: 30s 硬超时（整改要求：n=2 在 30s 内返回 200 或明确
-        # 4xx，不得无限挂起；客户端侧硬超时避免单例拖死整轮——工
-        # 单原客户端 read timeout=300s 拖死整轮的形态不得复现）
+        # K37: 30s 硬超时（客户新契约：n=2 应 400 拒绝但不能卡
+        # 死——30s 内必须返回；客户端侧硬超时避免单例拖死整轮——
+        # 工单原客户端 read timeout=300s 拖死整轮的形态不得复现）
         K37_HARD_TIMEOUT = 30
         # K37: 2 发对齐工单口径（055/056 两次独立采集，非重试）
         K37_ROUNDS = 2
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - n=2 请求挂死须限时返回并对齐官"
-            "方（工单 P0：官方 n=2 → 200+1 choice；贵方实测无响应直"
-            "至 300s 超时、重试仍超时；整改要求 30s 内返回 200 或明"
-            "确 4xx、不得无限挂起、客户端硬超时；chat 2 发对齐工单 "
-            "055/056 口径；超时即 FAIL 挂死复现）==="
+            "=== 测试开始: 客户问题 - n=2 请求应 400 拒绝且不挂死"
+            "（工单 P0：贵方实测无响应直至 300s 超时、重试仍超时；"
+            "客户新契约 2026-11-06：n=2 应 400 拒绝并返回提示信息"
+            "（示例 code=1210 参数有误：glm-5.3 仅支持 n=1，收到 "
+            "n=2）、不得卡死；chat 2 发对齐工单 055/056 口径；超时"
+            "即 FAIL 挂死复现）==="
         )
 
         chat_url = f"{api_client.api_prefix}/chat/completions"
@@ -11906,9 +11691,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     f"[{round_tag}] 挂死缺陷复现——n=2 请求 "
                     f"{K37_HARD_TIMEOUT}s 内无响应（requests 超时："
                     f"{e}；工单形态：n=2 无响应直至 300s 超时、重试"
-                    f"仍超时；整改要求：30s 内返回 200 或明确 4xx，"
-                    f"不得无限挂起——客户端硬超时已按整改要求实施，"
-                    f"超时如实计入失败、不拖死整轮）"
+                    f"仍超时；客户新契约：n=2 应 400 拒绝并返回提示"
+                    f"信息、不得卡死——客户端硬超时已按整改要求实"
+                    f"施，超时如实计入失败、不拖死整轮）"
                 )
             except Exception as e:
                 pytest.fail(
@@ -11930,57 +11715,79 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                     f"{K37_HARD_TIMEOUT}s（字节缓流未触发读超时——"
                     f"罕见形态，留观察人工分派）"
                 )
-            # 断言2：对齐官方——HTTP 200（官方 n=2 → 200；4xx=整
-            # 改下限达标但与官方不一致，如实 FAIL 交人工分派）
-            assert response.status_code == 200, (
-                f"[{round_tag}] n=2 官方行为 HTTP 200（返回 1 个 "
-                f"choice），实际 HTTP {response.status_code}: "
+            # 断言2：客户新契约（2026-11-06）——n=2 应 HTTP 400
+            # 拒绝（200 放行=未按客户契约拒绝；500 等=非合规拒
+            # 绝）——客户明确需求优先于官方对齐（官方虽 200+1
+            # choice，用户指定按新契约断言）
+            assert response.status_code == 400, (
+                f"[{round_tag}] 客户契约：n=2 应 HTTP 400 拒绝并返回"
+                f"提示信息（示例：参数有误：glm-5.3 仅支持 n=1，收"
+                f"到 n=2），实际 HTTP {response.status_code}: "
                 f"{body[:400]}"
-                f"（若为明确 4xx——整改下限『不无限挂起』达标，"
-                f"但与官方 200 不一致：按官方行为断言（用户指定）"
-                f"如实 FAIL，交人工分派整改分支口径）"
+                f"（200 放行=未按客户契约拒绝——官方虽 200+1 "
+                f"choice，客户明确需求为 400 拒绝（2026-11-06 起"
+                f"按新契约断言）；500 等=非合规拒绝——均 FAIL）"
             )
-            # 断言3：对齐官方——choices 恰 1 个
+            # 断言3：返回相应的提示信息（"并返回相应的提示信
+            # 息"）——响应体合法 JSON、message 非空且指明 n 参数
+            # 限制（含 "n=1"/"n=2" 子串，大小写不敏感；客户示例
+            # 形态：{"code":1210,"message":"参数有误：glm-5.3
+            # 仅支持 n=1，收到 n=2 (request id: ...)"}）
             try:
                 data = json.loads(body)
             except json.JSONDecodeError:
-                pytest.fail(
-                    f"[{round_tag}] 响应体非 JSON，无法核对 choices: "
-                    f"{body[:300]!r}"
-                )
-            choices = data.get("choices") or []
-            assert len(choices) == 1, (
-                f"[{round_tag}] 官方 n=2 返回恰 1 个 choice，实际 "
-                f"{len(choices)} 个: {body[:400]}"
+                data = None
+            if isinstance(data, dict):
+                msg_text = data.get("message") or ""
+                err = data.get("error")
+                if not msg_text and isinstance(err, dict):
+                    msg_text = err.get("message") or ""
+            else:
+                msg_text = body
+            check_text = str(msg_text).lower()
+            assert str(msg_text).strip() and (
+                "n=1" in check_text or "n=2" in check_text
+            ), (
+                f"[{round_tag}] 400 拒绝须返回相应的提示信息并指明 "
+                f"n 参数限制（客户示例：参数有误：glm-5.3 仅支持 "
+                f"n=1，收到 n=2），实际提示: "
+                f"{str(msg_text)[:300]!r}（body: {body[:300]!r}）"
             )
-            # 观察记录：finish_reason 与正文——max_tokens=16 工单
-            # 原值极小配额下默认思考计入易空正文+length（K31 域
-            # 形态），非本例『挂死/返回』判据
-            choice = choices[0] if isinstance(choices[0], dict) else {}
-            message = choice.get("message") or {}
-            content = message.get("content") or ""
+            # 观察记录：错误码 code（如 1210——平台错误码口径不
+            # 硬绑）、request id 痕迹、elapsed——均不计判据
+            obs_code = (
+                data.get("code") if isinstance(data, dict) else None
+            )
             test_logger.info(
-                f"[{round_tag}] 官方对齐核验: choices={len(choices)},"
-                f" finish_reason={choice.get('finish_reason')!r}, "
-                f"正文 {len(str(content).strip())} 字符"
-                f"（观察不计判据——16 配额默认思考计入易空正文+"
-                f"length，属 K31 域形态）"
+                f"[{round_tag}] 400 拒绝核验: code={obs_code!r}, "
+                f"提示信息 {len(str(msg_text))} 字符"
+                f"（request id 痕迹: {'request id' in check_text}"
+                f"——观察不计判据）, elapsed={elapsed:.1f}s"
             )
         test_logger.info(
             f"客户问题整改验证通过: {K37_ROUNDS} 发（工单 055/056 口"
-            f"径）全部在 {K37_HARD_TIMEOUT}s 硬超时内返回，且对齐官方"
-            f" HTTP 200 + 恰 1 个 choice——n=2 路径挂死（无响应直至"
-            f"超时）缺陷未复现，无限挂起形态未复现"
+            f"径）全部在 {K37_HARD_TIMEOUT}s 硬超时内返回 HTTP 400 "
+            f"拒绝且提示信息指明 n 参数限制——n=2 路径挂死（无响应"
+            f"直至超时）缺陷未复现，客户新契约（400 拒绝 + 提示信"
+            f"息、不卡死）达成"
         )
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
+    @pytest.mark.skip(
+        reason="K38 暂挂（用户指定 2026-11-06）：官方环境复测同形请"
+        "求亦超时——工单『官方判定通过（别名按 max_tokens 语义立"
+        "即截断返回）』基线失效，判定口径待澄清后恢复执行"
+    )
     def test_max_completion_tokens_alias_single_token(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K38 [P0]: 客户问题 - max_completion_tokens 别名单
         token 请求不挂起（与 tokens 主路径同延迟水平）
+        【暂挂 SKIP（用户指定 2026-11-06）：官方环境复测同形请
+        求亦超时——官方判定基线（别名立即截断返回）失效，判定
+        口径待澄清后恢复执行】
 
         客户问题（工单 A-A01，异常）：
         - 官方判定通过：max_completion_tokens 别名为单 token
