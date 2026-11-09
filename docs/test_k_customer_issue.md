@@ -9,7 +9,7 @@
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
 - **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K30、
-  K37-K39 为 P0 必测（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40 按客户工单优先级为 P1，K33/K34 为 P2。
+  K37-K39 为 P0 必测（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42 按客户工单优先级为 P1，K33/K34 为 P2。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免（test_k 整套件）**：所有 K 用例保持原始测试参数，不参与
   全局 `--sampling-params` 覆盖（`conftest.py` 模块级规则
@@ -81,6 +81,10 @@
 | K39 | 历史 assistant 消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 两字段序） | 客户问题（工单 AGDC2-47，接口协议）：官方行为（AGDC2-47 测试资料·官方 API 验证结论，2026-11-05 Kimi K3 官方端点）——同一历史 assistant 消息同时包含 reasoning 与 reasoning_content，无论内容相同或不同、哪个字段在前均接受，14 组合（字段变体 × 默认/关闭思考）全部 HTTP 200、finish_reason=stop、回答 3；贵方实测：双字段共存即 HTTP 400、错误码 json_parse_error、提示 duplicate field reasoning_content——两字段值相同或不同均报错，单字段（仅 reasoning 或仅 reasoning_content）调用成功，客户生产调用产生较多报错；预期行为（整改）：双字段共存无论值相同或不同、字段顺序如何均不得 400，应正常请求成功；适用 GLM-5.3 与 Kimi K3（双 marker GLM53+KimiK3，用户指定双模型覆盖） | chat 单协议 4 发（相邻间隔 3s；用户指定：只测双字段共存场景——单字段/无字段场景不测；调整两字段顺序 × 覆盖同值/异值），同一三消息结构（AGDC2-47 官方验证请求原样：user "What is 1 + 1? Reply with only the number." / assistant content="2"+双思考字段 / user "Add 1 to the previous answer. Reply with only the number."），请求体官方验证原样（字段序 model/stream/max_tokens=512/messages，stream=false，thinking 默认模式不传），模型名由环境注入，采样参数官方验证请求未含——保持不注入；场景：同值/reasoning 在前、同值/reasoning_content 在前（两字段均 "1 + 1 = 2."）、异值/reasoning 在前、异值/reasoning_content 在前（reasoning="Compute the sum."、reasoning_content="The answer is two."）；硬断言每发（任一失败即 FAIL 报告场景序）：HTTP 200（400 json_parse_error/duplicate field reasoning_content=缺陷复现——同条消息两思考字段被解析层视为同字段别名而拒绝）+ 响应体合法 JSON + choices 非空 + 正文非空（空正文+finish=length 留观察——512 预算默认思考计入耗尽属 K31 域形态；空正文且 finish≠length 即 FAIL）；finish_reason/回答含 3（官方验证回答为 3——生成质量非本例判据）/正文长度留观察；关闭思考模式不测（官方双模式均 200 证明字段兼容性与模式正交；K35 已确立网关对关闭思考 400 拒绝口径——另一缺陷域）；chat 单协议（Anthropic /v1/messages 无 reasoning 字段形态——思考经 thinking content block 承载，msg 未知参数行为由 K33/K35 覆盖） | P0 |
 
 | K40 | thinking enabled 响应 reasoning_content 字段稳定性核验（三轮 × 每轮 10 并发统一携带） | 客户问题（新工单，响应字段稳定性）：请求体 max_tokens=16000 + 单 user 消息「证明：对于任意正整数n，n^3-n能被6整除」+ thinking={"type": "enabled"}（客户环境模型 GLM-5.3-jy-b）——响应有时带、有时不带 reasoning_content 字段，不稳定，客户生产调用产生较多困扰；预期行为（整改）：所有请求统一携带 reasoning_content | 三轮 × 每轮 10 并发（轮内 ThreadPoolExecutor 10 workers 同拍齐发——E5 并发稳定性先例；轮间串行——每轮收齐后再开下一轮；用户指定 2026-11-09：测试分为三轮、每轮 10 并发，所有轮的所有请求 reasoning_content 统一才算通过；同日调整确认：每轮结束收集一次，任一轮次不一致即失败中止——避免后续轮次浪费）验证统一性，请求体工单原样（max_tokens=16000、thinking.type=enabled、单 user 消息；stream 工单未含——不传，非流式默认；采样参数未含——不注入；模型名由环境注入，用户确认——GLM-5.3-jy-b 为客户内部档位名）；逐轮判定（每轮收齐即断言该轮，任一轮次失败即用例失败并中止后续轮次——用户指定：避免无效轮次消耗）：断言1 该轮 10/10 HTTP 200（非 200/发送异常全量列出）；断言2 该轮 10/10 响应体合法 JSON+choices 非空；断言3 该轮 10/10 choices[0].message.reasoning_content 存在且非空（「统一」口径=字段层面全部携带，用户确认——空字符串同样属「没有」，内容逐字一致不作要求；缺失/空串清单全量输出=缺陷复现证据，如「第 2 轮 8/10 携带，缺失 #R2-3/#R2-7」）；观察（不计判据）：逐轮+整体 finish_reason/正文长度/思考长度分布/耗时；超时沿用全局（工单未涉及超时语义）；chat 单协议（客户请求为 chat 形态，缺陷为 chat 响应字段——Anthropic msg 思考经 thinking content block 承载，无 reasoning_content 字段形态）；GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3 档位变体，缺陷为响应字段生成逻辑，无模型分支） | P1 |
+
+| K41 | stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议） | 客户问题（新工单，参数校验）：请求带 stop=[]（空数组）时平台 400 拒绝，两种错误形态（两个 request id）——上游校验错透传 {"error": {"message": "Validation: Stop sequences array cannot be empty (...)", "type": "upstream_error", "param": "400", "code": "bad_response_status_code"}} 与平台参数错 {"code": 1210, "message": "max_tokens 超出范围 [1, 131072] (...)"}；预期行为（整改）：正常响应、正常结束（finish=stop），不应触发模型服务的最大输出上限 128k | 单发 stop=[] 请求（参数处理确定性，K6/K23 先例），请求体最小构造（stop=[] 工单唯一原样参数+自拟最小 user 消息——工单未携带消息内容；max_tokens 不传——用户确认 2026-11-09：工单未提供不注入，且缺省填充上限缺陷路径恰好由不传覆盖；stream/thinking/采样参数未含——不传不注入；模型名由环境注入——工单无模型线索）；断言1 HTTP 200（400=缺陷复现——两种工单错误文案归类留证）；断言2 合法 JSON+choices 非空；断言3 finish_reason=="stop"（正常结束——工单原话；length=触发输出上限 128k 形态）；断言4 正文非空；观察（不计判据）：400 时错误体归类（Stop sequences array cannot be empty→上游校验错形态/max_tokens 超出范围+code 1210→平台参数错形态）；200 时 usage.completion_tokens 异常大（撞 128k 上限痕迹）留痕；超时沿用全局（工单未涉及挂死/超时语义）；chat 单协议（错误体为 chat 形态响应；msg 未知参数行为由 K33/K35 覆盖）；GLM-5.3 专用（工单无模型线索，缺陷为平台/引擎层 stop 校验与 max_tokens 上限路径，无模型分支） | P1 |
+
+| K42 | Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议） | 客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）：kimi-k3 流式请求正常出流（~70 chunk/s、已出 1480 tokens）后正文结束，连续 30s 无任何字节——无 finish_reason/tool_calls/[DONE]，连接未断，客户端按 30s 无数据取消策略断开（网关日志「客户端已断开，已中断渠道 #20 上游请求」）；多条历史请求同形态（中断、finish_reason 为空）。根因（排障报告确认）：SGLang 0.5.21 kimik3_detector 工具调用解析器按完整 call 整包输出、不增量发工具参数——长参数生成阶段参数全部缓存在解析器内，SSE 无新数据无心跳（serving_chat.py 空时不 yield）；线上抓包 3 样本空窗 71.697/89.010/116.724s（恢复时一次性返回 7952/12831/12044 字符参数），均超客户 30s 取消阈值 | 单发原样回放抓包请求 tests/data/k42_request_original.json（231,432 字节，sha256 371b1753...；78 messages/25 tools/31 历史工具调用，agentic 工作流场景——报告方法 C 口径：单并发、读空闲 180s、总时限 600s）；请求构造：messages/tools/temperature=1/max_completion_tokens=131072/stream=true/stream_options={"include_usage": true}/reasoning_effort="high" 全部原样（抓包原样参数）；stop/tool_choice/seed/采样参数未含——不注入；model 由环境注入（用户确认 2026-11-09——与既有 K 用例一致，运行环境指向 Kimi-K3 实例）；断言1 HTTP 200 + SSE 事件流；断言2 正常终止——收到非空 finish_reason 且收到 [DONE]（缺陷形态=两者皆无直至客户端断开）；断言3 全程任意相邻 SSE 事件间隔 < 30s（客户取消阈值；缺陷实测 71.7-116.7s 空窗；TTFT 不计入——首 token 问题报告声明另行排查）；断言4 finish=tool_calls 时逐 tool index 拼接 arguments 为完整 JSON 且工具名非空（报告修复验证标准 4）；观察（不计判据）：TTFT（历史实测 22.6/44.2s）、事件数、最大事件间隔及位置、工具参数增量事件数（修复标准 2 证据——长参数阶段应有多段 delta 而非整包）、参数字符数、usage、请求文件 sha256 留痕；超时：读空闲上限 180s（requests 读超时按字节间隔计——K37/K38 先例；永久停流触发 ReadTimeout=缺陷形态 FAIL）；总时限 600s 墙钟检查；chat 单协议（工单为 chat SSE 流式）；仅 KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工具解析器层，无其他模型分支） | P1 |
 
 ## 运行方式
 
@@ -3446,3 +3450,162 @@ max、finish_reason 分布）
   GLM-5.3-jy-b 为 GLM-5.3 档位变体——缺陷为响应字段生成逻辑，
   无模型分支）
 - 不进 smoke 集：新用例首跑观察期
+
+### test_empty_stop_array_normal_response (K41)
+
+**背景**：（新工单，参数校验）客户请求带 stop=[]（空数组）时平台
+400 拒绝，两种错误形态（两个 request id）——上游校验错透传
+{"error": {"message": "Validation: Stop sequences array cannot be
+empty (...)", "type": "upstream_error", "param": "400", "code":
+"bad_response_status_code"}} 与平台参数错 {"code": 1210,
+"message": "max_tokens 超出范围 [1, 131072] (...)"}。预期行为（整
+改）：stop=[] 请求正常响应、正常结束（finish=stop），不应触发模
+型服务的最大输出上限 128k。
+
+**请求构造**：
+- chat 端点：`{base_url}/v1/chat/completions`，`_post_with_retry`
+  直发（超时沿用全局——工单未涉及挂死/超时语义）
+- 请求体最小构造：字段序 model/messages/stop；stop=[]（工单唯一
+  原样参数）；消息内容工单未携带——自拟最小 user 消息；max_tokens
+  不传（用户确认 2026-11-09——工单未提供不注入，且缺省填充上限
+  缺陷路径恰好由不传覆盖：错误形态 2「max_tokens 超出范围 [1,
+  131072]」直接指向缺省/上限路径）；stream/thinking/采样参数
+  （temperature/top_p/seed）未含——不传不注入；模型名由环境注入
+  （工单无模型线索）
+- 单发（参数处理确定性，K6/K23 先例）
+
+**断言（硬，单发四断言）**：
+1. HTTP 200（400=缺陷复现——两种工单错误文案归类留证）
+2. 响应体合法 JSON 且 choices 非空
+3. finish_reason == "stop"（正常结束——工单原话；length=触发模型
+   服务最大输出上限 128k 的缺陷形态）
+4. 正文非空
+
+**判定矩阵**：
+- HTTP 400（两种工单错误体形态）→ FAIL（缺陷复现——stop 空数组
+  被误拒绝）
+- 非法 JSON/choices 空 → FAIL（响应结构异常）
+- finish_reason != "stop"（如 length）→ FAIL（触发输出上限形态
+  ——工单明确「不应触发」）
+- 正文为空 → FAIL（非「正常响应」形态）
+- 200 + stop + 正文非空 → PASS（stop 空数组被正常接受，缺陷未
+  复现）
+
+**观察记录（不计判据，留日志）**：400 时错误体归类（"Stop
+sequences array cannot be empty"→上游校验错形态 / "max_tokens
+超出范围"+code 1210→平台参数错形态；未命中两种文案→未归类形态留
+证交人工分派）；200 时 usage.completion_tokens 异常大（撞 128k
+上限痕迹——缺省填充上限缺陷的残留形态）留痕；reasoning_tokens
+双路径兼容提取仅日志
+
+**设计决策记录**：
+- **max_tokens 不传（用户确认）**：工单未提供不注入（独立性规
+  则）；且错误形态 2（max_tokens 超出范围 [1, 131072]）与预期
+  「不应触发模型服务最大输出上限 128k」直接指向缺省/上限填充
+  缺陷路径——不传恰好复现该路径（若平台对缺省 max_tokens 填充
+  128k 上限即触发 1210 错误）
+- **单发（参数处理确定性）**：stop=[] 的处理为确定性校验行为，
+  K6/K23 单发先例；工单两 request id 为两次独立请求（两种错误形
+  态），单发即可覆盖缺陷路径
+- **finish=stop 硬断言**：工单原话「正常响应，正常结束」——
+  length 即触发输出上限（工单明确「不应触发模型服务的最大输出
+  上限 128k」）
+- **消息内容自拟**：工单未携带请求消息内容——自拟最小 user 消
+  息（构造性必需，文档注明自拟口径）
+- **超时沿用全局**：工单未涉及挂死/超时语义（对照 K37/K38 挂死
+  类工单自定硬超时——本例无该诉求）
+- **chat 单协议**：工单错误体为 chat 形态响应（OpenAI error 结
+  构/平台 code 结构）；msg 未知参数行为由 K33/K35 覆盖
+
+**注意事项**：
+- marker：仅 `GLM53`（K 套件按模型分组标记；工单无模型线索，被
+  测环境 glm-5.3，缺陷为平台/引擎层 stop 校验与 max_tokens 上限
+  路径，无模型分支）
+- 不进 smoke 集：新用例首跑观察期
+
+### test_kimik3_long_tool_args_stream_no_stall (K42)
+
+**背景**：（工单 AGDC2-45 · Kimi-K3 流式中途停流）kimi-k3 流式请
+求正常出流（~70 chunk/s、已出 1480 tokens）后正文结束，连续 30s
+无任何字节——无 finish_reason/tool_calls/[DONE]，连接未断，客户
+端按 30s 无数据取消策略断开（网关日志「客户端已断开，已中断渠道
+#20 上游请求」）；多条历史请求同形态（中断、finish_reason 为
+空）。根因（排障报告确认）：SGLang 0.5.21 kimik3_detector 工具调
+用解析器按完整 call 整包输出、不增量发工具参数——正文/思考可先
+结束，长参数生成阶段参数全部缓存在解析器内，SSE 无新数据无心跳
+（serving_chat.py 空时不 yield）；线上抓包 3 样本空窗 71.697/
+89.010/116.724s（恢复时一次性返回 7952/12831/12044 字符参数），
+均超客户 30s 取消阈值。
+
+**请求构造**：
+- chat 端点：`{base_url}/v1/chat/completions`，`_post_with_retry`
+  流式直发（读空闲 180s——requests 读超时按字节间隔计，K37/K38
+  先例；总时限 600s 墙钟检查，报告方法 C 口径）
+- 单发原样回放抓包请求 `tests/data/k42_request_original.json`
+  （231,432 字节，sha256 371b1753...；78 messages/25 tools/31
+  历史工具调用，agentic 工作流场景；单并发——报告口径）
+- 全部原样参数：messages/tools/temperature=1/max_completion_
+  tokens=131072/stream=true/stream_options={"include_usage":
+  true}/reasoning_effort="high"；stop/tool_choice/seed/采样参数
+  未含——不注入；model 由环境注入（用户确认 2026-11-09——与既有
+  K 用例一致，运行环境指向 Kimi-K3 实例）
+- 客户业务内容不进日志/Allure：log_request 仅记摘要占位（真实消
+  息见数据文件，报告注明业务内容仅内部排障使用）
+
+**断言（硬，单发四断言）**：
+1. HTTP 200 + SSE 事件流（events>0）
+2. 正常终止——收到非空 finish_reason 且收到 [DONE]（缺陷形态=
+   两者皆无直至客户端断开）
+3. 全程任意相邻 SSE 事件间隔 < 30s（客户取消阈值；缺陷实测
+   71.7-116.7s 空窗；TTFT 不计入——首 token 问题报告声明另行排
+   查）
+4. finish=tool_calls 时逐 tool index 拼接 arguments 为完整 JSON
+   且工具名非空（报告修复验证标准 4——严格校验，格式错误不伪装
+   成功）
+
+**判定矩阵**：
+- HTTP 非 200 → FAIL（回放被拒——另形态留证）
+- 空事件流 / 无 finish_reason / 无 [DONE] → FAIL（工单缺陷形
+  态——流静默至客户端断开）
+- 读空闲 180s ReadTimeout → FAIL（永久停流形态——缺陷复现）
+- 任意事件间隔 ≥ 30s → FAIL（缺陷复现——长参数阶段解析器整包缓
+  冲、SSE 静默，恢复时大段参数整包返回）
+- finish=tool_calls 且拼接 args 非 JSON/工具名空 → FAIL（报告标
+  准 4 违反）
+- 200 + 全程间隔 <30s + finish + DONE + args 完整 → PASS
+
+**观察记录（不计判据，留日志）**：TTFT（历史实测 22.6/44.2s，首
+token 问题另行排查）；事件数；最大事件间隔及位置；工具参数增量
+事件数（修复标准 2 直接证据——长参数阶段应有多段 delta 而非整
+包）；参数字符数；usage（include_usage）；请求文件 sha256 留
+痕；总时长
+
+**设计决策记录**：
+- **单发原样回放**：报告方法 C 认可口径（抓包请求为唯一完整原始
+  body 的真实线上请求，工单原始请求未被抓包捕获）；大上下文
+  prefill+131072 上限、实测 95s+，单并发（报告要求）
+- **数据文件入库**：231KB 原样入库 tests/data/（用户确认）——回
+  放保真最高；sha256 与报告一致可校验；客户业务内容不进日志/
+  Allure（log_request 摘要占位）
+- **model 环境注入**：用户确认——与既有 K 用例一致（K1-K42 均
+  环境注入）；运行时环境（Jenkins MODEL/BASE_URL）指向 Kimi-K3
+  测试实例，marker KimiK3 既有选择机制（K5-K10/K13/K21/K39 同
+  口径）
+- **间隔阈值 30s**：客户取消策略原值（工单：30s 无数据断开）；
+  缺陷实测 71.7-116.7s；修复后应无 30s 级空窗（修复标准 3——看
+  transport 字节间隔，不能只看 HTTP 200）
+- **读空闲 180s 而非 30s**：TTFT 长等待合法（历史实测 22.6/
+  44.2s，首 token 44s 等待请求存在）——30s 读超时会误伤合法首包
+  延迟；永久停流在 180s 触发 ReadTimeout 仍判 FAIL
+- **TTFT 不计入间隔断言**：报告明确首 token 未记录/长延迟为独
+  立问题（另行排查），本用例只覆盖工单停流形态（出流开始后的中
+  途静默）
+- **finish=length 留观察**：正常终止断言接受任何非空 finish_
+  reason（工单缺陷=无结束标记）；length 为输出上限形态，非本工
+  单缺陷，日志留痕交人工
+
+**注意事项**：
+- marker：仅 `KimiK3`（K 套件按模型分组标记；工单模型 Kimi-K3，
+  缺陷为 SGLang K3 工具解析器层，无其他模型分支）
+- 不进 smoke 集：新用例首跑观察期；单发大上下文 prefill+131072
+  上限，耗时约 1.5-4 分钟

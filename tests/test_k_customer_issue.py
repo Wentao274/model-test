@@ -3,7 +3,7 @@ K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
- K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40 为 P1，K33/K34 为 P2。
+ K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -914,10 +914,72 @@ K. 客户问题复现测试
   段形态）。GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3
   档位变体，缺陷为响应字段生成逻辑，无模型分支）。（不进
   smoke 集：新用例首跑观察期；三轮 × 每轮 10 请求）
+- K41: stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议） [P1]
+  客户问题（新工单，参数校验）：请求带 stop=[]（空数组）时平台
+  400 拒绝，两种错误形态（两个 request id）——上游校验错透传
+  {"error": {"message": "Validation: Stop sequences array cannot
+  be empty (...)", "type": "upstream_error", "param": "400",
+  "code": "bad_response_status_code"}} 与平台参数错 {"code":
+  1210, "message": "max_tokens 超出范围 [1, 131072] (...)"};
+  预期（整改）：正常响应、正常结束（finish=stop），不应触发模
+  型服务的最大输出上限 128k。本用例单发 stop=[] 请求（参数处理
+  确定性，K6/K23 先例），请求体最小构造（stop=[] 工单唯一原样
+  参数+自拟最小 user 消息——工单未携带消息内容；max_tokens 不
+  传——用户确认 2026-11-09：工单未提供不注入，且缺省填充上限
+  缺陷路径恰好由不传覆盖；stream/thinking/采样参数未含——不
+  传不注入；模型名由环境注入——工单无模型线索）。断言：1)
+  HTTP 200（400=缺陷复现——两种工单错误文案归类留证）；2) 合
+  法 JSON+choices 非空；3) finish_reason=="stop"（正常结束——
+  工单原话；length=触发输出上限 128k 形态）；4) 正文非空。观
+  察（不计判据）：400 时错误体归类（Stop sequences array
+  cannot be empty→上游校验错形态/max_tokens 超出范围+code
+  1210→平台参数错形态）；200 时 usage.completion_tokens 异常
+  大（撞 128k 上限痕迹）留痕。超时沿用全局（工单未涉及挂死/
+  超时语义）。chat 单协议（错误体为 chat 形态响应；msg 未知参
+  数行为由 K33/K35 覆盖）。GLM-5.3 专用（工单无模型线索，缺
+  陷为平台/引擎层 stop 校验与 max_tokens 上限路径，无模型分
+  支）。（不进 smoke 集：新用例首跑观察期；1 请求）
+- K42: Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议） [P1]
+  客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）：kimi-k3 流
+  式请求正常出流（~70 chunk/s、已出 1480 tokens）后正文结束，连
+  续 30s 无任何字节——无 finish_reason/tool_calls/[DONE]，连接
+  未断，客户端按 30s 无数据取消策略断开（网关日志「客户端已断
+  开，已中断渠道 #20 上游请求」）；多条历史请求同形态（中断、
+  finish_reason 为空）。根因（排障报告确认）：SGLang 0.5.21
+  kimik3_detector 工具调用解析器按完整 call 整包输出、不增量
+  发工具参数——正文/思考可先结束，长参数生成阶段参数全部缓存
+  在解析器内，SSE 无新数据无心跳（serving_chat.py 空时不
+  yield）；线上抓包 3 样本空窗 71.697/89.010/116.724s（恢复时
+  一次性返回 7952/12831/12044 字符参数），均超客户 30s 取消阈
+  值。本用例单发原样回放抓包请求 tests/data/k42_request_
+  original.json（231,432 字节，sha256 371b1753...；78 messages/
+  25 tools/31 历史工具调用，agentic 工作流场景——报告方法 C 口
+  径：单并发、读空闲 180s、总时限 600s）。请求构造：messages/
+  tools/temperature=1/max_completion_tokens=131072/stream=true/
+  stream_options={"include_usage": true}/reasoning_effort="high"
+  全部原样（抓包原样参数）；stop/tool_choice/seed/采样参数未
+  含——不注入；model 由环境注入（用户确认 2026-11-09——与既有
+  K 用例一致，运行环境指向 Kimi-K3 实例）。判定（单发，四断
+  言）：1) HTTP 200 + SSE 事件流；2) 正常终止——收到非空
+  finish_reason 且收到 [DONE]（缺陷形态=两者皆无直至客户端断
+  开）；3) 全程任意相邻 SSE 事件间隔 < 30s（客户取消阈值；缺
+  陷实测 71.7-116.7s 空窗；TTFT 不计入——首 token 问题报告声明
+  另行排查）；4) finish=tool_calls 时逐 tool index 拼接
+  arguments 为完整 JSON 且工具名非空（报告修复验证标准 4）。
+  观察（不计判据）：TTFT（历史实测 22.6/44.2s）、事件数、最大
+  事件间隔及位置、工具参数增量事件数（修复标准 2 证据——长参
+  数阶段应有多段 delta 而非整包）、参数字符数、usage、请求文
+  件 sha256 留痕。超时：读空闲上限 180s（requests 读超时按字节
+  间隔计——K37/K38 先例；永久停流触发 ReadTimeout=缺陷形态
+  FAIL）；总时限 600s 墙钟检查。chat 单协议（工单为 chat SSE
+  流式）。仅 KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工具
+  解析器层，无其他模型分支）。（不进 smoke 集：新用例首跑观察
+  期；单发大上下文 prefill+131072 上限，耗时约 1.5-4 分钟）
 """
 
 import base64
 import concurrent.futures
+import hashlib
 import importlib.util
 import json
 import math
@@ -12727,4 +12789,506 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"的所有请求全部 HTTP 200 且 reasoning_content 统一携"
             f"带（存在且非空），thinking enabled 响应 reasoning_"
             f"content 字段不稳定缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p1
+    def test_empty_stop_array_normal_response(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K41 [P1]: 客户问题 - stop 空数组应正常响应（400 拒
+        绝缺陷核验）
+
+        客户问题（新工单，参数校验）：请求带 stop=[]（空数组）时
+        平台 400 拒绝，两种错误形态（两个 request id）——上游校
+        验错透传 {"error": {"message": "Validation: Stop
+        sequences array cannot be empty (...)", "type":
+        "upstream_error", "param": "400", "code": "bad_response_
+        status_code"}} 与平台参数错 {"code": 1210, "message":
+        "max_tokens 超出范围 [1, 131072] (...)"}。
+        预期行为（整改）：stop=[] 请求正常响应、正常结束（finish=
+        stop），不应触发模型服务的最大输出上限 128k。
+        本用例单发 stop=[] 请求（参数处理确定性，K6/K23 先例）。
+        请求体最小构造：stop=[]（工单唯一原样参数）+ 自拟最小
+        user 消息（工单未携带消息内容）；max_tokens 不传（用户确
+        认 2026-11-09——工单未提供不注入，且缺省填充上限缺陷路
+        径恰好由不传覆盖：错误形态 2「max_tokens 超出范围 [1,
+        131072]」直接指向缺省/上限路径）；stream/thinking/采样参
+        数（temperature/top_p/seed）未含——不传不注入；模型名由
+        环境注入（工单无模型线索）。超时沿用全局（工单未涉及挂
+        死/超时语义）。
+        判定（单发，四断言）：
+        1. 断言1：HTTP 200（400=缺陷复现——两种工单错误文案归类
+           留证）
+        2. 断言2：响应体合法 JSON + choices 非空
+        3. 断言3：finish_reason == "stop"（正常结束——工单原
+           话；length=触发模型服务最大输出上限 128k 的缺陷形
+           态）
+        4. 断言4：正文非空
+        观察（不计判据）：400 时错误体归类（"Stop sequences
+        array cannot be empty"→上游校验错形态 / "max_tokens 超
+        出范围"+code 1210→平台参数错形态）；200 时 usage.
+        completion_tokens 异常大（撞 128k 上限痕迹）留痕。chat
+        单协议（错误体为 chat 形态响应；msg 未知参数行为由
+        K33/K35 覆盖）。仅 GLM53（工单无模型线索，被测环境
+        glm-5.3，缺陷为平台/引擎层 stop 校验与 max_tokens 上限
+        路径，无模型分支）。（不进 smoke 集：新用例首跑观察
+        期；1 请求）
+        """
+        # K41: 工单原样参数（stop=[] 空数组——唯一明确参数）；
+        # 消息内容工单未携带——自拟最小 user 消息
+        K41_STOP: List[str] = []
+        K41_PROMPT = "请用一句话解释什么是质数。"
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - stop 空数组应正常响应（工单："
+            "stop=[] 请求 400——两种错误形态：Stop sequences array "
+            "cannot be empty（upstream_error）/ max_tokens 超出范围 "
+            "[1, 131072]（code 1210）；预期正常响应正常结束，不应触"
+            "发模型服务最大输出上限 128k；单发，max_tokens 不传——"
+            "缺省填充上限缺陷路径由不传覆盖）==="
+        )
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+
+        # K41: 请求体最小构造（字段序 model/messages/stop；stop=[]
+        # 工单原样；max_tokens 不传——工单未提供不注入；stream/
+        # thinking/采样参数未含——不传不注入；模型名由环境注入）
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K41_PROMPT}],
+            "stop": K41_STOP,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K41_PROMPT}],
+            {
+                "endpoint": "/v1/chat/completions",
+                "stop": K41_STOP,
+                "max_tokens": "(原始未提供——不传，缺省/上限路径由不传覆盖)",
+                "stream": "(原始未指定——不传，非流式默认)",
+                "thinking": "(原始未指定——不传)",
+                "temperature": "(原始未指定——不注入)",
+                "top_p": "(原始未指定——不注入)",
+                "seed": "(原始未指定——不注入)",
+            },
+        )
+
+        # K41: 单发直发（参数处理确定性——K6/K23 先例；超时沿用全
+        # 局，工单未涉及挂死语义）
+        start_time = time.time()
+        response = api_client._post_with_retry(
+            chat_url, payload, stream=False
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+
+        # K41: 模型真实响应断言前留痕——400 时按工单两种错误文案归
+        # 类（缺陷形态留证，失败时同样可见）
+        if status == 200:
+            test_logger.info(
+                f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s"
+            )
+        else:
+            defect_kinds = []
+            if "Stop sequences array cannot be empty" in body_text:
+                defect_kinds.append(
+                    "上游校验错形态（Stop sequences array cannot be "
+                    "empty/upstream_error）"
+                )
+            if (
+                "max_tokens" in body_text and "超出范围" in body_text
+            ) or "1210" in body_text:
+                defect_kinds.append(
+                    "平台参数错形态（max_tokens 超出范围 [1, 131072]"
+                    "/code 1210）"
+                )
+            kind_desc = (
+                "；".join(defect_kinds)
+                if defect_kinds
+                else "未归类形态（非工单两种文案）——留证交人工分派"
+            )
+            test_logger.info(
+                f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s, "
+                f"缺陷形态归类: {kind_desc}, 响应体全文: {body_text}"
+            )
+
+        # 断言1：HTTP 200（400=缺陷复现——工单两种错误体形态留证）
+        assert status == 200, (
+            f"缺陷复现: stop=[] 空数组请求被 HTTP {status} 拒绝（预期"
+            f"正常响应 200——工单形态：Stop sequences array cannot be "
+            f"empty（upstream_error）/ max_tokens 超出范围 [1, 131072]"
+            f"（code 1210）），elapsed={elapsed:.1f}s, 响应体全文: "
+            f"{body_text}"
+        )
+
+        # 断言2：响应体合法 JSON + choices 非空
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        choices = (data or {}).get("choices") or []
+        assert choices, (
+            f"响应体异常（非法 JSON/choices 空）: {body_text}"
+        )
+
+        choice0 = choices[0] or {}
+        message = choice0.get("message") or {}
+        content = message.get("content") or ""
+        finish_reason = choice0.get("finish_reason")
+
+        # 断言3：finish_reason == "stop"（正常结束——工单原话；
+        # length=触发模型服务最大输出上限 128k 的缺陷形态）
+        assert finish_reason == "stop", (
+            f"缺陷形态: finish_reason={finish_reason!r}（预期 stop 自然"
+            f"结束——length=触发了模型服务最大输出上限 128k，工单明确"
+            f"「不应触发」），HTTP {status}, 响应体全文: {body_text}"
+        )
+
+        # 断言4：正文非空（正常响应形态）
+        assert str(content).strip(), (
+            f"缺陷形态: 正文为空（预期正常响应非空正文），finish_"
+            f"reason={finish_reason!r}, 响应体全文: {body_text}"
+        )
+
+        # 观察记录（不计判据）：usage token 计量——completion_tokens
+        # 异常大=撞 128k 上限痕迹（缺省填充上限缺陷的残留形态）留
+        # 痕；reasoning_tokens 双路径兼容提取（K7 域字段拼写）
+        usage = (data or {}).get("usage") or {}
+        completion_tokens = usage.get("completion_tokens")
+        details = usage.get("completion_tokens_details")
+        reasoning_tokens = (
+            details.get("reasoning_tokens")
+            if isinstance(details, dict)
+            else None
+        )
+        if reasoning_tokens is None:
+            reasoning_tokens = usage.get("reasoning_tokens")
+        test_logger.info(
+            f"观察: finish_reason={finish_reason!r}, 正文 "
+            f"{len(str(content).strip())} 字符, completion_tokens="
+            f"{completion_tokens!r}, reasoning_tokens="
+            f"{reasoning_tokens!r}（completion_tokens 异常大=撞 "
+            f"128k 上限痕迹，观察不计判据）"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: stop=[] 空数组请求 HTTP 200 且自然"
+            "结束（finish=stop）正文非空——空 stop 数组 400 拒绝与 "
+            "max_tokens 越界（触发 128k 上限）缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
+    @pytest.mark.p1
+    def test_kimik3_long_tool_args_stream_no_stall(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K42 [P1]: 客户问题 - Kimi-K3 工具调用长参数流式停流
+        核验（间隔<30s+正常终止，chat 单协议）
+
+        客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）：kimi-k3
+        流式请求正常出流（~70 chunk/s、已出 1480 tokens）后正文结
+        束，连续 30s 无任何字节——无 finish_reason/tool_calls/
+        [DONE]，连接未断，客户端按 30s 无数据取消策略断开（网关
+        日志「客户端已断开，已中断渠道 #20 上游请求」）；多条历史
+        请求同形态（中断、finish_reason 为空）。
+        根因（排障报告确认）：SGLang 0.5.21 kimik3_detector 工具调
+        用解析器按完整 call 整包输出、不增量发工具参数——正文/
+        思考可先结束，长参数生成阶段参数全部缓存在解析器内，
+        SSE 无新数据无心跳（serving_chat.py 空时不 yield）；线上
+        抓包 3 样本空窗 71.697/89.010/116.724s（恢复时一次性返
+        回 7952/12831/12044 字符参数），均超客户 30s 取消阈值。
+        本用例单发原样回放抓包请求 tests/data/k42_request_
+        original.json（231,432 字节，sha256 371b1753...；78
+        messages/25 tools/31 历史工具调用，报告方法 C 口径：单
+        并发、读空闲 180s、总时限 600s）。
+        请求构造：messages/tools/temperature=1/max_completion_
+        tokens=131072/stream=true/stream_options={"include_
+        usage": true}/reasoning_effort="high" 全部原样（抓包原
+        样参数）；stop/tool_choice/seed/采样参数未含——不注入；
+        model 由环境注入（用户确认 2026-11-09——与既有 K 用例一
+        致，运行环境指向 Kimi-K3 实例）。
+        判定（单发，四断言）：
+        1. 断言1：HTTP 200 + SSE 事件流（events>0）
+        2. 断言2：正常终止——收到非空 finish_reason 且收到
+           [DONE]（缺陷形态=两者皆无直至客户端断开）
+        3. 断言3：全程任意相邻 SSE 事件间隔 < 30s（客户取消阈
+           值；缺陷实测 71.7-116.7s 空窗；TTFT 不计入——首
+           token 问题报告声明另行排查）
+        4. 断言4：finish=tool_calls 时逐 tool index 拼接
+           arguments 为完整 JSON 且工具名非空（报告修复验证标
+           准 4）
+        观察（不计判据）：TTFT（历史实测 22.6/44.2s）、事件数、
+        最大事件间隔及位置、工具参数增量事件数（修复标准 2 证
+        据——长参数阶段应有多段 delta 而非整包）、参数字符数、
+        usage、请求文件 sha256 留痕。
+        超时：读空闲上限 180s（requests 读超时按字节间隔计——
+        K37/K38 先例；永久停流触发 ReadTimeout=缺陷形态 FAIL）；
+        总时限 600s 墙钟检查。chat 单协议（工单为 chat SSE 流
+        式）。仅 KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工
+        具解析器层，无其他模型分支）。（不进 smoke 集：新用例
+        首跑观察期；单发大上下文 prefill+131072 上限，耗时约
+        1.5-4 分钟）
+        """
+        # K42: 抓包原始请求（报告材料原样入库——231,432 字节）
+        K42_REQUEST_FILE = (
+            Path(__file__).parent / "data" / "k42_request_original.json"
+        )
+        # K42: 客户取消策略阈值（工单：30s 无数据断开）——事件间
+        # 隔硬断言线
+        K42_MAX_EVENT_GAP_S = 30.0
+        # K42: 读空闲上限（报告方法 C 口径 180s——requests 读超时
+        # 按字节间隔计，K37/K38 先例；TTFT 长等待合法：历史实测
+        # 22.6/44.2s；永久停流在此触发 ReadTimeout）
+        K42_READ_IDLE_TIMEOUT_S = 180
+        # K42: 总时限（报告方法 C 口径 max-seconds 600）
+        K42_TOTAL_LIMIT_S = 600.0
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - Kimi-K3 工具调用长参数流式停"
+            "流核验（工单：流式出流 1480 tokens 后 30s 无任何字节"
+            "——无 finish/tool_calls/DONE，客户端 30s 空闲取消断开；"
+            "根因：K3 工具解析器整包缓冲长参数；单发原样回放，间隔"
+            "<30s+正常终止）==="
+        )
+
+        raw_bytes = K42_REQUEST_FILE.read_bytes()
+        payload = json.loads(raw_bytes)
+        # 观察：请求文件完整性留痕（报告口径 sha256 一致性）
+        file_sha = hashlib.sha256(raw_bytes).hexdigest()
+        test_logger.info(
+            f"请求文件: {K42_REQUEST_FILE.name}, {len(raw_bytes)} 字"
+            f"节, sha256={file_sha}"
+        )
+
+        # K42: 客户业务内容不进日志/Allure（报告注明业务内容仅内
+        # 部排障使用）——log_request 仅记摘要占位，真实 78
+        # messages/25 tools 见数据文件
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "[K42 原样回放摘要] 78 messages（24 system/1 "
+                        "user/22 assistant/31 tool）/ 25 tools——客"
+                        "户业务内容不入日志，完整请求见 tests/data/"
+                        "k42_request_original.json"
+                    ),
+                }
+            ],
+            {
+                "endpoint": "/v1/chat/completions",
+                "stream": "true（抓包原样）",
+                "temperature": "1（抓包原样）",
+                "max_completion_tokens": "131072（抓包原样）",
+                "stream_options": '{"include_usage": true}（抓包原样）',
+                "reasoning_effort": "high（抓包原样）",
+                "stop/tool_choice/seed": "(抓包未含——不注入)",
+                "model": (
+                    f"{api_client.model_name!r}（环境注入——用户确认口径）"
+                ),
+            },
+        )
+
+        # K42: model 由环境注入（用户确认 2026-11-09），其余字段全
+        # 部原样（不增删、不改值——温度/上限/流式选项/
+        # reasoning_effort 均抓包原值）
+        payload["model"] = api_client.model_name
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        n_messages = len(payload.get("messages") or [])
+        n_tools = len(payload.get("tools") or [])
+        test_logger.info(
+            f"回放参数: messages={n_messages}, tools={n_tools}, "
+            f"temperature={payload.get('temperature')!r}, "
+            f"max_completion_tokens="
+            f"{payload.get('max_completion_tokens')!r}, "
+            f"stream={payload.get('stream')!r}, "
+            f"reasoning_effort={payload.get('reasoning_effort')!r}, "
+            f"model={payload['model']!r}（环境注入）"
+        )
+
+        # K42: 单发流式直发（读空闲 180s——requests 读超时按字节
+        # 间隔计；总时限 600s 循环内墙钟检查）
+        started = time.time()
+        response = api_client._post_with_retry(
+            chat_url, payload, stream=True, timeout=K42_READ_IDLE_TIMEOUT_S
+        )
+
+        # 断言1：HTTP 200（SSE 事件流 events>0 在迭代后断言）
+        assert response.status_code == 200, (
+            f"缺陷形态: 回放请求被 HTTP {response.status_code} 拒绝: "
+            f"{response.text[:500]}"
+        )
+
+        events = 0
+        got_done = False
+        finish_reasons: List[str] = []
+        tool_args: Dict[int, Dict[str, Any]] = {}
+        tool_delta_events = 0
+        max_gap = 0.0
+        max_gap_at_event = None
+        prev_ts: Optional[float] = None
+        ttft: Optional[float] = None
+        usage: Dict[str, Any] = {}
+        stream_error = None
+
+        try:
+            for line in response.iter_lines():
+                if time.time() - started > K42_TOTAL_LIMIT_S:
+                    pytest.fail(
+                        f"缺陷形态: 流式回放超总时限 "
+                        f"{K42_TOTAL_LIMIT_S:.0f}s（报告方法 C 口径）"
+                        f"仍未结束——events={events}, got_done="
+                        f"{got_done}, finish_reasons="
+                        f"{finish_reasons}, max_gap={max_gap:.3f}s"
+                    )
+                if not line:
+                    continue
+                now = time.time()
+                if prev_ts is None:
+                    ttft = now - started
+                else:
+                    gap = now - prev_ts
+                    if gap > max_gap:
+                        max_gap = gap
+                        max_gap_at_event = events + 1
+                prev_ts = now
+                line_text = line.decode("utf-8")
+                if not line_text.startswith("data: "):
+                    continue
+                data = line_text[6:]
+                if data == "[DONE]":
+                    got_done = True
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    test_logger.warning(
+                        f"非 JSON SSE 事件（留证）: {data[:200]!r}"
+                    )
+                    continue
+                events += 1
+                evt_usage = event.get("usage")
+                if isinstance(evt_usage, dict):
+                    usage.update(evt_usage)
+                for choice in event.get("choices") or []:
+                    if choice.get("finish_reason"):
+                        finish_reasons.append(choice["finish_reason"])
+                    delta = choice.get("delta") or {}
+                    for tc in delta.get("tool_calls") or []:
+                        idx = tc.get("index", 0)
+                        slot = tool_args.setdefault(
+                            idx, {"name": "", "args": "", "segments": 0}
+                        )
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            slot["name"] += fn["name"]
+                        if fn.get("arguments"):
+                            slot["args"] += fn["arguments"]
+                            slot["segments"] += 1
+                            tool_delta_events += 1
+        except requests.exceptions.ReadTimeout:
+            stream_error = (
+                f"永久停流形态: 读空闲 {K42_READ_IDLE_TIMEOUT_S}s 无任"
+                f"何字节（缺陷复现——TTFT={ttft!r}, events={events}, "
+                f"got_done={got_done}, finish_reasons={finish_reasons}"
+            )
+        except requests.exceptions.RequestException as e:
+            stream_error = (
+                f"连接异常终止形态（无正常 DONE）: {e!r}（TTFT="
+                f"{ttft!r}, events={events}, got_done={got_done}, "
+                f"finish_reasons={finish_reasons}"
+            )
+        total_elapsed = time.time() - started
+
+        if stream_error:
+            pytest.fail(
+                f"{stream_error}, elapsed={total_elapsed:.1f}s, "
+                f"max_gap={max_gap:.3f}s"
+            )
+
+        # 断言1（补足）：SSE 事件流非空
+        assert events > 0, (
+            f"缺陷形态: 200 但空事件流（无任何 SSE data 事件）, "
+            f"got_done={got_done}, elapsed={total_elapsed:.1f}s"
+        )
+
+        # 断言2：正常终止——非空 finish_reason + [DONE]（工单缺陷
+        # 形态=两者皆无直至客户端 30s 空闲取消断开）
+        assert finish_reasons and finish_reasons[-1], (
+            f"缺陷形态: 未收到 finish_reason（工单形态——流静默至客户"
+            f"端断开，无正常结束标记）, TTFT={ttft!r}, events="
+            f"{events}, got_done={got_done}, elapsed="
+            f"{total_elapsed:.1f}s"
+        )
+        assert got_done, (
+            f"缺陷形态: 未收到 [DONE]（工单形态——流静默至客户端断"
+            f"开）, finish_reasons={finish_reasons}, events={events}, "
+            f"elapsed={total_elapsed:.1f}s"
+        )
+
+        # 断言3：全程任意相邻 SSE 事件间隔 < 30s（客户取消阈值；
+        # 缺陷实测 71.7-116.7s 空窗；TTFT 不计入——首 token 问题
+        # 报告声明另行排查）
+        assert max_gap < K42_MAX_EVENT_GAP_S, (
+            f"缺陷复现: 最大事件间隔 {max_gap:.3f}s 超客户取消阈值 "
+            f"{K42_MAX_EVENT_GAP_S:.0f}s（第 {max_gap_at_event} 个事件"
+            f"前——工单形态：长参数阶段解析器整包缓冲、SSE 无新数"
+            f"据）, finish_reasons={finish_reasons}, events={events}, "
+            f"TTFT={ttft!r}, elapsed={total_elapsed:.1f}s"
+        )
+
+        # 断言4：finish=tool_calls 时逐 tool index 拼接 arguments
+        # 为完整 JSON 且工具名非空（报告修复验证标准 4——严格校
+        # 验，格式错误不伪装成功）
+        if "tool_calls" in finish_reasons:
+            assert tool_args, (
+                f"缺陷形态: finish=tool_calls 但未收到任何工具调用 "
+                f"delta: events={events}"
+            )
+            for idx, slot in sorted(tool_args.items()):
+                assert slot["name"].strip(), (
+                    f"缺陷形态: tool index {idx} 工具名为空（报告标准 "
+                    f"4——工具名遗漏）: slot={slot!r}"
+                )
+                try:
+                    json.loads(slot["args"])
+                except json.JSONDecodeError as e:
+                    pytest.fail(
+                        f"缺陷形态: tool index {idx}（{slot['name']}）拼"
+                        f"接后 arguments 非完整 JSON（报告标准 4）: "
+                        f"{e}, args 尾部 200 字符: "
+                        f"{slot['args'][-200:]!r}"
+                    )
+
+        # 观察记录（不计判据）：流式全貌——TTFT/事件数/最大间隔/
+        # 工具增量形态/usage（include_usage）/时长
+        tool_summary = "; ".join(
+            f"index {idx}: {slot['name'] or '(空)'} 参数 "
+            f"{len(slot['args'])} 字符/{slot['segments']} 段"
+            for idx, slot in sorted(tool_args.items())
+        ) or "（无工具调用）"
+        test_logger.info(
+            f"观察: TTFT={ttft!r}, events={events}, 最大事件间隔="
+            f"{max_gap:.3f}s（第 {max_gap_at_event} 个事件前）, "
+            f"finish_reasons={finish_reasons}, got_done={got_done}, "
+            f"工具参数增量事件数={tool_delta_events}, {tool_summary}"
+        )
+        test_logger.info(
+            f"观察: usage={usage}, elapsed={total_elapsed:.1f}s（总时"
+            f"限内）——工具参数增量事件数>=2 且 max_gap<30s 即为修复"
+            f"标准 2/3 的直接证据"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: Kimi-K3 长工具参数流式回放全程无 "
+            "30s 级空窗（客户取消阈值内）且正常终止（finish+"
+            "[DONE]）——工具解析器整包缓冲长参数致流式静默停流缺陷"
+            "未复现"
         )

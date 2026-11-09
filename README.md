@@ -33,9 +33,9 @@
 | F. API 兼容性 | `f_api` | 7 | OpenAI 接口兼容（Chat/Completions/Models/SDK/错误码，含 /v1/responses 新一代接口） |
 | G. Chat Completions API 质量评估 | `g_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | `h_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
-| K. 客户问题复现 | `k_customer_issue` | 40 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、required 强制调用工具对齐官方、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（chat [0, 2] 含端点/msg [0, 1] 双协议）、top_logprobs 放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（stop 语义——流式/多段/结构化 × chat/msg 双协议）、n=2 请求 400 拒绝且不挂死核验（30s 硬超时 + 提示信息）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）、thinking enabled 响应 reasoning_content 字段稳定性核验（三轮 × 每轮 10 并发统一携带，chat 单协议）），P0 为主持续追加 |
+| K. 客户问题复现 | `k_customer_issue` | 42 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、required 强制调用工具对齐官方、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（chat [0, 2] 含端点/msg [0, 1] 双协议）、top_logprobs 放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（stop 语义——流式/多段/结构化 × chat/msg 双协议）、n=2 请求 400 拒绝且不挂死核验（30s 硬超时 + 提示信息）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）、thinking enabled 响应 reasoning_content 字段稳定性核验（三轮 × 每轮 10 并发统一携带，chat 单协议）、stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议）、Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议）），P0 为主持续追加 |
 
-> 总计：126 个测试点（P0: 60 / P1: 49 / P2: 17）
+> 总计：128 个测试点（P0: 60 / P1: 51 / P2: 17）
 
 ---
 
@@ -281,7 +281,7 @@ pytest -m slow -v                           # 慢速测试
 
 豁免机制（用户口径）：以下用例全局覆盖对其**不生效**，始终按用例自身参数执行——
 
-- **test_k 全部用例（K1-K40，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
+- **test_k 全部用例（K1-K42，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
 - 测试点即采样参数行为的 a-h 用例：A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`（见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
 其余 a-h 用例测试点未指定 temperature/top_p/seed——无全局覆盖时请求一律不带采样参数；设值后走全局参数值（受限模型场景即全量统一携带允许值）。
@@ -372,7 +372,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K40，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
+| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K42，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
 | `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_h 与 test_k 下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |

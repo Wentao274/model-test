@@ -1597,6 +1597,88 @@ TEST_CATEGORIES = {
                 "thinking_enabled_reasoning_content_stable",
                 "P1",
             ),
+            (
+                "K41",
+                "stop 空数组应正常响应核验（400 拒绝缺陷，chat 单"
+                "协议）",
+                "客户问题（新工单，参数校验）：请求带 stop=[]（空数"
+                "组）时平台 400 拒绝，两种错误形态（两个 request "
+                "id）——上游校验错透传 {\"error\": {\"message\": "
+                "\"Validation: Stop sequences array cannot be "
+                "empty (...)\", \"type\": \"upstream_error\", "
+                "\"param\": \"400\", \"code\": \"bad_response_"
+                "status_code\"}} 与平台参数错 {\"code\": 1210, "
+                "\"message\": \"max_tokens 超出范围 [1, 131072] "
+                "(...)\"}；预期（整改）：正常响应、正常结束（finish"
+                "=stop），不应触发模型服务的最大输出上限 128k。本用"
+                "例单发 stop=[] 请求（参数处理确定性，K6/K23 先例），"
+                "请求体最小构造（stop=[] 工单唯一原样参数+自拟最小 "
+                "user 消息——工单未携带消息内容；max_tokens 不传——"
+                "用户确认 2026-11-09：工单未提供不注入，且缺省填充"
+                "上限缺陷路径恰好由不传覆盖；stream/thinking/采样参"
+                "数未含——不传不注入；模型名由环境注入——工单无模"
+                "型线索）。断言：1) HTTP 200（400=缺陷复现——两种"
+                "工单错误文案归类留证）；2) 合法 JSON+choices 非空；"
+                "3) finish_reason==\"stop\"（正常结束——工单原话；"
+                "length=触发输出上限 128k 形态）；4) 正文非空。观察"
+                "（不计判据）：400 时错误体归类（Stop sequences "
+                "array cannot be empty→上游校验错形态/max_tokens 超"
+                "出范围+code 1210→平台参数错形态）；200 时 usage."
+                "completion_tokens 异常大（撞 128k 上限痕迹）留痕。"
+                "超时沿用全局（工单未涉及挂死/超时语义）。chat 单协"
+                "议（错误体为 chat 形态响应；msg 未知参数行为由 "
+                "K33/K35 覆盖）。GLM-5.3 专用（工单无模型线索，缺陷"
+                "为平台/引擎层 stop 校验与 max_tokens 上限路径，无模"
+                "型分支）",
+                "empty_stop_array_normal_response",
+                "P1",
+            ),
+            (
+                "K42",
+                "Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终"
+                "止，chat 单协议）",
+                "客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）："
+                "kimi-k3 流式请求正常出流（~70 chunk/s、已出 1480 "
+                "tokens）后正文结束，连续 30s 无任何字节——无 "
+                "finish_reason/tool_calls/[DONE]，连接未断，客户端按 "
+                "30s 无数据取消策略断开（网关日志「客户端已断开，已中"
+                "断渠道 #20 上游请求」）；多条历史请求同形态（中断、"
+                "finish_reason 为空）。根因（排障报告确认）：SGLang "
+                "0.5.21 kimik3_detector 工具调用解析器按完整 call 整"
+                "包输出、不增量发工具参数——长参数生成阶段参数全部缓"
+                "存在解析器内，SSE 无新数据无心跳（serving_chat.py 空"
+                "时不 yield）；线上抓包 3 样本空窗 71.697/89.010/"
+                "116.724s（恢复时一次性返回 7952/12831/12044 字符参"
+                "数），均超客户 30s 取消阈值。本用例单发原样回放抓包请"
+                "求 tests/data/k42_request_original.json（231,432 字"
+                "节，sha256 371b1753...；78 messages/25 tools/31 历史"
+                "工具调用，agentic 工作流场景——报告方法 C 口径：单并"
+                "发、读空闲 180s、总时限 600s）。请求构造：messages/"
+                "tools/temperature=1/max_completion_tokens=131072/"
+                "stream=true/stream_options={\"include_usage\": true}/"
+                "reasoning_effort=\"high\" 全部原样（抓包原样参数）；"
+                "stop/tool_choice/seed/采样参数未含——不注入；model 由"
+                "环境注入（用户确认 2026-11-09——与既有 K 用例一致，"
+                "运行环境指向 Kimi-K3 实例）。判定（单发，四断言）："
+                "1) HTTP 200 + SSE 事件流；2) 正常终止——收到非空 "
+                "finish_reason 且收到 [DONE]（缺陷形态=两者皆无直至"
+                "客户端断开）；3) 全程任意相邻 SSE 事件间隔 < 30s（客"
+                "户取消阈值；缺陷实测 71.7-116.7s 空窗；TTFT 不计"
+                "入——首 token 问题报告声明另行排查）；4) finish="
+                "tool_calls 时逐 tool index 拼接 arguments 为完整 "
+                "JSON 且工具名非空（报告修复验证标准 4）。观察（不计"
+                "判据）：TTFT（历史实测 22.6/44.2s）、事件数、最大事"
+                "件间隔及位置、工具参数增量事件数（修复标准 2 证据"
+                "——长参数阶段应有多段 delta 而非整包）、参数字符数、"
+                "usage、请求文件 sha256 留痕。超时：读空闲上限 180s"
+                "（requests 读超时按字节间隔计——K37/K38 先例；永久停"
+                "流触发 ReadTimeout=缺陷形态 FAIL）；总时限 600s 墙"
+                "钟检查。chat 单协议（工单为 chat SSE 流式）。仅 "
+                "KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工具解析"
+                "器层，无其他模型分支）",
+                "kimik3_long_tool_args_stream_no_stall",
+                "P1",
+            ),
         ],
     },
 }
