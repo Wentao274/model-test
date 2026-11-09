@@ -637,15 +637,25 @@ K. 客户问题复现测试
   无 stream 字段）→ 200+choices 非空（正文/finish_reason 留
   观察不计判据——max_tokens=32 小配额下默认思考计入共享配额
   易 length/空正文，K31 域形态非本例判据；A-03 判据为 HTTP
-  状态语义）；边界轮 2.0（上界端点移入放行，测试自构造轮）
-  → 200+正文非空+自然结束；越界轮 2.5 与 -0.5 → 400+错误体
+   状态语义）；边界轮 2.0（上界端点移入放行，测试自构造轮；
+   请求对齐 A-03 短形态 content="只回复:好"+max_tokens=32+
+   无 stream 字段，断言对齐 A-03 轮口径：200+choices 非空、
+   正文/finish 留观察（K31 域形态非判据——主判据=2.0 被接
+   受 200）——用户指定 2026-11-09）；左边界轮 0.0（下界端
+   点，用户指定 2026-11-09 新增；长形态 max_tokens=1024）
+   → 200+choices 非空（正文/finish 留观察——主判据=0.0 被
+   接受 200）；越界轮 2.5 与 -0.5（max_tokens=1024——所有
+   轮均须 max_tokens 限制，用户指定 2026-11-09）→
+   400+错误体
   指明参数名 temperature（大小写不敏感）+含上界数字 2（区
   间痕迹辅助下限口径——A-03 形态错误体含 request id 数字串
   可能恒满足，本地收紧主判据在放行轮 200）。msg 协议
   （/anthropic/v1/messages）按 Anthropic 官方区间 [0, 1] 分
   别校验（A-03 未涉及 msg，维持原口径）——放行轮
   temperature=0.5（工单原值 1.5 在该协议官方语义下越界，不
-  可作放行点）→ 200+正文非空+stop_reason 自然结束；越界轮
+  可作放行点）与 0.0（下界端点，用户指定 2026-11-09 新增
+  ——双协议口径一致）→ 200+正文非空+stop_reason 自然结
+  束；越界轮
   1.5（工单原值，[0, 1] 越界——与 chat 侧同值不同判，验证
   网关按协议语义分别校验而非一刀切）与 2.0、-0.5 → 400+错
   误体指明参数名 temperature+含上界数字 1（区间痕迹）。非流
@@ -653,8 +663,10 @@ K. 客户问题复现测试
   局 timeout——小请求正常返回毫秒级-秒级，挂起/严重延迟快
   速失败：超时即 FAIL 留痕，仅本用例生效、不影响他例）；工
   单原始值 temperature/max_tokens 原样保留并豁免全局采样覆
-  盖；top_p/seed 工单未指定，不注入；msg 协议 max_tokens 为
-  必需字段；A-03 工单三发采集间隔 1s（节奏非判据），复现按
+  盖；top_p/seed/thinking 工单未指定，不注入；所有轮均传
+  max_tokens（32/1024——用户指定 2026-11-09，当前无限制的
+  取 1024）；msg 协议 max_tokens 为必需字段；A-03 工单三发
+  采集间隔 1s（节奏非判据），复现按
   套件相邻 3s。GLM-5.3 专用。（不进 smoke 集：新用例首跑观
   察期）
 - K33: top_logprobs=5 放行核验（未开 logprobs 也接受，chat+msg
@@ -9468,31 +9480,58 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
               tokens=32 小配额下默认思考计入共享配额（R-01
               未整改）易 length/空正文——K31 域形态，非本例
               判据）
-           b. 边界放行轮：temperature=2.0（区间上界端点——原
-              [0, 2) 口径越界点移入放行，测试自构造轮非工单
-              原发）→ HTTP 200 + 正文非空 + 自然结束
-              （finish_reason=stop——端点放行后正常生成）
-           c. 越界轮（保留非法校验，用户指定）：2.5（上界外）
-              与 -0.5（负向）→ HTTP 400 + 错误体指明参数名
-              temperature（大小写不敏感）+ 含上界数字 2（区
-              间痕迹断言口径；A-03 形态错误体含 request id
-              数字串，数字断言可能恒满足——辅助下限口径，
-              本地收紧主判据在放行轮 200）
+            b. 边界放行轮：temperature=2.0（区间上界端点——原
+               [0, 2) 口径越界点移入放行，测试自构造轮非工单
+               原发；请求对齐 A-03 轮同形态——content="只回
+               复:好"、max_tokens=32、无 stream 字段，短请求
+               短响应，用户指定 2026-11-09：本例主目的为验
+               证 temperature 支持范围，仅验证合法/非法值能
+               否按预期响应）→ HTTP 200 + 响应体为合法 JSON
+               且 choices 非空；正文/finish_reason 留观察不
+               计判据（对齐 A-03 轮口径——主判据=2.0 被接
+               受 200；max_tokens=32 小配额+默认思考计入共
+               享配额在 2.0 极端温度下易 length/空正文，
+               K31 域形态非本例判据）
+            c. 左边界放行轮：temperature=0.0（区间下界端
+               点——[0, 2] 含 0.0，用户指定 2026-11-09 新增验
+               证，此前下界仅由 -0.5 越界轮间接验证；长形态
+               content="请用一句话介绍你自己。"+max_tokens=
+               1024——所有轮均须 max_tokens 限制；测试自构造
+               轮非工单原发）→ HTTP 200 + 响应体为合法 JSON
+               且 choices 非空；正文/finish_reason 留观察不
+               计判据（对齐 2.0 边界轮口径——主判据=0.0 被
+               接受 200；0.0 贪心解码+1024 配额通常正文非
+               空+stop）
+            d. 越界轮（保留非法校验，用户指定）：2.5（上界外）
+               与 -0.5（负向，max_tokens=1024——所有轮均须
+               max_tokens 限制，用户指定 2026-11-09）→ HTTP
+               400 + 错误体指明参数名
+               temperature（大小写不敏感）+ 含上界数字 2（区
+               间痕迹断言口径；A-03 形态错误体含 request id
+               数字串，数字断言可能恒满足——辅助下限口径，
+               本地收紧主判据在放行轮 200）
         2. msg 协议（/anthropic/v1/messages，Anthropic 官方区
            间 [0, 1] 分别校验——A-03 未涉及 msg，维持原口径）
-           ——放行轮 temperature=0.5（工单原值 1.5 在该协议
-           官方语义下越界，不可作放行点）→ HTTP 200 + 正文非
-           空 + stop_reason 自然结束；越界轮 1.5（工单原值，
-           [0, 1] 越界——与 chat 侧同值不同判，验证网关按协
-           议语义分别校验而非一刀切）、2.0 与 -0.5 → HTTP
-           400 + 错误体指明参数名 temperature + 含上界数字 1
-           （该协议区间痕迹）
+            ——放行轮 temperature=0.5（工单原值 1.5 在该协议
+            官方语义下越界，不可作放行点）与 0.0（下界端点
+            ——用户指定 2026-11-09 新增验证，双协议口径一
+            致；0.0 贪心解码正常生成可满足）→ HTTP 200 + 正
+            文非空 + stop_reason 自然结束；越界轮 1.5（工单原
+            值，[0, 1] 越界——与 chat 侧同值不同判，验证网关
+            按协议语义分别校验而非一刀切）、2.0 与 -0.5 →
+            HTTP 400 + 错误体指明参数名 temperature + 含上界
+            数字 1（该协议区间痕迹）
         请求：非流式、单 user 闲聊、手工 payload 直发
         （temperature 直进 payload——工单原值原样保留并豁免全
         局采样覆盖；top_p/seed 工单未指定，不注入；A-03 复现
-        轮 max_tokens=32 工单原值；chat 边界/越界轮 max_tokens/
-        thinking 工单未指定，不传；msg 侧 max_tokens 为协议必需
-        字段）；每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定
+        轮 max_tokens=32 工单原值；chat 2.0 边界轮与 A-03 轮
+        同形态（max_tokens=32——用户指定 2026-11-09，短请求
+        短响应，原不传 max_tokens 致 2.0 无界生成长尾超
+        时）；chat 0.0 左边界轮/越界轮长形态 max_tokens=1024
+        ——所有轮均须 max_tokens 限制（用户指定 2026-11-09，
+        当前无限制的取 1024，防网关错误放行时无界生成长
+        尾）；thinking 工单未指定，不传；msg 侧 max_tokens
+        为协议必需字段）；每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定
         覆盖全局 timeout——本例小请求正常返回毫秒级-秒级，挂
         起/严重延迟快速失败：超时即 FAIL（异常信号留痕）并报
         告超时值，仅本用例生效、不影响他例）；相邻间隔 3s
@@ -9511,13 +9550,24 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # K32: chat 协议区间上界端点——[0, 2] 含 2.0（原
         # [0, 2) 口径越界点移入放行，测试自构造边界轮）
         K32_UPPER_BOUND = 2.0
+        # K32: chat 协议区间下界端点——[0, 2] 含 0.0（左边界
+        # 放行轮，用户指定 2026-11-09 新增验证；长形态
+        # K32_PROMPT+max_tokens=1024，与越界轮同族）
+        K32_LOWER_BOUND = 0.0
         # K32: chat 协议越界点（[0, 2] 闭区间外——上界外不
         # 含、负数不含；保留非法参数校验，用户指定）
         K32_OUT_OF_RANGE = (2.5, -0.5)
+        # K32: chat 长形态轮（0.0 左边界轮/越界轮）max_tokens
+        # ——所有轮均须 max_tokens 限制（用户指定 2026-11-09，
+        # 当前无限制的取 1024；防网关错误放行时无界生成长尾）
+        K32_LONG_FORM_MAX_TOKENS = 1024
         # K32: msg 协议（Anthropic 官方区间 [0, 1]）放行点——工
         # 单原值 1.5 在该协议官方语义下越界，取 [0, 1] 内合法
         # 中位点（A-03 未涉及 msg，维持原口径）
         K32_MSG_LEGAL_VALUE = 0.5
+        # K32: msg 协议区间下界端点——[0, 1] 含 0.0（左边界放
+        # 行轮，用户指定 2026-11-09 新增验证，双协议口径一致）
+        K32_MSG_LOWER_BOUND = 0.0
         # K32: msg 协议越界点——工单原值 1.5（[0, 1] 越界，与
         # chat 侧同值不同判——验证网关按协议语义分别校验）+ 2.0
         # + -0.5
@@ -9525,10 +9575,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # K32: msg 协议必需字段（Anthropic 无默认值）——单 user
         # 闲聊最小合理值
         K32_MSG_MAX_TOKENS = 1024
+        # K32: chat 0.0 左边界轮/越界轮与 msg 侧单 user 闲聊
+        # prompt（2.0 边界轮已对齐 A-03 短形态，用户指定
+        # 2026-11-09）
         K32_PROMPT = "请用一句话介绍你自己。"
         # K32: 每发 60s 硬超时（用例内自定覆盖全局 timeout——本
         # 例全部为小请求：越界轮 400 参数校验层毫秒级、A-03 轮
-        # max_tokens=32 秒级、放行轮单句闲聊秒级，无需按全局
+        # max_tokens=32 秒级、2.0 边界轮短形态秒级、0.0 左边
+        # 界轮 1024 配额秒级，无需按全局
         # 1200s 等待——挂起/严重延迟快速失败（超时即 FAIL 留
         # 痕）；仅本用例生效，不影响其他用例（_post_with_retry
         # 的 timeout 参数默认 None=沿用全局值））
@@ -9537,9 +9591,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             "=== 测试开始: 客户问题 - temperature 原厂区间 [0, 2] "
             "放行与越界校验（工单 P1 R-02+A-03：chat 侧工单三发复"
-            "现 1.5（预期 200）+ 边界 2.0 放行 + 越界 2.5/-0.5；"
-            "msg 按 Anthropic 区间 [0, 1]：放行 0.5 + 越界 1.5/"
-            "2.0/-0.5）==="
+            "现 1.5（预期 200）+ 边界 2.0/0.0 放行 + 越界 2.5/"
+            "-0.5；msg 按 Anthropic 区间 [0, 1]：放行 0.5/0.0 + "
+            "越界 1.5/2.0/-0.5）==="
         )
 
         url = f"{api_client.api_prefix}/chat/completions"
@@ -9552,8 +9606,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             with_stream: bool = True,
         ):
             """K32 chat 单轮：构造带指定 temperature 的请求直发
-            （A-03 复现轮按工单原样：max_tokens 进 payload、
-            stream 不传；其余轮最小形态 + stream=False）"""
+            （所有轮均传 max_tokens——A-03 复现轮/2.0 边界轮短
+            形态 32、0.0 左边界轮/越界轮长形态 1024（用户指定
+            2026-11-09：所有轮均须 max_tokens 限制）；stream
+            ——A-03/2.0 轮不传，0.0/越界轮 stream=False）"""
             TestLogger.log_request(
                 test_logger,
                 [{"role": "user", "content": prompt}],
@@ -9671,10 +9727,22 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         # ── 边界放行轮：temperature=2.0（区间上界端点——原
         # [0, 2) 口径越界点移入放行，用户指定 [0, 2] 含端点；
-        # 测试自构造轮非工单原发）───────────────────────────
+        # 测试自构造轮非工单原发；请求对齐 A-03 轮同形态
+        # ——content="只回复:好"、max_tokens=32、无 stream 字
+        # 段，短请求短响应（用户指定 2026-11-09：本例主目的
+        # 为验证 temperature 支持范围，仅验证合法/非法值能否
+        # 按预期响应；原长 prompt+无 max_tokens 在 2.0 极端
+        # 温度下思考乱码无界生成长尾，首跑 60s 超时——curl
+        # 复核服务端 200 正常放行，非服务端缺陷）──────────
         time.sleep(3)
         tag = f"边界/temperature={K32_UPPER_BOUND}"
-        response, elapsed = send_round(tag, K32_UPPER_BOUND)
+        response, elapsed = send_round(
+            tag,
+            K32_UPPER_BOUND,
+            prompt=K32_A03_PROMPT,
+            max_tokens=K32_A03_MAX_TOKENS,
+            with_stream=False,
+        )
         # 断言1：区间端点应 200 放行（[0, 2] 闭区间含 2.0）
         assert response.status_code == 200, (
             f"[{tag}] 缺陷复现：原厂区间 [0, 2] 含上界端点，"
@@ -9692,21 +9760,68 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         choice = choices[0] or {}
         content = (choice.get("message") or {}).get("content") or ""
         finish_reason = choice.get("finish_reason")
-        # 断言2：正文非空
-        assert content.strip(), (
-            f"[{tag}] 正文为空（finish_reason={finish_reason!r}）"
+        # 正文/finish_reason 留观察不计判据（对齐 A-03 轮口
+        # 径，用户指定 2026-11-09：主判据=2.0 被接受 200——
+        # max_tokens=32 小配额+默认思考计入共享配额在 2.0 极
+        # 端温度下思考乱码易耗尽配额→length/空正文，属 K31
+        # 域形态非本例判据）
+        if content.strip():
+            test_logger.info(
+                f"[{tag}] 观察: 正文 {len(content)} 字符、"
+                f"finish_reason={finish_reason!r}, "
+                f"elapsed={elapsed:.1f}s"
+            )
+        else:
+            test_logger.warning(
+                f"[{tag}] 观察: 正文为空、finish_reason="
+                f"{finish_reason!r}（max_tokens=32 小配额+"
+                f"默认思考计入配额——K31 域形态，非本例判"
+                f"据）, elapsed={elapsed:.1f}s"
+            )
+
+        # ── 左边界放行轮：temperature=0.0（区间下界端点——
+        # [0, 2] 含 0.0，用户指定 2026-11-09 新增验证；长形
+        # 态 K32_PROMPT+max_tokens=1024，所有轮均须 max_
+        # tokens 限制；测试自构造轮非工单原发）────────────
+        time.sleep(3)
+        tag = f"左边界/temperature={K32_LOWER_BOUND}"
+        response, elapsed = send_round(
+            tag,
+            K32_LOWER_BOUND,
+            max_tokens=K32_LONG_FORM_MAX_TOKENS,
         )
-        # 断言3：自然结束（区间端点放行后的正常生成不应触顶/
-        # 异常终止）
-        assert finish_reason == "stop", (
-            f"[{tag}] 应自然结束，实际 finish_reason="
-            f"{finish_reason!r}（区间端点放行后的正常生成不应"
-            f"触顶/异常终止）"
+        # 断言1：区间下界端点应 200 放行（[0, 2] 闭区间含 0.0）
+        assert response.status_code == 200, (
+            f"[{tag}] 缺陷复现：原厂区间 [0, 2] 含下界端点，"
+            f"0.0 应放行——实际 HTTP {response.status_code}: "
+            f"{response.text[:400]}（用户指定口径：验证左边界 "
+            f"0.0 放行——下界此前仅由 -0.5 越界轮间接验证）"
         )
-        test_logger.info(
-            f"[{tag}] 通过: 正文 {len(content)} 字符、自然结束"
-            f"（finish_reason=stop）, elapsed={elapsed:.1f}s"
-        )
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        assert data, f"[{tag}] 响应体应为合法 JSON"
+        choices = data.get("choices") or []
+        assert choices, f"[{tag}] 响应缺少 choices: {data!r}"
+        choice = choices[0] or {}
+        content = (choice.get("message") or {}).get("content") or ""
+        finish_reason = choice.get("finish_reason")
+        # 正文/finish_reason 留观察不计判据（对齐 2.0 边界轮口
+        # 径——主判据=0.0 被接受 200；0.0 贪心解码+1024 配额通
+        # 常正文非空+stop，思考计入共享配额的极端形态留观察）
+        if content.strip():
+            test_logger.info(
+                f"[{tag}] 观察: 正文 {len(content)} 字符、"
+                f"finish_reason={finish_reason!r}, "
+                f"elapsed={elapsed:.1f}s"
+            )
+        else:
+            test_logger.warning(
+                f"[{tag}] 观察: 正文为空、finish_reason="
+                f"{finish_reason!r}（思考计入共享配额——K31 域形"
+                f"态观察，非本例判据）, elapsed={elapsed:.1f}s"
+            )
 
         # ── 越界轮：2.5（上界外）/ -0.5（负向）——保留非法参
         # 数校验（用户指定）───────────────────────────────────
@@ -9716,7 +9831,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         for value in K32_OUT_OF_RANGE:
             time.sleep(3)
             tag = f"越界/temperature={value}"
-            response, elapsed = send_round(tag, value)
+            # 所有轮均须 max_tokens 限制（用户指定 2026-11-09）
+            # ——防网关错误放行时无界生成长尾撞 60s 超时
+            response, elapsed = send_round(
+                tag, value, max_tokens=K32_LONG_FORM_MAX_TOKENS
+            )
             body = response.text
             # 断言1：越界值必须 400 拒绝（[0, 2] 闭区间不含该点）
             assert response.status_code == 400, (
@@ -9857,6 +9976,49 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"（stop_reason={stop_reason!r}）, elapsed={elapsed:.1f}s"
         )
 
+        # ── msg 左边界放行轮：temperature=0.0（[0, 1] 下界端
+        # 点——用户指定 2026-11-09 新增验证，双协议口径一致；
+        # msg 家族形态 K32_PROMPT+max_tokens=1024）──────────
+        time.sleep(3)
+        tag = f"msg左边界/temperature={K32_MSG_LOWER_BOUND}"
+        response, elapsed = send_msg_round(
+            tag, K32_MSG_LOWER_BOUND
+        )
+        # 断言1：Anthropic 官方区间 [0, 1] 含下界端点 0.0——
+        # 应 200 放行（口径同 0.5 放行轮）
+        assert response.status_code == 200, (
+            f"[{tag}] 缺陷复现：Anthropic 官方区间 [0, 1] 含下"
+            f"界端点 0.0，应放行——实际 HTTP "
+            f"{response.status_code}: {response.text[:400]}"
+        )
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        assert data, f"[{tag}] 响应体应为合法 JSON"
+        content_arr = data.get("content") or []
+        content = "".join(
+            c.get("text") or ""
+            for c in content_arr
+            if isinstance(c, dict) and c.get("type") == "text"
+        ).strip()
+        stop_reason = data.get("stop_reason")
+        # 断言2：正文非空（0.0 贪心解码正常生成可满足）
+        assert content, (
+            f"[{tag}] 正文为空（stop_reason={stop_reason!r}）"
+        )
+        # 断言3：自然结束（stop_reason 存在且非 max_tokens 截
+        # 断——口径同 0.5 放行轮）
+        assert stop_reason and stop_reason != "max_tokens", (
+            f"[{tag}] 应自然结束，实际 stop_reason="
+            f"{stop_reason!r}（合法 temperature 下的正常生成不应"
+            f"触顶截断）"
+        )
+        test_logger.info(
+            f"[{tag}] 通过: 正文 {len(content)} 字符、自然结束"
+            f"（stop_reason={stop_reason!r}）, elapsed={elapsed:.1f}s"
+        )
+
         # msg 越界轮：1.5（工单原值——[0, 1] 越界，与 chat 侧同
         # 值不同判）/ 2.0 / -0.5——错误体指明参数名与该协议区间
         # 痕迹（上界数字 1）
@@ -9893,11 +10055,13 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             f"客户问题整改验证通过（双协议）: chat 协议工单 A-03 "
             f"三发 temperature={K32_LEGAL_VALUE} 复现均 200（原厂 "
-            f"[0, 2] 放行）、区间端点 {K32_UPPER_BOUND} 放行、越"
-            f"界点 {K32_OUT_OF_RANGE[0]}/{K32_OUT_OF_RANGE[1]} 均 "
+            f"[0, 2] 放行）、区间端点 {K32_UPPER_BOUND}/"
+            f"{K32_LOWER_BOUND} 放行、越界点 "
+            f"{K32_OUT_OF_RANGE[0]}/{K32_OUT_OF_RANGE[1]} 均 "
             f"400 且错误体指明参数名与区间；msg 协议 temperature="
-            f"{K32_MSG_LEGAL_VALUE} 按 Anthropic 官方区间 [0, 1] "
-            f"放行、越界点 {K32_MSG_OUT_OF_RANGE[0]}/"
+            f"{K32_MSG_LEGAL_VALUE}/{K32_MSG_LOWER_BOUND} 按 "
+            f"Anthropic 官方区间 [0, 1] 放行、越界点 "
+            f"{K32_MSG_OUT_OF_RANGE[0]}/"
             f"{K32_MSG_OUT_OF_RANGE[1]}/{K32_MSG_OUT_OF_RANGE[2]} "
             f"均 400 且错误体指明参数名与区间——网关按协议语义分"
             f"别校验，参数校验整改达标"

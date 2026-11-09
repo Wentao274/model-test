@@ -71,7 +71,7 @@
 | K29 | 双协议零增量响应与工具调用核验 | 客户问题（AGDC2-25，九章云 Alaya GLM-5.3 网关）：同一段业务会话报文（195 条消息/19 个工具/stream=true/max_tokens=4096）分别请求 /v1/chat/completions 与 /anthropic/v1/messages——OpenAI 协议 13 次中 5 次零增量响应（HTTP 200、SSE 结构完整但 delta.content/reasoning_content/tool_calls 三类增量均空、usage.completion_tokens>0），工具调用仅 4/13；Anthropic 协议 8/8 返回工具调用、零增量 0/8；适用 GLM-5.3 | 客户探针（scripts/probe_alaya.py）+ 数据集（requests/AGDC2-25 两份协议请求体）纳入框架：两种协议各发 --n 硬编码 10 次（用户指定）流式请求，逐条留存 raw 并统计三项判据——有效请求==10、零增量==0、返回工具调用==100%（10/10），任一不符合即 FAIL；每协议追加 1 次强制工具调用（tool_choice required/any，仅观察不计入）；raw 目录：Jenkins→builds/<TESTER>/<BUILD_NUMBER>/origin_raw/AGDC2-25/<model>/（与 allure-report 同级），手动→origin_raw/AGDC2-25/<model>/<timestamp>/；模型名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；temperature/top_p 原始未指定——保持不指定（不注入）；usage 仅日志 | P0 |
 | K30 | /v1/responses 校验码输出与 token 计数核验 | 客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：probe 三项断言未通过——请求明确要求只输出 SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 '4b69a88e6b'（模型未遵守指令）；input_tokens=52 超基准 43 ±3%（区间 41.71-44.29——整数取值 42/43/44）；output_tokens 报告 295 而实际可见输出仅 10 字符且 reasoning_tokens=0（计数与实际文本量明显不成比例，存在统计口径或隐藏推理未计入疑点）；适用 GLM-5.3 | 按客户原始 curl 还原：POST {base}/v1/responses（Responses API），input 两消息（content 均 input_text 类型）、stream=true、max_output_tokens=1024 原样，模型名由环境注入，采样参数原始未指定——保持不注入；断言（任一失败即整体失败）：HTTP 200 且流式结构完整（output_text 增量+usage）、终态事件 status == completed（failed/incomplete/cancelled 或无终态事件即失败）、合并正文严格等于校验码（多一个字符即失败）、usage.input_tokens∈[42,44]（基准 43 ±3%）、output_tokens 满足 reasoning_tokens ≤ output ≤ reasoning + len(正文)（总计=思考+正文，1 token/字符宽松上界——缺陷形态 295 tok vs 10 字符远超） | P0 |
 | K31 | json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议） | 客户问题（工单 P1 R-01+A-07a/A-07b，结构化输出）：官方行为 HTTP 200、content 为合法 JSON（嵌套对象/数组均可解析）；贵方实测 finish_reason=length、content 为空字符串、思考内容占满 max_tokens=256——A-07a（嵌套对象 user.name/user.age/address.city）与 A-07b（数组 3 个 id+title 对象）两种请求各 3 发全部该形态（3 采样 0 过，2026-11-03）；用户确认：思考消耗配额致空正文/截断在官方与被测均有一定概率发生——验收口径调整为预算回退链（用户指定）：核心需求为在 max_tokens 内能返回完整合法 JSON；适用 GLM-5.3 | chat+msg 双协议（msg 无 json_object 参数语义——同一 prompt 引导、max_tokens 协议必需字段）× 工单两形态（A-07a/A-07b 提示词与请求体工单原样——chat 字段序 model/messages/max_tokens/response_format、无 stream 字段）× 预算回退链：轮一 max_tokens=256（工单原值）→ HTTP 200+正文非空+json.loads 成功+嵌套结构齐备（递归宽容：含 name+age 的 user 对象与含 city 的 address 对象 / 对象数组每元素含 id+title，裸数组或对象包裹均认可，数量=3 与类型留观察）→ 直接达标；不满足（空正文/json 截断或非法/结构不齐）→ 回退 max_tokens=512 同请求重验——满足 → 测试通过+警告留痕（警告显示 256 输出空正文或 json 截断及 finish 状态）；两轮均不满足 → FAIL（输出两轮各自形态）；HTTP 非 200 直接 FAIL（回退链仅针对正文形态）；模型名由环境注入，采样参数原始未指定——保持不注入；历史记录：初版三接口 chat/responses/msg × 各 2 次，A-07 证据后重构聚焦双协议（用户指定"覆盖两种协议"），/v1/responses 轮移除 | P1 |
-| K32 | temperature 原厂区间 [0, 2] 放行与越界校验（chat+msg 双协议） | 客户问题（工单 P1 R-02+A-03，参数校验）：官方行为 HTTP 200（原厂取值区间 [0, 2]，1.5 合法）；贵方最新实测（A-03，2026-11-03）chat 三发 temperature=1.5 全部 HTTP 400、错误体「temperature 超出范围 [0, 1]」——本地收紧到 [0, 1]（历史 R-02：6 发通用「模型服务调用失败」upstream_error）；整改建议（即预期结果，用户指定）：放开 temperature 到原厂 [0, 2] 区间（原 [0, 2) 调整为 [0, 2]——上界端点 2.0 移入放行），或原样透传不做本地收紧；保留非法参数校验（越界 400 指明参数名与区间）；适用 GLM-5.3 | 双协议覆盖：chat 协议（原厂区间 [0, 2] 含端点）——工单 A-03 三发复现 temperature=1.5（content="只回复:好"、max_tokens=32，请求体工单原样无 stream 字段）→ 200+choices 非空（正文/finish_reason 留观察——小配额+默认思考计入易 length，K31 域形态非判据），边界轮 2.0（上界端点移入放行）→ 200+正文非空+自然结束，越界轮 2.5 与 -0.5 → 400+错误体指明参数名 temperature（大小写不敏感）+含上界数字 2（区间痕迹辅助下限口径）；msg 协议（/anthropic/v1/messages，Anthropic 官方区间 [0, 1] 分别校验——A-03 未涉及 msg 维持原口径）——放行轮 temperature=0.5（工单原值 1.5 在该协议官方语义下越界，不可作放行点）→ 200+正文非空+stop_reason 自然结束，越界轮 1.5（工单原值，与 chat 侧同值不同判——验证网关按协议语义分别校验而非一刀切）、2.0 与 -0.5 → 400+错误体指明参数名+含上界数字 1；chat 放行点按 A-03 三发依序复现，其余组合每组合 1 次（K6 先例）；工单原始值原样保留并豁免全局采样覆盖，top_p/seed 未指定不注入，A-03 轮 max_tokens=32 工单原值，msg max_tokens 为协议必需字段；每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定覆盖全局 timeout——小请求正常返回毫秒级-秒级，挂起/严重延迟快速失败：超时即 FAIL 留痕，仅本用例生效不影响他例） | P1 |
+| K32 | temperature 原厂区间 [0, 2] 放行与越界校验（chat+msg 双协议） | 客户问题（工单 P1 R-02+A-03，参数校验）：官方行为 HTTP 200（原厂取值区间 [0, 2]，1.5 合法）；贵方最新实测（A-03，2026-11-03）chat 三发 temperature=1.5 全部 HTTP 400、错误体「temperature 超出范围 [0, 1]」——本地收紧到 [0, 1]（历史 R-02：6 发通用「模型服务调用失败」upstream_error）；整改建议（即预期结果，用户指定）：放开 temperature 到原厂 [0, 2] 区间（原 [0, 2) 调整为 [0, 2]——上界端点 2.0 移入放行），或原样透传不做本地收紧；保留非法参数校验（越界 400 指明参数名与区间）；适用 GLM-5.3 | 双协议覆盖：chat 协议（原厂区间 [0, 2] 含端点）——工单 A-03 三发复现 temperature=1.5（content="只回复:好"、max_tokens=32，请求体工单原样无 stream 字段）→ 200+choices 非空（正文/finish_reason 留观察——小配额+默认思考计入易 length，K31 域形态非判据），边界轮 2.0（上界端点移入放行；请求对齐 A-03 短形态——content="只回复:好"+max_tokens=32+无 stream 字段，用户指定 2026-11-09）→ 200+choices 非空（正文/finish_reason 留观察，K31 域形态非判据——主判据=2.0 被接受 200），左边界轮 0.0（下界端点——[0, 2] 含 0.0，用户指定 2026-11-09 新增验证，此前下界仅由 -0.5 越界轮间接验证；长形态 content="请用一句话介绍你自己。"+max_tokens=1024）→ 200+choices 非空（正文/finish_reason 留观察——主判据=0.0 被接受 200），越界轮 2.5 与 -0.5（max_tokens=1024——所有轮均须 max_tokens 限制，用户指定 2026-11-09）→ 400+错误体指明参数名 temperature（大小写不敏感）+含上界数字 2（区间痕迹辅助下限口径）；msg 协议（/anthropic/v1/messages，Anthropic 官方区间 [0, 1] 分别校验——A-03 未涉及 msg 维持原口径）——放行轮 temperature=0.5（工单原值 1.5 在该协议官方语义下越界，不可作放行点）与 0.0（下界端点——用户指定 2026-11-09 新增验证，双协议口径一致）→ 200+正文非空+stop_reason 自然结束，越界轮 1.5（工单原值，与 chat 侧同值不同判——验证网关按协议语义分别校验而非一刀切）、2.0 与 -0.5 → 400+错误体指明参数名+含上界数字 1；chat 放行点按 A-03 三发依序复现，其余组合每组合 1 次（K6 先例）；工单原始值原样保留并豁免全局采样覆盖，top_p/seed 未指定不注入，A-03 轮与 chat 2.0 边界轮同形态（max_tokens=32——边界轮用户指定 2026-11-09 对齐，原不传致 2.0 无界生成长尾超时，curl 复核服务端正常），chat 0.0 左边界轮/越界轮长形态 max_tokens=1024（所有轮均须 max_tokens 限制——用户指定 2026-11-09，当前无限制的取 1024），thinking 不传，msg max_tokens 为协议必需字段；每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定覆盖全局 timeout——小请求正常返回毫秒级-秒级，挂起/严重延迟快速失败：超时即 FAIL 留痕，仅本用例生效不影响他例） | P1 |
 | K33 | top_logprobs=5 放行核验（未开 logprobs 也接受，chat+msg 双协议） | 客户问题（工单 P2 A-04，参数校验）：官方行为不变——top_logprobs=5 官方 HTTP 200 接受（未开 logprobs 时也接受）；贵方最新实测（A-04，2026-11-03）chat 三发 top_logprobs=5 单独出现（无 logprobs）全部 400、错误体「top_logprobs is only allowed when logprobs is enabled」（对未开 logprobs 的 top_logprobs 额外拒绝）；整改建议（即预期结果）：按官方行为处理 top_logprobs（未开 logprobs 时也接受）不额外拒绝，若上游确实不支持，错误体应说明能力缺失而非参数非法；用户判定口径（2026-11-06）：top_logprobs=5 不拒绝、按官方 HTTP 200 即可、正文为空不判定失败（R-03 轮移除，仅保留 A-04 请求——用户指定）；适用 GLM-5.3 | 双协议覆盖：chat 协议——A-04 三发复现（top_logprobs=5 单独出现、content="只回复:好"、max_tokens=32，请求体工单原样无 stream 字段）→ 200+choices 非空（正文/finish_reason/logprobs 结构留观察——小配额+默认思考计入易 length，K31 域形态非判据）；msg 协议（/anthropic/v1/messages）无 logprobs 参数语义——A-04 镜像 3 发（top_logprobs 单独出现、content 工单原样、max_tokens=512 套件必需字段值）硬断言统一行为：全部 400 且错误体指明字段（含 'logprobs'，top_logprobs 子串覆盖，能力缺失说明口径——整改建议两分支之一）或全部 200（正文为空不判定失败——用户口径：top_logprobs=5 不拒绝、官方 200 即可，空正文留观察，用户指定 2026-11-06），混现即 FAIL——额外拒绝与行为不统一在两协议均不得复现；A-04 工单三发采集间隔 1s（节奏非判据），复现按套件相邻间隔 3s；max_tokens/thinking/采样参数未指定不传不注入（A-04 复现轮 max_tokens=32 工单原值；msg max_tokens 协议必需） | P2 |
 | K34 | 多模态媒体块该拒未拒（msg 侧静默丢弃返回 200）应 400 明确拒绝（chat+msg 双协议） | 客户问题（工单 P2 R-04 补充证据 A-01，多模态）：官方行为 glm-5.3 为非多模态模型——请求携带图片/音频/视频/文档（base64 与 URL 两种载体）必须返回 400，返回 2xx 即不合格；原始问题：msg 协议下返回 200 该拒未拒，媒体块被静默丢弃——prompt_tokens 仅 17-43（媒体未进入分词器）、正文自述『没有收到视频/音频/文档』；同一素材在 chat 协议下渠道返回 400（同一渠道、同一文件、两种协议两种结果）；整改建议（客户给出）：在 /v1/messages → OpenAI 转换层对 media block（video/audio/document）做前置校验，返回 400 并给出明确文案；不得剥离媒体块后继续转发；URL 载体（http/https 媒体链接）同样必须返回 400，不得自行抓取、转文字或降级为纯文本；另外 chat 协议也应该相同的处理；适用 GLM-5.3 | 双协议各 5 发共 10 发（用户指定：message 协议和 chat 协议都要 5 轮请求）：msg 5 发按客户原始记录依序复现（缺陷复现轮）——document×base64（application/pdf）+『文档中的文字是什么?简答。』（媒体块在前——工单原序）、text+audio×base64（audio/wav）『这段音频是什么类型的声音?简答。』（文本块在前——工单原序）、video×base64（video/mp4）+『简要描述视频内容。』、video×url +『简要描述视频内容。』（沿用本仓现有 MDN flower.mp4 地址——工单原 test-videos.co.uk 不复用，用户指定保留现有 URL）、video×base64 +『这段视频前半段的底色和中间显示的数字是什么？后半段的底色和中间显示的数字是什么？按先后顺序一句话回答。』（工单第 5 采集提问原样）；chat 5 发为同素材/同提示词/同块序镜像（整改『chat 协议也应相同处理』一致性核验轮；part 映射：document→file part（file_data data URL）、audio→input_audio、video→video_url（base64 发用 data URL））；媒体数据工单未提供完整 data——代码生成有效 base64（最小 PDF/WAV/MP4 容器，内存生成、不落临时文件；拒绝校验在媒体块类型层不依赖可解码内容；双协议第 3/5 发共用同一生成 MP4）；max_tokens=1024 工单原值（10 发同值镜像豁免注入）；请求体不含 stream 字段（工单原始格式，两协议默认非流式）；硬断言每发：①HTTP 400（200=静默丢弃缺陷复现——A-01 形态留证；2xx 同判；500 等=非合规拒绝）②错误体含对应媒体类型关键词（中英任一命中：document/文档/pdf、audio/音频/语音、video/视频，大小写不敏感——20261104 实测整改错误体为中文，双语匹配（用户指定）；排除通用『模型服务调用失败』缺陷形态）；'text' 痕迹留观察日志；thinking/采样参数未含不注入；相邻间隔 3s | P2 |
 | K35 | 关闭思考应按原厂 400 拒绝（enable_thinking=false 与 thinking.type=disabled 双路径，chat+msg 双协议） | 客户问题（工单 P1 R-07 补充证据 A-02 · chat/msg 协议关闭思考的请求被放行，接口协议）：官方行为原厂对关闭思考返回 400（原厂 HTTP 400）；贵方实测（A-02，2026-11-03 采集，2 发均 HTTP 200）：渠道返回 200 并正常出文——chat 发 enable_thinking=false 放行且响应带 reasoning_content（思考仍开启，reasoning_tokens=91）、msg 发 thinking.type=disabled 放行且 content 带 thinking 块（思考仍开启），对照记为 http_status 400→200（HTTP 状态语义）；预期行为（整改）：统一关闭思考的拒绝口径——enable_thinking=false 与 thinking.type=disabled 两条路径均按原厂返回 400，不得一条拒一条放；适用 GLM-5.3 | 按工单 A-02 原始请求 2 发依序复现（双协议两路径——用户指定：两条路径都要按官方行为返回 400，覆盖两种协议）：路径1 chat（/v1/chat/completions 非流式）enable_thinking=false（工单原样：content="23+19 等于多少？" 字符串、max_tokens=512、请求体不含 stream 字段）；路径2 msg（/anthropic/v1/messages，x-api-key + anthropic-version 头——K3 先例）thinking={"type": "disabled"}（工单原样：content="23+19=?" 字符串、max_tokens=512、stream=false 显式携带）；硬断言每路径：HTTP 400（200=放行缺陷复现——A-02 形态：200 且正常出文（思考仍开启）；500 等=非合规拒绝）；错误体参数名痕迹（路径1 enable_thinking/路径2 thinking）留观察不计判据；max_tokens=512 工单 2 发同值（豁免注入）；采样参数未含不注入；相邻间隔 3s | P1 |
@@ -2389,20 +2389,29 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
   留非法参数校验（越界 400 并指明参数名与合法区间）
 - **历史记录**：初版按 R-02 设计（chat [0, 2) 半开区间、越界点含
   2.0、单发放行轮）；2026-11-03 A-03 证据后调整为 [0, 2] 含端
-  点、越界点改 2.5、工单三发复现替换原单发放行轮
+  点、越界点改 2.5、工单三发复现替换原单发放行轮；2026-11-09
+  首跑边界轮 60s 超时（无 max_tokens 无界生成长尾）后按用户指
+  定调整：边界轮请求对齐 A-03 短形态、断言对齐状态语义口径；
+  同日二次按用户指定：新增 0.0 左边界双协议放行轮、chat 越界
+  轮补 max_tokens=1024（所有轮均须 max_tokens 限制）
 
 **测试断言点（按整改建议设计，任一失败即 FAIL）**：
 1. chat A-03 复现轮（三发）：temperature=1.5 → HTTP 200 + 响应
    体合法 JSON 且 choices 非空（正文/finish_reason 留观察）
-2. chat 边界轮：temperature=2.0 → HTTP 200 + 正文非空 + 自然结
-   束（finish_reason=stop）
-3. chat 越界轮：temperature=2.5 / -0.5 → HTTP 400 + 错误体指明
+2. chat 边界轮：temperature=2.0 → HTTP 200 + 响应体合法 JSON 且
+   choices 非空（正文/finish_reason 留观察——对齐 A-03 轮口径，
+   用户指定 2026-11-09：主判据=2.0 被接受 200）
+3. chat 左边界轮：temperature=0.0 → HTTP 200 + 响应体合法 JSON
+   且 choices 非空（正文/finish_reason 留观察——口径同 2.0 边
+   界轮，用户指定 2026-11-09 新增：主判据=0.0 被接受 200）
+4. chat 越界轮：temperature=2.5 / -0.5 → HTTP 400 + 错误体指明
    参数名与合法区间（上界数字 2）
-4. msg 放行轮：temperature=0.5 → HTTP 200 + 正文非空 +
-   stop_reason 自然结束
-5. msg 越界轮：temperature=1.5 / 2.0 / -0.5 → HTTP 400 + 错误
+5. msg 放行轮：temperature=0.5 / 0.0 → HTTP 200 + 正文非空 +
+   stop_reason 自然结束（0.0 为下界端点，用户指定 2026-11-09
+   新增，口径同 0.5）
+6. msg 越界轮：temperature=1.5 / 2.0 / -0.5 → HTTP 400 + 错误
    体指明参数名与合法区间（上界数字 1）
-6. 每发 60s 硬超时：超时即 FAIL（挂起/严重延迟异常信号留
+7. 每发 60s 硬超时：超时即 FAIL（挂起/严重延迟异常信号留
    痕——本例小请求正常返回毫秒级-秒级）
 
 **请求构造**（双协议覆盖——K31 起用例须验证 chat 与 msg 双协议，
@@ -2416,16 +2425,29 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
     model/messages/max_tokens/temperature，**无 stream 字段**
     （工单未带——不传）；工单三发采集间隔 1s，复现按套件相邻
     3s（节奏非判据）
-  - 边界轮/越界轮（测试自构造）：单 user 闲聊（"请用一句话介绍
-    你自己。"）；temperature=2.0/2.5/-0.5——直进 payload，原
-    样保留并豁免全局采样覆盖（top_p/seed 工单未指定，不注入；
-    max_tokens/thinking 未指定不传，stream=False）
+  - 边界轮（测试自构造，用户指定 2026-11-09 对齐 A-03 短形
+    态）：content="只回复:好"、max_tokens=32、无 stream 字
+    段——与 A-03 复现轮同形态（本例主目的为验证 temperature
+    支持范围，短请求短响应即可；原长 prompt+不传 max_tokens
+    在 2.0 极端温度下思考乱码无界生成长尾，首跑 60s 超时，
+    curl 复核服务端 200 正常放行——非服务端缺陷）
+  - 左边界轮（测试自构造，用户指定 2026-11-09 新增）：
+    temperature=0.0、长形态——单 user 闲聊（"请用一句话介绍
+    你自己。"）+ max_tokens=1024 + stream=False（[0, 2] 含下
+    界端点，此前下界仅由 -0.5 越界轮间接验证）
+  - 越界轮（测试自构造）：单 user 闲聊（"请用一句话介绍
+    你自己。"）；temperature=2.5/-0.5——直进 payload，原
+    样保留并豁免全局采样覆盖（top_p/seed/thinking 工单未
+    指定，不注入；max_tokens=1024——所有轮均须 max_tokens
+    限制，用户指定 2026-11-09，防网关错误放行时无界生成长
+    尾；stream=False）
 - msg 端点：`{base_url}/anthropic/v1/messages`（K3 先例——
   `x-api-key` + `anthropic-version: 2023-06-01` 头，session.post
   直发，同样 60s 硬超时 `timeout=K32_HARD_TIMEOUT`）；放行点
   0.5（工单原值 1.5 在 Anthropic 官方区间 [0, 1] 语义下越界，
-  不可作放行点）与越界点 1.5（工单原值——与 chat 侧同值不同
-  判）、2.0、-0.5；`max_tokens=1024` 为协议必需字段
+  不可作放行点）与 0.0（下界端点，用户指定 2026-11-09 新增
+  ——双协议口径一致）；越界点 1.5（工单原值——与 chat 侧同
+  值不同判）、2.0、-0.5；`max_tokens=1024` 为协议必需字段
 - 模型名由环境注入
 
 **断言（硬）**：
@@ -2435,42 +2457,53 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 2. chat A-03 三发响应体合法 JSON 且 choices 非空（200 须为有效
    补全结构）
 3. chat 边界轮 HTTP 200（[0, 2] 含上界端点——用户指定口径调整）
-4. chat 边界轮正文非空且 `finish_reason == "stop"`（自然结束）
-5. chat 越界轮 HTTP 400（[0, 2] 闭区间不含 2.5/-0.5——越界被静
+4. chat 边界轮响应体合法 JSON 且 choices 非空（200 须为有效补
+   全结构；正文/finish_reason 留观察——对齐 A-03 轮口径，用户
+   指定 2026-11-09）
+5. chat 左边界轮 HTTP 200（[0, 2] 含下界端点 0.0——用户指定
+   2026-11-09 新增验证）
+6. chat 左边界轮响应体合法 JSON 且 choices 非空（200 须为有效
+   补全结构；正文/finish_reason 留观察——口径同 2.0 边界轮）
+7. chat 越界轮 HTTP 400（[0, 2] 闭区间不含 2.5/-0.5——越界被静
    默放行/其他状态均为整改未达标）
-6. chat 越界轮错误体含参数名 `temperature`（大小写不敏感）
-7. chat 越界轮错误体含上界数字 `2`（合法区间痕迹——辅助下限口
+8. chat 越界轮错误体含参数名 `temperature`（大小写不敏感）
+9. chat 越界轮错误体含上界数字 `2`（合法区间痕迹——辅助下限口
    径，见注意事项）
-8. msg 放行轮 HTTP 200 且正文非空、`stop_reason` 存在且非
-   "max_tokens"（自然结束——Anthropic 枚举含 end_turn/
-   stop_sequence 等形态，宽松口径）
-9. msg 越界轮 HTTP 400
-10. msg 越界轮错误体含参数名 `temperature`（大小写不敏感）
-11. msg 越界轮错误体含上界数字 `1`（该协议合法区间痕迹）
+10. msg 放行轮（0.5 与 0.0）HTTP 200 且正文非空、`stop_reason`
+    存在且非 "max_tokens"（自然结束——Anthropic 枚举含
+    end_turn/stop_sequence 等形态，宽松口径；0.0 为下界端点，
+    用户指定 2026-11-09 新增，口径同 0.5）
+11. msg 越界轮 HTTP 400
+12. msg 越界轮错误体含参数名 `temperature`（大小写不敏感）
+13. msg 越界轮错误体含上界数字 `1`（该协议合法区间痕迹）
 
-**观察记录（不计判据）**：A-03 三发每发正文长度、finish_reason、
-耗时——max_tokens=32 小配额下默认思考计入共享配额（R-01 未整
-改）易 length/空正文，属 K31 域形态；A-03 判据为 HTTP 状态语义
-（1.5 被接受=200）
+**观察记录（不计判据）**：A-03 三发与 2.0/0.0 边界轮每发正文长
+度、finish_reason、耗时——max_tokens=32 小配额下默认思考计入
+共享配额（R-01 未整改）易 length/空正文（2.0 极端温度下思考乱
+码更易耗尽配额；0.0 长形态 1024 配额贪心解码通常正文非空+
+stop），属 K31 域形态；A-03 与 2.0/0.0 边界轮判据均为 HTTP 状
+态语义（1.5/2.0/0.0 被接受=200）
 
 **判定矩阵**：
 - chat A-03 三发任一发非 200 → FAIL（缺陷复现——原厂区间内合
   法值被拒/本地收紧）
-- chat 边界 2.0 非 200 → FAIL（区间端点未放行——口径 [0, 2] 含
-  端点未生效）
-- chat 边界 2.0 正文空或 finish_reason ≠ stop → FAIL（放行后生
-  成异常）
+- chat 边界 2.0/0.0 非 200 → FAIL（区间端点未放行——口径 [0, 2]
+  含上/下界端点未生效，0.0 为用户指定 2026-11-09 新增）；边界
+  轮正文/finish_reason 留观察不计判据（对齐 A-03 轮口径，用户
+  指定 2026-11-09——空正文+length 属 K31 域形态，非本例判据）
 - chat 越界点非 400 → FAIL（越界未被拒绝——静默放行同样未达标）
 - 400 但错误体不含 "temperature" → FAIL（缺陷形态复现——通用
   「模型服务调用失败」不含参数名，整改未达标）
 - chat 400 且含参数名但不含数字 2 / msg 400 且含参数名但不含数
   字 1 → FAIL（未指明对应协议合法区间）
-- msg 放行 0.5 非 200 → FAIL（Anthropic 官方区间内合法值被拒）
+- msg 放行 0.5/0.0 非 200 → FAIL（Anthropic 官方区间内合法值/
+  下界端点被拒——0.0 为用户指定 2026-11-09 新增）
 - msg 越界 1.5 非 400 → FAIL（msg 语义下越界被静默放行——若网
   关一刀切按 chat 区间 [0, 2] 放行 1.5，将在此如实暴露）
-- 三发 1.5→200+choices 非空、2.0→200+stop、2.5/-0.5→400+参数
-  名+区间（chat）；0.5→200+自然结束（msg）/1.5、2.0、
-  -0.5→400+参数名+区间（msg）→ PASS
+- 三发 1.5→200+choices 非空、2.0/0.0→200+choices 非空（正
+  文/finish 留观察）、2.5/-0.5→400+参数名+区间（chat）；0.5/
+  0.0→200+自然结束（msg）/1.5、2.0、-0.5→400+参数名+区间
+  （msg）→ PASS
 - 任一发 60s 硬超时内无响应 → FAIL（挂起/严重延迟异常信号
   留痕——本例小请求正常返回毫秒级-秒级）
 
@@ -2507,10 +2540,36 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 - **每组合 1 次（A-03 三发除外）**：参数校验为确定性行为（K6 先
   例）；A-03 三发为工单复现口径（工单采集 3 发——一致性复现），
   其余组合无需重复
-- **不传 max_tokens/thinking（chat 边界/越界轮）**：非工单复现轮
-  保持最小请求形态，避免引入无关变量；A-03 复现轮 max_tokens=32
-  为工单原值必须保留；msg 侧 max_tokens 为协议必需字段（1024
-  单句闲聊合理值）
+- **thinking 不传（chat 全轮）**：thinking 工单未指定——不注
+  入；max_tokens 限制为全轮必须（见「左边界 0.0 新增验证 + 全
+  轮 max_tokens 限制」条）；A-03 复现轮 max_tokens=32 为工单
+  原值必须保留；msg 侧 max_tokens 为协议必需字段（1024 单句
+  闲聊合理值）
+- **左边界 0.0 新增验证 + 全轮 max_tokens 限制（用户指定，
+  2026-11-09）**：①需验证左边界 0.0——[0, 2] 闭区间含下界端
+  点，原设计下界仅由 -0.5 越界轮间接验证；chat 与 msg 双协议
+  同步新增（msg [0, 1] 下界端点同为 0.0，双协议口径一致）——
+  chat 左边界轮长形态（K32_PROMPT+max_tokens=1024，与越界轮
+  同族），判定对齐 2.0 边界轮口径（200+choices 非空，正文/
+  finish 留观察——主判据=0.0 被接受 200）；msg 左边界放行轮
+  口径同 0.5 放行轮（200+正文非空+stop_reason 自然结束——
+  0.0 贪心解码正常生成可满足）。②所有轮均须 max_tokens 限制
+  ——当前无限制的 chat 越界轮取 1024（防网关错误放行时无界
+  生成长尾撞 60s 超时，FAIL 形态更干净）；A-03/2.0 轮 32、
+  msg 轮 1024 维持
+- **边界轮对齐 A-03 短形态（用户指定，2026-11-09）**：首跑（同
+  日 Jenkins build 374）边界轮以长 prompt+不传 max_tokens 请求，
+  60s 硬超时零响应 FAIL；用户 curl 复核（temperature=2.0、显式
+  thinking、max_tokens=1024）服务端 200 正常放行、配额全耗于极
+  端温度乱码 reasoning（finish=length、正文空）——服务端正常，
+  属无 max_tokens 无界生成长尾，非服务端缺陷。按用户口径调整：
+  本例主目的为验证模型服务支持的 temperature 取值范围（合法
+  200/非法 400），无需长请求长响应——边界轮请求与 A-03 轮同形
+  态（content="只回复:好"、max_tokens=32、无 stream 字段），
+  断言对齐 A-03 轮口径（200+choices 非空，正文/finish_reason
+  留观察——2.0+32 小配额+默认思考计入几乎必为空正文+length，
+  强断言正文非空会把「2.0 已正确放行」误判为失败）；硬超时维
+  持 60s 不变（短配额生成秒级返回）
 - **直发 payload**：temperature 直进请求体（K 套件豁免机制下原
   样保留，无全局注入口）
 - **每发 60s 硬超时（用户指定，2026-11-06）**：本例全部为小请
@@ -2527,8 +2586,8 @@ arguments 更易诱发模型 JSON 括号错误（触发概率差异）。
 **注意事项**：
 - 区间痕迹数字断言（"2"/"1"）为辅助下限口径：A-03 形态错误体含
   request id 数字串（如 "20261103…"），数字断言可能被 request id
-  恒满足——本地收紧缺陷的主判据在放行轮（1.5/2.0 → 200），越界
-  轮断言未满足时仍如实 FAIL 交人工复核
+  恒满足——本地收紧缺陷的主判据在放行轮（1.5/2.0/0.0 →
+  200），越界轮断言未满足时仍如实 FAIL 交人工复核
 - 若被测实现存在模型级温度档联动（如 thinking 档位契约），chat
   放行轮 FAIL 即按工单口径如实暴露（整改要求按 [0, 2] 放行，模
   型档位联动不得窄于原厂区间）
