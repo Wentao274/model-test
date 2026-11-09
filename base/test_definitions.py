@@ -1554,6 +1554,49 @@ TEST_CATEGORIES = {
                 "reasoning_dual_field_history_accepted",
                 "P0",
             ),
+            (
+                "K40",
+                "thinking enabled 响应 reasoning_content 字段稳"
+                "定性核验（三轮 × 每轮 10 并发统一携带）",
+                "客户问题（新工单，响应字段稳定性）：请求体 "
+                "max_tokens=16000 + 单 user 消息「证明：对于任意"
+                "正整数n，n^3-n能被6整除」+ thinking={\"type\": "
+                "\"enabled\"}（客户环境模型 GLM-5.3-jy-b）——响应"
+                "有时带、有时不带 reasoning_content 字段，不稳定，"
+                "客户生产调用产生较多困扰；预期所有请求统一携带 "
+                "reasoning_content。本用例分三轮、每轮 10 并发"
+                "（轮内 ThreadPoolExecutor 10 workers 同拍齐发"
+                "——E5 并发稳定性先例；轮间串行——每轮收齐后再开"
+                "下一轮；用户指定 2026-11-09：测试分为三轮、每轮"
+                " 10 并发，所有轮的所有请求 reasoning_content 统一"
+                "才算通过；同日调整确认：每轮结束收集一次，任一"
+                "轮次不一致即失败中止——避免后续轮次浪费）验证统"
+                "一性，请求"
+                "体工单原样（max_tokens=16000、thinking.type="
+                "enabled、单 user 消息；stream 工单未含——不传，"
+                "非流式默认；采样参数未含——不注入；模型名由环境"
+                "注入，用户确认——GLM-5.3-jy-b 为客户内部档位"
+                "名）。逐轮判定（每轮收齐即断言该轮，任一轮次失"
+                "败即用例失败并中止后续轮次——用户指定：避免无效"
+                "轮次消耗）：断言1 该轮 10/10 HTTP 200；断言2 该"
+                "轮 10/10 响应体合法 JSON+choices 非空；断言3 该"
+                "轮 10/10 choices[0].message.reasoning_content "
+                "存在且非空（「统一」口径=字段层面全部携带，用户"
+                "确认——空字符串同样属「没有」，内容逐字一致不"
+                "作要求——思考文本天然因请求而异；缺失/空串清单"
+                "全量输出=缺陷复现证据，如「第 2 轮 8/10 携带，"
+                "缺失 #R2-3/#R2-7」）。三轮全通过才 PASS。观察"
+                "（不计判据）：逐轮+整体 finish_reason/正文长度/"
+                "思考长度分布/耗时。超时沿用全局（工单未涉及超时"
+                "语义）。chat 单协议（客户请求为 chat 形态，缺陷"
+                "为 chat 响应字段——Anthropic msg 思考经 thinking "
+                "content block 承载，无 reasoning_content 字段形"
+                "态）。GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 "
+                "GLM-5.3 档位变体，缺陷为响应字段生成逻辑，无模"
+                "型分支）",
+                "thinking_enabled_reasoning_content_stable",
+                "P1",
+            ),
         ],
     },
 }

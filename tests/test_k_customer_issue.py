@@ -3,7 +3,7 @@ K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
- K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36 为 P1，K33/K34 为 P2。
+ K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -882,9 +882,42 @@ K. 客户问题复现测试
   K3 官方端点验证，字段解析为接口层通用逻辑（与模型无关），
   同时适用 GLM-5.3 与 Kimi K3（请求同构，模型名由环境注入，
   无模型分支）。（不进 smoke 集：新用例首跑观察期；4 请求）
+- K40: thinking enabled 响应 reasoning_content 字段稳定性核验（三
+  轮 × 每轮 10 并发统一携带） [P1]
+  客户问题（新工单，响应字段稳定性）：请求体 max_tokens=
+  16000 + 单 user 消息「证明：对于任意正整数n，n^3-n能被6
+  整除」+ thinking={"type": "enabled"}（客户环境模型 GLM-
+  5.3-jy-b）——响应有时带、有时不带 reasoning_content 字段，
+  不稳定，客户生产调用产生较多困扰；预期所有请求统一携带
+  reasoning_content。本用例分三轮、每轮 10 并发（轮内
+  ThreadPoolExecutor 10 workers 同拍齐发——E5 并发稳定性先
+  例；轮间串行——每轮收齐后再开下一轮；用户指定
+  2026-11-09：测试分为三轮、每轮 10 并发，所有轮的所有请求
+  reasoning_content 统一才算通过；同日调整确认：每轮结束收
+  集一次，任一轮次不一致即失败中止——避免后续轮次浪费）验
+  证统一性，请求体工单原样（max_tokens=16000、thinking.
+  type=enabled、单 user 消息；stream 工单未含——不传，非流
+  式默认；采样参数未含——不注入；模型名由环境注入，用户确
+  认——GLM-5.3-jy-b 为客户内部档位名）。逐轮判定（每轮收
+  齐即断言该轮，任一轮失败即用例失败并中止后续轮次——用户
+  指定：避免无效轮次消耗）：断言1 该轮 10/10 HTTP 200；断言
+  2 该轮 10/10 响应体合法 JSON+choices 非空；断言3 该轮
+  10/10 choices[0].message.reasoning_content 存在且非空（「统
+  一」口径=字段层面全部携带，用户确认——空字符串同样属「没
+  有」，内容逐字一致不作要求——思考文本天然因请求而异；缺
+  失/空串清单全量输出=缺陷复现证据，如「第 2 轮 8/10 携带，
+  缺失 #R2-3/#R2-7」）。三轮全通过才 PASS。观察（不计判
+  据）：逐轮+整体 finish_reason/正文长度/思考长度分布/耗
+  时。超时沿用全局（工单未涉及超时语义）。chat 单协议（客
+  户请求为 chat 形态，缺陷为 chat 响应字段——Anthropic msg
+  思考经 thinking content block 承载，无 reasoning_content 字
+  段形态）。GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3
+  档位变体，缺陷为响应字段生成逻辑，无模型分支）。（不进
+  smoke 集：新用例首跑观察期；三轮 × 每轮 10 请求）
 """
 
 import base64
+import concurrent.futures
 import importlib.util
 import json
 import math
@@ -12393,4 +12426,305 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             f"全部 HTTP 200 正常请求成功——历史消息 reasoning/"
             f"reasoning_content 双字段共存 400（json_parse_error/"
             f"duplicate field reasoning_content）缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p1
+    def test_thinking_enabled_reasoning_content_stable(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K40 [P1]: 客户问题 - thinking enabled 响应 reasoning_
+        content 字段稳定性（三轮 × 每轮 10 并发统一携带核验）
+
+        客户问题（新工单，响应字段稳定性）：请求体 max_tokens=
+        16000 + 单 user 消息「证明：对于任意正整数n，n^3-n能被
+        6整除」+ thinking={"type": "enabled"}（客户环境模型
+        GLM-5.3-jy-b）——响应有时带、有时不带 reasoning_content
+        字段，不稳定，客户生产调用产生较多困扰；预期所有请求统
+        一携带 reasoning_content 字段。
+        预期行为（整改）：thinking enabled 请求的响应须稳定携
+        带 reasoning_content——所有轮的所有请求全部存在且非空。
+        本用例分三轮、每轮 10 并发（轮内 ThreadPoolExecutor 10
+        workers 同拍齐发——E5 并发稳定性先例；轮间串行——每
+        轮收齐后再开下一轮；用户指定 2026-11-09：测试分为三
+        轮、每轮 10 并发，所有轮的所有请求 reasoning_content
+        统一才算通过；同日调整确认：每轮结束收集一次，任一轮
+        次不一致即失败中止——避免后续轮次浪费）验证统一性。
+        请求体工单原样：max_tokens=16000、单 user 消息、
+        thinking={"type": "enabled"}；stream 工单未含——不传
+        （非流式默认）；采样参数（temperature/top_p/seed）工单
+        未含——不注入；模型名由环境注入（用户确认——staging
+        端点为 glm-5.3，GLM-5.3-jy-b 为客户内部档位名）。超时
+        沿用全局（工单未涉及超时语义——thinking+16000 预算单
+        发通常 10-60s，_post_with_retry timeout=None 沿用全局
+        值；三轮串行总时长约 1-3min）。
+        判定（逐轮判定——每轮收齐即断言该轮，任一轮次失败即
+        用例失败并中止后续轮次，用户指定 2026-11-09：避免无
+        效轮次消耗）：
+        1. 断言1（逐轮）：该轮 10/10 HTTP 200（非 200/发送异
+           常全量列出——请求层失败同样破坏统一性验证）
+        2. 断言2（逐轮）：该轮 10/10 响应体合法 JSON + choices
+           非空
+        3. 断言3（逐轮）：该轮 10/10 choices[0].message.
+           reasoning_content 存在且非空（「统一」口径=字段层
+           面全部携带，用户确认——空字符串同样属「没有」，内
+           容逐字一致不作要求——思考文本天然因请求而异；缺
+           失/空串清单全量输出=缺陷复现证据，如「第 2 轮
+           8/10 携带，缺失 #R2-3/#R2-7」）
+        三轮全部通过才 PASS（所有轮的所有请求统一携带）。
+        观察（不计判据）：逐轮+整体 finish_reason/正文长度/思
+        考长度分布/耗时。chat 单协议（客户请求为 chat 形态，
+        缺陷为 chat 响应字段——Anthropic msg 思考经 thinking
+        content block 承载，无 reasoning_content 字段形态）。
+        GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3 档位
+        变体，缺陷为响应字段生成逻辑，模型名由环境注入——无
+        模型分支）。（不进 smoke 集：新用例首跑观察期；三轮
+        × 每轮 10 请求）
+        """
+        # K40: 工单原样请求参数（单 user 数学证明题——思考
+        # enabled 下必经推理路径；max_tokens=16000、thinking
+        # 对象形态 {"type": "enabled"}）
+        K40_PROMPT = "证明：对于任意正整数n，n^3-n能被6整除"
+        K40_MAX_TOKENS = 16000
+        # K40: 轮次/并发数（用户指定 2026-11-09：三轮、每轮
+        # 10 并发——所有轮的所有请求 reasoning_content 统一
+        # 才通过；每轮收齐即判定，任一轮次失败即中止后续轮
+        # 次——避免无效轮次消耗）
+        K40_ROUNDS = 3
+        K40_CONCURRENCY = 10
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - thinking enabled 响应 "
+            "reasoning_content 字段稳定性（工单：max_tokens=16000+"
+            "单 user 证明题+thinking enabled——响应有时带/不带 "
+            "reasoning_content 不稳定，预期统一携带；三轮 × 每"
+            f"轮 {K40_CONCURRENCY} 并发验证统一性，每轮收齐即"
+            "判定，任一轮失败即中止后续轮次）==="
+        )
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+
+        def send_probe(round_no: int, idx: int) -> Dict[str, Any]:
+            """K40 并发探针：发单请求并收集判定所需字段（异
+            常不抛出——轮内收齐后统一断言，用户确认口径）"""
+            # K40: 工单原样 payload（字段序 model/messages/max_
+            # tokens/thinking；stream 工单未含——不传；采样参
+            # 数未含——不注入；模型名由环境注入）
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [
+                    {"role": "user", "content": K40_PROMPT}
+                ],
+                "max_tokens": K40_MAX_TOKENS,
+                "thinking": {"type": "enabled"},
+            }
+            started = time.time()
+            try:
+                response = api_client._post_with_retry(
+                    chat_url, payload, stream=False
+                )
+            except Exception as e:
+                return {
+                    "round": round_no,
+                    "idx": idx,
+                    "error": f"请求发送异常: {e}",
+                    "status": None,
+                    "elapsed": 0.0,
+                    "data": None,
+                    "reasoning_content": None,
+                    "content": "",
+                    "finish_reason": None,
+                }
+            elapsed = time.time() - started
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            choices = (data or {}).get("choices") or []
+            choice0 = choices[0] if choices else {}
+            message = (choice0 or {}).get("message") or {}
+            return {
+                "round": round_no,
+                "idx": idx,
+                "status": response.status_code,
+                "elapsed": elapsed,
+                "data": data,
+                "reasoning_content": message.get("reasoning_content"),
+                "content": message.get("content") or "",
+                "finish_reason": choice0.get("finish_reason"),
+            }
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K40_PROMPT}],
+            {
+                "endpoint": "/v1/chat/completions",
+                "max_tokens": K40_MAX_TOKENS,
+                "thinking": {"type": "enabled"},
+                "轮次": K40_ROUNDS,
+                "并发数(每轮)": K40_CONCURRENCY,
+                "stream": "(原始未指定——不传，非流式默认)",
+                "temperature": "(原始未指定——不注入)",
+                "top_p": "(原始未指定——不注入)",
+                "seed": "(原始未指定——不注入)",
+            },
+        )
+
+        # K40: 三轮 × 每轮 10 并发（轮间串行——每轮收齐后再开
+        # 下一轮；每轮收齐即断言该轮，任一轮次失败即用例失败
+        # 并中止后续轮次——用户指定 2026-11-09：避免无效轮次
+        # 消耗；轮内 E5 同款 ThreadPoolExecutor 同拍齐发）
+        all_results: List[Dict[str, Any]] = []
+        for round_no in range(1, K40_ROUNDS + 1):
+            test_logger.info(
+                f"--- 第 {round_no}/{K40_ROUNDS} 轮: 并发 "
+                f"{K40_CONCURRENCY} 发同拍齐发 ---"
+            )
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=K40_CONCURRENCY
+            ) as executor:
+                futures = [
+                    executor.submit(send_probe, round_no, i)
+                    for i in range(1, K40_CONCURRENCY + 1)
+                ]
+                results = [f.result() for f in futures]
+            results.sort(key=lambda r: r["idx"])
+
+            # K40: 每发真实响应留痕（按 idx 序输出该轮全量矩阵
+            # ——失败时同样可见；标识 #R{轮}-{序} 跨轮定位）
+            for r in results:
+                rid = f"#R{r['round']}-{r['idx']}"
+                if r.get("error"):
+                    test_logger.error(f"[{rid}] {r['error']}")
+                    continue
+                rc = r["reasoning_content"]
+                rc_desc = (
+                    f"reasoning_content {len(str(rc))} 字符"
+                    if isinstance(rc, str) and rc.strip()
+                    else f"reasoning_content 缺失/空: {rc!r}"
+                )
+                test_logger.info(
+                    f"[{rid}] 真实响应: HTTP {r['status']}, "
+                    f"elapsed={r['elapsed']:.1f}s, {rc_desc}, "
+                    f"正文 {len(str(r['content']).strip())} 字符, "
+                    f"finish_reason={r['finish_reason']!r}"
+                )
+
+            # 断言1（本轮）：10/10 HTTP 200（非 200/发送异常全
+            # 量列出——请求层失败同样破坏统一性验证；任一轮次
+            # 失败即判定并中止后续轮次）
+            non_200 = [
+                r
+                for r in results
+                if r.get("error") or r["status"] != 200
+            ]
+            assert not non_200, (
+                f"第 {round_no} 轮存在非 200/发送异常（预期每轮 "
+                f"{K40_CONCURRENCY}/{K40_CONCURRENCY} HTTP 200——"
+                f"请求层失败同样属统一性未达标；已中止后续轮次"
+                f"——任一轮次失败即判定）: "
+                + "; ".join(
+                    f"#R{r['round']}-{r['idx']}: "
+                    f"{r.get('error') or r['status']}"
+                    for r in non_200
+                )
+            )
+
+            # 断言2（本轮）：10/10 响应体合法 JSON + choices 非空
+            bad_body = [
+                r
+                for r in results
+                if not r["data"]
+                or not (r["data"].get("choices") or [])
+            ]
+            assert not bad_body, (
+                f"第 {round_no} 轮存在响应体异常（非法 JSON/"
+                f"choices 空；已中止后续轮次——任一轮次失败即判"
+                f"定）: "
+                + "; ".join(
+                    f"#R{r['round']}-{r['idx']}: "
+                    f"{str(r['data'])[:200]}"
+                    for r in bad_body
+                )
+            )
+
+            # 断言3（本轮）：10/10 reasoning_content 存在且非空
+            # （工单缺陷直接判据——「统一」=字段层面全部携带，
+            # 空串同判缺失；缺失/空串清单全量输出=缺陷复现证据
+            # ——任一轮次失败即判定并中止后续轮次，避免无效轮
+            # 次消耗）
+            missing_rc = [
+                r
+                for r in results
+                if not isinstance(r["reasoning_content"], str)
+                or not r["reasoning_content"].strip()
+            ]
+            assert not missing_rc, (
+                f"缺陷复现: 第 {round_no} 轮 reasoning_content "
+                f"统一性 {K40_CONCURRENCY - len(missing_rc)}/"
+                f"{K40_CONCURRENCY} 携带，缺失/空: "
+                + ", ".join(
+                    f"#R{r['round']}-{r['idx']}" for r in missing_rc
+                )
+                + "——预期所有轮的所有请求统一携带 reasoning_"
+                f"content（工单形态：有时带/有时不带，不稳定）；"
+                f"已中止后续轮次——任一轮次失败即判定，避免无效"
+                f"轮次消耗；缺失发响应留痕: "
+                + " || ".join(
+                    f"#R{r['round']}-{r['idx']}: "
+                    f"finish={r['finish_reason']!r}, 正文 "
+                    f"{len(str(r['content']).strip())} 字符, "
+                    f"reasoning_content={r['reasoning_content']!r}"
+                    for r in missing_rc[:5]
+                )
+            )
+
+            # 本轮通过留痕（观察不计判据）：思考长度/耗时/
+            # finish_reason 分布
+            rc_lengths = [
+                len(str(r["reasoning_content"]).strip())
+                for r in results
+            ]
+            elapsed_list = [r["elapsed"] for r in results]
+            finishes = [r["finish_reason"] for r in results]
+            finish_dist = {f: finishes.count(f) for f in set(finishes)}
+            test_logger.info(
+                f"第 {round_no}/{K40_ROUNDS} 轮通过: "
+                f"{K40_CONCURRENCY}/{K40_CONCURRENCY} HTTP 200 且 "
+                f"reasoning_content 统一携带（存在且非空）——本轮 "
+                f"思考长度 min/avg/max={min(rc_lengths)}/"
+                f"{sum(rc_lengths) // len(rc_lengths)}/"
+                f"{max(rc_lengths)} 字符, 耗时 min/avg/max="
+                f"{min(elapsed_list):.1f}/"
+                f"{sum(elapsed_list) / len(elapsed_list):.1f}/"
+                f"{max(elapsed_list):.1f}s, finish_reason 分布="
+                f"{finish_dist}（观察不计判据）"
+            )
+            all_results.extend(results)
+
+        # 整体观察汇总（不计判据）：三轮共 30 发统一性摘要
+        rc_lengths = [
+            len(str(r["reasoning_content"]).strip())
+            for r in all_results
+        ]
+        elapsed_list = [r["elapsed"] for r in all_results]
+        finishes = [r["finish_reason"] for r in all_results]
+        finish_dist = {f: finishes.count(f) for f in set(finishes)}
+        test_logger.info(
+            f"整体观察: 三轮共 {len(all_results)} 发 "
+            f"reasoning_content 长度 min/avg/max={min(rc_lengths)}/"
+            f"{sum(rc_lengths) // len(rc_lengths)}/"
+            f"{max(rc_lengths)} 字符, 耗时 min/avg/max="
+            f"{min(elapsed_list):.1f}/"
+            f"{sum(elapsed_list) / len(elapsed_list):.1f}/"
+            f"{max(elapsed_list):.1f}s, finish_reason 分布="
+            f"{finish_dist}（观察不计判据）"
+        )
+        test_logger.info(
+            f"客户问题整改验证通过: 三轮 × 每轮 {K40_CONCURRENCY} "
+            f"并发共 {K40_ROUNDS * K40_CONCURRENCY} 发——所有轮"
+            f"的所有请求全部 HTTP 200 且 reasoning_content 统一携"
+            f"带（存在且非空），thinking enabled 响应 reasoning_"
+            f"content 字段不稳定缺陷未复现"
         )
