@@ -3,7 +3,7 @@ K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
- K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42/K43/K44 为 P1，K33/K34 为 P2。
+ K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42/K43/K44/K45 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -882,38 +882,37 @@ K. 客户问题复现测试
   K3 官方端点验证，字段解析为接口层通用逻辑（与模型无关），
   同时适用 GLM-5.3 与 Kimi K3（请求同构，模型名由环境注入，
   无模型分支）。（不进 smoke 集：新用例首跑观察期；4 请求）
-- K40: thinking enabled 响应 reasoning_content 字段稳定性核验（三
-  轮 × 每轮 10 并发统一携带） [P1]
-  客户问题（新工单，响应字段稳定性）：请求体 max_tokens=
-  16000 + 单 user 消息「证明：对于任意正整数n，n^3-n能被6
-  整除」+ thinking={"type": "enabled"}（客户环境模型 GLM-
-  5.3-jy-b）——响应有时带、有时不带 reasoning_content 字段，
-  不稳定，客户生产调用产生较多困扰；预期所有请求统一携带
-  reasoning_content。本用例分三轮、每轮 10 并发（轮内
-  ThreadPoolExecutor 10 workers 同拍齐发——E5 并发稳定性先
-  例；轮间串行——每轮收齐后再开下一轮；用户指定
-  2026-11-09：测试分为三轮、每轮 10 并发，所有轮的所有请求
-  reasoning_content 统一才算通过；同日调整确认：每轮结束收
-  集一次，任一轮次不一致即失败中止——避免后续轮次浪费）验
-  证统一性，请求体工单原样（max_tokens=16000、thinking.
-  type=enabled、单 user 消息；stream 工单未含——不传，非流
-  式默认；采样参数未含——不注入；模型名由环境注入，用户确
-  认——GLM-5.3-jy-b 为客户内部档位名）。逐轮判定（每轮收
-  齐即断言该轮，任一轮失败即用例失败并中止后续轮次——用户
-  指定：避免无效轮次消耗）：断言1 该轮 10/10 HTTP 200；断言
-  2 该轮 10/10 响应体合法 JSON+choices 非空；断言3 该轮
-  10/10 choices[0].message.reasoning_content 存在且非空（「统
-  一」口径=字段层面全部携带，用户确认——空字符串同样属「没
-  有」，内容逐字一致不作要求——思考文本天然因请求而异；缺
-  失/空串清单全量输出=缺陷复现证据，如「第 2 轮 8/10 携带，
-  缺失 #R2-3/#R2-7」）。三轮全通过才 PASS。观察（不计判
-  据）：逐轮+整体 finish_reason/正文长度/思考长度分布/耗
-  时。超时沿用全局（工单未涉及超时语义）。chat 单协议（客
-  户请求为 chat 形态，缺陷为 chat 响应字段——Anthropic msg
-  思考经 thinking content block 承载，无 reasoning_content 字
-  段形态）。GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3
-  档位变体，缺陷为响应字段生成逻辑，无模型分支）。（不进
-  smoke 集：新用例首跑观察期；三轮 × 每轮 10 请求）
+- K40: 跨协议 thinking 链路核验（msg 端点思考 block 稳定+OpenAI
+  体混用留证，msg 单协议） [P1]
+  客户问题（K40 工单补充信息，2026-11-10）：客户链路为最终客户
+  Anthropic 协议 → 乐信网关（协议转换）→ OpenAI 协议 → 本平台；
+  客户反馈 4 点——①存在协议转换层；②发现后已开启透传；③客户
+  用例疑似「OpenAI 协议请求体调 Anthropic 协议接口」；④部分乐
+  信重现请求看不到 thinking 数据。本例在 alayanew 侧回答两个问
+  题：Anthropic 端点对合法 thinking 请求是否稳定返回 thinking
+  content block（客户「看不到 type:thinking」的正向判据——msg
+  链路响应映射完整性，工单「统一携带」预期在 msg 侧的口径）；客户怀疑的混用形态
+  在 alayanew 侧的行为确定性留证（无官方基线，不定 200/400 正
+  误）。轮次（用户确认 2026-11-10：全部三轮+消息自拟+P1+GLM53）：
+  正向稳定轮 ×3（硬断言）——Anthropic 原生体（自拟消息「计算
+  37×23，并简要给出步骤。」、max_tokens=2048、thinking=
+  {"type": "enabled", "budget_tokens": 1024}——budget 取官方最
+  小合法值且须小于 max_tokens）→ 每发断言：HTTP 200+content 数
+  组含 type=="thinking" block 且文本非空+含 type=="text" block
+  且文本非空+stop_reason=="end_turn"（任发缺 thinking block=
+  客户现象在 alayanew msg 链路复现，缺陷实锤）；混用留证轮 ×2
+  （弱断言）——OpenAI 体（thinking={"type": "enabled"} 无
+  budget_tokens——K40 工单形态混用签名）打 msg 端点，弱断言两
+  发行为一致（状态码一致；200 时 thinking block 存在性一致——
+  混用形态不得随机摇摆），HTTP/错误体/block 有无全量留证；默
+  认档观察轮 ×1（纯观察）——同消息不带 thinking，观察 thinking
+  block 有无（msg 链路默认思考状态——对账客户第 4 点请求侧读
+  法）。msg 端点 /anthropic/v1/messages+x-api-key+anthropic-
+  version: 2023-06-01 头（K3/K35 先例）；非流式（客户信息未指
+  明 stream——不注入）；模型名由环境注入；采样参数客户信息未
+  含——不注入；相邻间隔 3s；超时沿用全局。GLM-5.3 专用（工单模型为客户内
+  部档位名）。无新增数据文件。（不进 smoke 集：新用例首跑
+  观察期；3+2+1 共 6 请求）
 - K41: stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议） [P1]
   客户问题（新工单，参数校验）：请求带 stop=[]（空数组）时平台
   400 拒绝，两种错误形态（两个 request id）——上游校验错透传
@@ -1019,6 +1018,33 @@ K. 客户问题复现测试
   陷为 chat 参数校验过度严格）。GLM-5.3 专用（工单模型 glm-
   5.3）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；
   1 请求）
+- K45: responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，
+  responses 单协议） [P1]
+  客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求
+  （glm-5.3、instructions="Answer concisely."、input 单 user 消
+  息「Compute 47*89 step by step, then reply with just the
+  number.」、max_output_tokens=1024、stream=false）响应 200
+  completed——思考已下发（output 含 type=="reasoning" 块，summary
+  为完整思考过程）、思考已计入 output_tokens（545 vs 可见正文
+  "4183" 仅 ~2 token——差值全为思考消耗），但 usage.output_tokens_
+  details.reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客
+  户最初另报「content 无思考块」，报文实证块在——缺陷收敛到计
+  数口径）。本用例原样回放工单请求 ×3（「恒 0」表述的稳定性复
+  现口径；每发独立断言，相邻 3s）：断言1 HTTP 200+合法 JSON+
+  output 数组存在；断言2 有思考内容（type=="reasoning" 块
+  summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type==
+  "message" 块 output_text 非空——数值正误不定留证）；断言4
+  reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤
+  output_tokens（K30 断言4 下界口径——总输出不得小于思考部分）。
+  观察（不计判据）：正文全文、output_tokens 与可见正文差值（思
+  考量旁证）、summary 长度、顶层 reasoning 回显、resp_/rs_/msg_
+  id 形态、error 字段。请求体五字段工单原样，仅 model 环境注入
+  （K43 先例）；工单密钥不入库（鉴权走环境配置）；thinking/
+  reasoning 参数工单未带——不注入；采样参数未含——不注入；非
+  流式（工单 stream=false 原样）；超时沿用全局。GLM-5.3 专用
+  （工单模型 glm-5.3，缺陷为 usage 计数口径——响应组装层，无模
+  型分支）。无新增数据文件。（不进 smoke 集：新用例首跑观察
+  期；×3 请求）
 """
 
 import base64
@@ -12537,302 +12563,314 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_thinking_enabled_reasoning_content_stable(
+    def test_anthropic_thinking_block_stable_cross_protocol(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K40 [P1]: 客户问题 - thinking enabled 响应 reasoning_
-        content 字段稳定性（三轮 × 每轮 10 并发统一携带核验）
+        """K40 [P1]: 客户问题 - 跨协议 thinking 链路核验（msg 端点
+        思考 block 稳定 + OpenAI 体混用形态留证）
 
-        客户问题（新工单，响应字段稳定性）：请求体 max_tokens=
-        16000 + 单 user 消息「证明：对于任意正整数n，n^3-n能被
-        6整除」+ thinking={"type": "enabled"}（客户环境模型
-        GLM-5.3-jy-b）——响应有时带、有时不带 reasoning_content
-        字段，不稳定，客户生产调用产生较多困扰；预期所有请求统
-        一携带 reasoning_content 字段。
-        预期行为（整改）：thinking enabled 请求的响应须稳定携
-        带 reasoning_content——所有轮的所有请求全部存在且非空。
-        本用例分三轮、每轮 10 并发（轮内 ThreadPoolExecutor 10
-        workers 同拍齐发——E5 并发稳定性先例；轮间串行——每
-        轮收齐后再开下一轮；用户指定 2026-11-09：测试分为三
-        轮、每轮 10 并发，所有轮的所有请求 reasoning_content
-        统一才算通过；同日调整确认：每轮结束收集一次，任一轮
-        次不一致即失败中止——避免后续轮次浪费）验证统一性。
-        请求体工单原样：max_tokens=16000、单 user 消息、
-        thinking={"type": "enabled"}；stream 工单未含——不传
-        （非流式默认）；采样参数（temperature/top_p/seed）工单
-        未含——不注入；模型名由环境注入（用户确认——staging
-        端点为 glm-5.3，GLM-5.3-jy-b 为客户内部档位名）。超时
-        沿用全局（工单未涉及超时语义——thinking+16000 预算单
-        发通常 10-60s，_post_with_retry timeout=None 沿用全局
-        值；三轮串行总时长约 1-3min）。
-        判定（逐轮判定——每轮收齐即断言该轮，任一轮次失败即
-        用例失败并中止后续轮次，用户指定 2026-11-09：避免无
-        效轮次消耗）：
-        1. 断言1（逐轮）：该轮 10/10 HTTP 200（非 200/发送异
-           常全量列出——请求层失败同样破坏统一性验证）
-        2. 断言2（逐轮）：该轮 10/10 响应体合法 JSON + choices
-           非空
-        3. 断言3（逐轮）：该轮 10/10 choices[0].message.
-           reasoning_content 存在且非空（「统一」口径=字段层
-           面全部携带，用户确认——空字符串同样属「没有」，内
-           容逐字一致不作要求——思考文本天然因请求而异；缺
-           失/空串清单全量输出=缺陷复现证据，如「第 2 轮
-           8/10 携带，缺失 #R2-3/#R2-7」）
-        三轮全部通过才 PASS（所有轮的所有请求统一携带）。
-        观察（不计判据）：逐轮+整体 finish_reason/正文长度/思
-        考长度分布/耗时。chat 单协议（客户请求为 chat 形态，
-        缺陷为 chat 响应字段——Anthropic msg 思考经 thinking
-        content block 承载，无 reasoning_content 字段形态）。
-        GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3 档位
-        变体，缺陷为响应字段生成逻辑，模型名由环境注入——无
-        模型分支）。（不进 smoke 集：新用例首跑观察期；三轮
-        × 每轮 10 请求）
+        客户问题（K40 工单补充信息，2026-11-10）：客户链路为最终
+        客户 Anthropic 协议 → 乐信网关（协议转换）→ OpenAI 协议 →
+        本平台；客户反馈 4 点——①存在协议转换层；②发现后已开启
+        透传；③客户用例疑似「OpenAI 协议请求体调 Anthropic 协议
+        接口」；④部分乐信重现请求看不到 thinking 数据。本例在
+        alayanew 侧回答两个问题：Anthropic 端点对合法 thinking 请
+        求是否稳定返回 thinking content block（客户「看不到
+        type:thinking」的正向判据——msg 链路响应映射完整性，工单
+        「统一携带」预期在 msg 侧的口径）；客户怀疑的混用形态在 alayanew 侧的
+        行为确定性留证（无官方基线，不定 200/400 正误）。
+        轮次（用户确认 2026-11-10：全部三轮；消息自拟「计算
+        37×23，并简要给出步骤。」；P1+GLM53）：
+        1. 正向稳定轮 ×3（硬断言）：Anthropic 原生体（max_tokens=
+           2048、thinking={"type": "enabled", "budget_tokens":
+           1024}——budget 取官方最小合法值且须小于 max_tokens）
+           → 每发断言：①HTTP 200 ②content 数组含 type==
+           "thinking" block 且 thinking 文本非空 ③含 type==
+           "text" block 且文本非空 ④stop_reason=="end_turn"。
+           任发缺 thinking block = 客户现象在 alayanew msg 链
+           路复现（msg 响应映射丢失/不稳定形态——缺陷实锤）
+        2. 混用留证轮 ×2（弱断言）：OpenAI 体（thinking=
+           {"type": "enabled"} 无 budget_tokens——K40 工单形态
+           的混用签名）打 msg 端点——弱断言两发行为一致（HTTP
+           状态码一致；200 时 thinking block 存在性一致——混用
+           形态不得随机摇摆）；HTTP/错误体/block 有无全量留证
+           （回答客户第 3 点）
+        3. 默认档观察轮 ×1（纯观察）：同消息不带 thinking → 观
+           察 thinking block 有无（msg 链路默认思考状态——对账
+           客户第 4 点请求侧读法：thinking 丢失后默认档是否仍思
+           考）
+        msg 端点 {base_url}/anthropic/v1/messages、x-api-key +
+        anthropic-version: 2023-06-01 头（K3/K35 先例）；非流
+        式（客户信息未指明 stream——不注入，Anthropic 默认非流
+        式）；模型名由环境注入；采样参数客户信息未含——不注入；
+        相邻间隔 3s；超时沿用全局（工单未涉及挂死/超时语义）。
+        GLM-5.3 专用（工单模型为客户内部档位
+        名——缺陷为 msg 链路思考响应映射，无模型分支）。（不进 smoke 集：新用例首跑观察期；
+        3+2+1 共 6 请求）
         """
-        # K40: 工单原样请求参数（单 user 数学证明题——思考
-        # enabled 下必经推理路径；max_tokens=16000、thinking
-        # 对象形态 {"type": "enabled"}）
-        K40_PROMPT = "证明：对于任意正整数n，n^3-n能被6整除"
-        K40_MAX_TOKENS = 16000
-        # K40: 轮次/并发数（用户指定 2026-11-09：三轮、每轮
-        # 10 并发——所有轮的所有请求 reasoning_content 统一
-        # 才通过；每轮收齐即判定，任一轮次失败即中止后续轮
-        # 次——避免无效轮次消耗）
-        K40_ROUNDS = 3
-        K40_CONCURRENCY = 10
+        # K40: 自拟消息（客户补充信息未提供具体消息——用户确认
+        # 2026-11-10 取自拟算术题）
+        K40_PROMPT = "计算 37×23，并简要给出步骤。"
+
+        # K40: Anthropic 协议版本头（K3 先例——兼容面最广 GA 版本）
+        K40_ANTHROPIC_VERSION = "2023-06-01"
+
+        # K40: thinking 预算与输出上限（budget_tokens=1024 为
+        # Anthropic 官方最小合法值且须小于 max_tokens；2048 留出
+        # 正文空间——避免思考耗光预算正文为空）
+        K40_BUDGET_TOKENS = 1024
+        K40_MAX_TOKENS = 2048
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - thinking enabled 响应 "
-            "reasoning_content 字段稳定性（工单：max_tokens=16000+"
-            "单 user 证明题+thinking enabled——响应有时带/不带 "
-            "reasoning_content 不稳定，预期统一携带；三轮 × 每"
-            f"轮 {K40_CONCURRENCY} 并发验证统一性，每轮收齐即"
-            "判定，任一轮失败即中止后续轮次）==="
+            "=== 测试开始: 客户问题 - 跨协议 thinking 链路核验（K40"
+            "工单补充信息：协议转换/透传/疑似 OpenAI 体调 Anthropic "
+            "接口/部分重现看不到 thinking——正向稳定轮×3 硬断言 + 混"
+            "用留证轮×2 弱断言 + 默认档观察轮×1，msg 端点）==="
         )
 
-        chat_url = f"{api_client.api_prefix}/chat/completions"
+        msg_url = f"{api_client.base_url}/anthropic/v1/messages"
+        msg_headers: Dict[str, str] = {
+            "anthropic-version": K40_ANTHROPIC_VERSION
+        }
+        if api_client.api_key:
+            msg_headers["x-api-key"] = api_client.api_key
 
-        def send_probe(round_no: int, idx: int) -> Dict[str, Any]:
-            """K40 并发探针：发单请求并收集判定所需字段（异
-            常不抛出——轮内收齐后统一断言，用户确认口径）"""
-            # K40: 工单原样 payload（字段序 model/messages/max_
-            # tokens/thinking；stream 工单未含——不传；采样参
-            # 数未含——不注入；模型名由环境注入）
-            payload: Dict[str, Any] = {
-                "model": api_client.model_name,
-                "messages": [
-                    {"role": "user", "content": K40_PROMPT}
-                ],
-                "max_tokens": K40_MAX_TOKENS,
-                "thinking": {"type": "enabled"},
-            }
+        def msg_send(payload: Dict[str, Any]) -> Dict[str, Any]:
+            """K40: Anthropic 协议非流式直发（K3 先例——session.post
+            + x-api-key/anthropic-version 头；发送异常不抛出，返回
+            统一结构供轮内判定）"""
             started = time.time()
             try:
-                response = api_client._post_with_retry(
-                    chat_url, payload, stream=False
+                resp = api_client.session.post(
+                    msg_url,
+                    json=payload,
+                    headers=msg_headers,
+                    timeout=api_client.timeout,
                 )
             except Exception as e:
                 return {
-                    "round": round_no,
-                    "idx": idx,
-                    "error": f"请求发送异常: {e}",
                     "status": None,
+                    "error": f"请求发送异常: {e}",
                     "elapsed": 0.0,
+                    "text": "",
                     "data": None,
-                    "reasoning_content": None,
-                    "content": "",
-                    "finish_reason": None,
                 }
             elapsed = time.time() - started
             try:
-                data = response.json()
+                data = resp.json()
             except ValueError:
                 data = None
-            choices = (data or {}).get("choices") or []
-            choice0 = choices[0] if choices else {}
-            message = (choice0 or {}).get("message") or {}
             return {
-                "round": round_no,
-                "idx": idx,
-                "status": response.status_code,
+                "status": resp.status_code,
+                "error": None,
                 "elapsed": elapsed,
+                "text": resp.text,
                 "data": data,
-                "reasoning_content": message.get("reasoning_content"),
-                "content": message.get("content") or "",
-                "finish_reason": choice0.get("finish_reason"),
+            }
+
+        def blocks_of(data: Any) -> Dict[str, Any]:
+            """K40: 提取 Anthropic 响应思考/正文形态（thinking block
+            文本拼接、text block 文本拼接、stop_reason）"""
+            if not isinstance(data, dict):
+                data = {}
+            blocks = data.get("content") or []
+            thinking_txt = ""
+            text_txt = ""
+            n_thinking = 0
+            for blk in blocks:
+                if not isinstance(blk, dict):
+                    continue
+                if blk.get("type") == "thinking":
+                    n_thinking += 1
+                    thinking_txt += str(blk.get("thinking") or "")
+                elif blk.get("type") == "text":
+                    text_txt += str(blk.get("text") or "")
+            return {
+                "n_thinking": n_thinking,
+                "thinking_len": len(thinking_txt.strip()),
+                "text_len": len(text_txt.strip()),
+                "stop_reason": data.get("stop_reason"),
             }
 
         TestLogger.log_request(
             test_logger,
             [{"role": "user", "content": K40_PROMPT}],
             {
-                "endpoint": "/v1/chat/completions",
+                "endpoint": "/anthropic/v1/messages",
+                "headers": "x-api-key + anthropic-version: 2023-06-01",
                 "max_tokens": K40_MAX_TOKENS,
-                "thinking": {"type": "enabled"},
-                "轮次": K40_ROUNDS,
-                "并发数(每轮)": K40_CONCURRENCY,
-                "stream": "(原始未指定——不传，非流式默认)",
-                "temperature": "(原始未指定——不注入)",
-                "top_p": "(原始未指定——不注入)",
-                "seed": "(原始未指定——不注入)",
+                "thinking_正向轮": {
+                    "type": "enabled",
+                    "budget_tokens": K40_BUDGET_TOKENS,
+                },
+                "thinking_混用轮": {"type": "enabled"},
+                "混用签名": "OpenAI 体打 Anthropic 端点——无 budget_tokens",
+                "stream": "(客户信息未指明——不传，非流式默认)",
+                "temperature": "(客户信息未含——不注入)",
+                "top_p": "(客户信息未含——不注入)",
+                "seed": "(客户信息未含——不注入)",
+                "轮次": "正向×3 硬断言 + 混用×2 弱断言 + 默认档×1 观察",
             },
         )
 
-        # K40: 三轮 × 每轮 10 并发（轮间串行——每轮收齐后再开
-        # 下一轮；每轮收齐即断言该轮，任一轮次失败即用例失败
-        # 并中止后续轮次——用户指定 2026-11-09：避免无效轮次
-        # 消耗；轮内 E5 同款 ThreadPoolExecutor 同拍齐发）
-        all_results: List[Dict[str, Any]] = []
-        for round_no in range(1, K40_ROUNDS + 1):
+        # ===== 轮1：正向稳定 ×3（硬断言——Anthropic 原生 thinking
+        # 请求，每发须稳定返回非空 thinking block）=====
+        for i in range(1, 4):
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K40_PROMPT}],
+                "max_tokens": K40_MAX_TOKENS,
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": K40_BUDGET_TOKENS,
+                },
+            }
+            r = msg_send(payload)
+            info = blocks_of(r["data"])
             test_logger.info(
-                f"--- 第 {round_no}/{K40_ROUNDS} 轮: 并发 "
-                f"{K40_CONCURRENCY} 发同拍齐发 ---"
+                f"[正向#1-{i}] HTTP {r['status']}, elapsed="
+                f"{r['elapsed']:.1f}s, thinking_blocks="
+                f"{info['n_thinking']}（思考 {info['thinking_len']} "
+                f"字符）, text {info['text_len']} 字符, stop_reason="
+                f"{info['stop_reason']!r}"
             )
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=K40_CONCURRENCY
-            ) as executor:
-                futures = [
-                    executor.submit(send_probe, round_no, i)
-                    for i in range(1, K40_CONCURRENCY + 1)
-                ]
-                results = [f.result() for f in futures]
-            results.sort(key=lambda r: r["idx"])
-
-            # K40: 每发真实响应留痕（按 idx 序输出该轮全量矩阵
-            # ——失败时同样可见；标识 #R{轮}-{序} 跨轮定位）
-            for r in results:
-                rid = f"#R{r['round']}-{r['idx']}"
-                if r.get("error"):
-                    test_logger.error(f"[{rid}] {r['error']}")
-                    continue
-                rc = r["reasoning_content"]
-                rc_desc = (
-                    f"reasoning_content {len(str(rc))} 字符"
-                    if isinstance(rc, str) and rc.strip()
-                    else f"reasoning_content 缺失/空: {rc!r}"
-                )
-                test_logger.info(
-                    f"[{rid}] 真实响应: HTTP {r['status']}, "
-                    f"elapsed={r['elapsed']:.1f}s, {rc_desc}, "
-                    f"正文 {len(str(r['content']).strip())} 字符, "
-                    f"finish_reason={r['finish_reason']!r}"
-                )
-
-            # 断言1（本轮）：10/10 HTTP 200（非 200/发送异常全
-            # 量列出——请求层失败同样破坏统一性验证；任一轮次
-            # 失败即判定并中止后续轮次）
-            non_200 = [
-                r
-                for r in results
-                if r.get("error") or r["status"] != 200
-            ]
-            assert not non_200, (
-                f"第 {round_no} 轮存在非 200/发送异常（预期每轮 "
-                f"{K40_CONCURRENCY}/{K40_CONCURRENCY} HTTP 200——"
-                f"请求层失败同样属统一性未达标；已中止后续轮次"
-                f"——任一轮次失败即判定）: "
-                + "; ".join(
-                    f"#R{r['round']}-{r['idx']}: "
-                    f"{r.get('error') or r['status']}"
-                    for r in non_200
-                )
+            if r["error"]:
+                test_logger.error(f"[正向#1-{i}] {r['error']}")
+            # 断言1：HTTP 200（非 200/发送异常=请求层失败）
+            assert r["status"] == 200, (
+                f"[正向#1-{i}] 请求失败 HTTP {r['status']}"
+                f"{('（' + r['error'] + '）') if r['error'] else ''}, "
+                f"响应体全文: {r['text'][:2000]}"
             )
-
-            # 断言2（本轮）：10/10 响应体合法 JSON + choices 非空
-            bad_body = [
-                r
-                for r in results
-                if not r["data"]
-                or not (r["data"].get("choices") or [])
-            ]
-            assert not bad_body, (
-                f"第 {round_no} 轮存在响应体异常（非法 JSON/"
-                f"choices 空；已中止后续轮次——任一轮次失败即判"
-                f"定）: "
-                + "; ".join(
-                    f"#R{r['round']}-{r['idx']}: "
-                    f"{str(r['data'])[:200]}"
-                    for r in bad_body
-                )
+            # 断言2：content 数组含 thinking block 且文本非空
+            # （缺失/空=客户「看不到 type:thinking」现象在 alaya-
+            # new msg 链路复现——msg 响应映射丢失形态）
+            assert (
+                info["n_thinking"] > 0 and info["thinking_len"] > 0
+            ), (
+                f"[正向#1-{i}] 缺陷复现: thinking content block 缺失"
+                f"或为空（n_thinking={info['n_thinking']}, "
+                f"thinking_len={info['thinking_len']}——合法 thinking "
+                f"enabled 请求响应须携带非空思考 block），响应体全"
+                f"文: {r['text'][:2000]}"
             )
-
-            # 断言3（本轮）：10/10 reasoning_content 存在且非空
-            # （工单缺陷直接判据——「统一」=字段层面全部携带，
-            # 空串同判缺失；缺失/空串清单全量输出=缺陷复现证据
-            # ——任一轮次失败即判定并中止后续轮次，避免无效轮
-            # 次消耗）
-            missing_rc = [
-                r
-                for r in results
-                if not isinstance(r["reasoning_content"], str)
-                or not r["reasoning_content"].strip()
-            ]
-            assert not missing_rc, (
-                f"缺陷复现: 第 {round_no} 轮 reasoning_content "
-                f"统一性 {K40_CONCURRENCY - len(missing_rc)}/"
-                f"{K40_CONCURRENCY} 携带，缺失/空: "
-                + ", ".join(
-                    f"#R{r['round']}-{r['idx']}" for r in missing_rc
-                )
-                + "——预期所有轮的所有请求统一携带 reasoning_"
-                f"content（工单形态：有时带/有时不带，不稳定）；"
-                f"已中止后续轮次——任一轮次失败即判定，避免无效"
-                f"轮次消耗；缺失发响应留痕: "
-                + " || ".join(
-                    f"#R{r['round']}-{r['idx']}: "
-                    f"finish={r['finish_reason']!r}, 正文 "
-                    f"{len(str(r['content']).strip())} 字符, "
-                    f"reasoning_content={r['reasoning_content']!r}"
-                    for r in missing_rc[:5]
-                )
+            # 断言3：含 text block 且文本非空（2048-1024 预算留出
+            # 正文空间，不应被思考耗光）
+            assert info["text_len"] > 0, (
+                f"[正向#1-{i}] 缺陷形态: 正文为空（text block 缺"
+                f"失/空——max_tokens=2048 预算下不应被思考耗光），"
+                f"响应体全文: {r['text'][:2000]}"
             )
-
-            # 本轮通过留痕（观察不计判据）：思考长度/耗时/
-            # finish_reason 分布
-            rc_lengths = [
-                len(str(r["reasoning_content"]).strip())
-                for r in results
-            ]
-            elapsed_list = [r["elapsed"] for r in results]
-            finishes = [r["finish_reason"] for r in results]
-            finish_dist = {f: finishes.count(f) for f in set(finishes)}
-            test_logger.info(
-                f"第 {round_no}/{K40_ROUNDS} 轮通过: "
-                f"{K40_CONCURRENCY}/{K40_CONCURRENCY} HTTP 200 且 "
-                f"reasoning_content 统一携带（存在且非空）——本轮 "
-                f"思考长度 min/avg/max={min(rc_lengths)}/"
-                f"{sum(rc_lengths) // len(rc_lengths)}/"
-                f"{max(rc_lengths)} 字符, 耗时 min/avg/max="
-                f"{min(elapsed_list):.1f}/"
-                f"{sum(elapsed_list) / len(elapsed_list):.1f}/"
-                f"{max(elapsed_list):.1f}s, finish_reason 分布="
-                f"{finish_dist}（观察不计判据）"
+            # 断言4：stop_reason=="end_turn"（自然结束）
+            assert info["stop_reason"] == "end_turn", (
+                f"[正向#1-{i}] stop_reason={info['stop_reason']!r}"
+                f"（预期 end_turn 自然结束——其他形态留证），响应"
+                f"体全文: {r['text'][:2000]}"
             )
-            all_results.extend(results)
+            if i < 3:
+                time.sleep(3)
 
-        # 整体观察汇总（不计判据）：三轮共 30 发统一性摘要
-        rc_lengths = [
-            len(str(r["reasoning_content"]).strip())
-            for r in all_results
-        ]
-        elapsed_list = [r["elapsed"] for r in all_results]
-        finishes = [r["finish_reason"] for r in all_results]
-        finish_dist = {f: finishes.count(f) for f in set(finishes)}
         test_logger.info(
-            f"整体观察: 三轮共 {len(all_results)} 发 "
-            f"reasoning_content 长度 min/avg/max={min(rc_lengths)}/"
-            f"{sum(rc_lengths) // len(rc_lengths)}/"
-            f"{max(rc_lengths)} 字符, 耗时 min/avg/max="
-            f"{min(elapsed_list):.1f}/"
-            f"{sum(elapsed_list) / len(elapsed_list):.1f}/"
-            f"{max(elapsed_list):.1f}s, finish_reason 分布="
-            f"{finish_dist}（观察不计判据）"
+            "正向稳定轮通过: 3/3 稳定携带非空 thinking block（msg "
+            "链路思考响应映射稳定）"
+        )
+
+        time.sleep(3)
+
+        # ===== 轮2：混用留证 ×2（弱断言——OpenAI 体打 Anthropic
+        # 端点，行为须确定一致；200/400 正误不定——无官方基线）=====
+        misuse_results: List[Dict[str, Any]] = []
+        for i in range(1, 3):
+            misuse_payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K40_PROMPT}],
+                "max_tokens": K40_MAX_TOKENS,
+                "thinking": {"type": "enabled"},
+            }
+            r = msg_send(misuse_payload)
+            info = blocks_of(r["data"])
+            misuse_results.append(
+                {
+                    "status": r["status"],
+                    "has_thinking": info["n_thinking"] > 0,
+                    "text": r["text"],
+                }
+            )
+            test_logger.info(
+                f"[混用#2-{i}] HTTP {r['status']}, elapsed="
+                f"{r['elapsed']:.1f}s, thinking_blocks="
+                f"{info['n_thinking']}, text {info['text_len']} 字"
+                f"符, stop_reason={info['stop_reason']!r}, 响应体全"
+                f"文: {r['text'][:2000]}"
+            )
+            if r["error"]:
+                test_logger.error(f"[混用#2-{i}] {r['error']}")
+            if i < 2:
+                time.sleep(3)
+
+        # 弱断言1：两发均送达（发送异常=请求层失败）
+        assert all(
+            x["status"] is not None for x in misuse_results
+        ), (
+            f"混用轮请求层失败（发送异常非服务行为）: "
+            f"{[x['status'] for x in misuse_results]}"
+        )
+        # 弱断言2：两发行为一致（HTTP 状态码一致；200 时 thinking
+        # block 存在性一致——混用形态不得随机摇摆；400/200 正误
+        # 不定——无官方基线，全量留证交人工分派）
+        behavior1 = (
+            misuse_results[0]["status"],
+            misuse_results[0]["has_thinking"],
+        )
+        behavior2 = (
+            misuse_results[1]["status"],
+            misuse_results[1]["has_thinking"],
+        )
+        assert behavior1 == behavior2, (
+            f"混用形态行为不一致（随机摇摆——同形态两发不同结果，"
+            f"缺陷形态）: 第1发 HTTP {behavior1[0]}/thinking="
+            f"{behavior1[1]}, 第2发 HTTP {behavior2[0]}/thinking="
+            f"{behavior2[1]}; 第1发响应体: "
+            f"{misuse_results[0]['text'][:1000]}; 第2发响应体: "
+            f"{misuse_results[1]['text'][:1000]}"
+        )
+
+        misuse_thinking_desc = (
+            "携带" if misuse_results[0]["has_thinking"] else "未携带"
         )
         test_logger.info(
-            f"客户问题整改验证通过: 三轮 × 每轮 {K40_CONCURRENCY} "
-            f"并发共 {K40_ROUNDS * K40_CONCURRENCY} 发——所有轮"
-            f"的所有请求全部 HTTP 200 且 reasoning_content 统一携"
-            f"带（存在且非空），thinking enabled 响应 reasoning_"
-            f"content 字段不稳定缺陷未复现"
+            f"混用留证轮行为一致: 两发均 HTTP "
+            f"{misuse_results[0]['status']}/thinking block "
+            f"{misuse_thinking_desc}（正误不定——无官方基线，形态已"
+            f"留证交人工分派）"
+        )
+
+        time.sleep(3)
+
+        # ===== 轮3：默认档观察 ×1（纯观察——不计判据）=====
+        default_payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K40_PROMPT}],
+            "max_tokens": K40_MAX_TOKENS,
+        }
+        r = msg_send(default_payload)
+        info = blocks_of(r["data"])
+        test_logger.info(
+            f"[默认档#3-1] HTTP {r['status']}, elapsed="
+            f"{r['elapsed']:.1f}s, thinking_blocks="
+            f"{info['n_thinking']}（思考 {info['thinking_len']} 字"
+            f"符）, text {info['text_len']} 字符, stop_reason="
+            f"{info['stop_reason']!r}（msg 链路默认思考状态留痕——对"
+            f"账客户第 4 点请求侧读法，观察不计判据）, 响应体全文: "
+            f"{r['text'][:2000]}"
+        )
+
+        test_logger.info(
+            "客户问题核验完成: 正向稳定轮 3/3 稳定携带非空 thinking "
+            "block（msg 链路响应映射完整）+ 混用形态两发行为一致 + "
+            "默认档形态已留证——alayanew msg 链路思考响应稳定，不稳"
+            "定现象根因不在本侧 msg 链路（收敛到乐信转换/客户混用侧"
+            "排查）"
         )
 
     @pytest.mark.k_customer_issue
@@ -13623,4 +13661,219 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "客户问题整改验证通过: reasoning_effort=\"none\" 请求被接"
             "受且正常响应（finish_reason 非空+正文非空）——参数校验过"
             "度拒绝（1210）缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p1
+    def test_responses_reasoning_tokens_counted(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K45 [P1]: 客户问题 - responses 端点思考计数核验
+        （reasoning_tokens 恒 0 缺陷）
+
+        客户问题（工单实证，2026-11-10）：POST /v1/responses 原样
+        请求（glm-5.3、instructions="Answer concisely."、input 单
+        user 消息「Compute 47*89 step by step, then reply with
+        just the number.」、max_output_tokens=1024、stream=false）
+        响应 200 completed——思考已下发（output 含 type==
+        "reasoning" 块，summary 为完整思考过程 ~3000 字符）、思考
+        已计入 output_tokens（545 vs 可见正文 "4183" 仅 ~2 token
+        ——差值全为思考消耗），但 usage.output_tokens_details.
+        reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客户
+        最初另报「content 无思考块」，报文实证块在——缺陷收敛到
+        计数口径）。
+        本用例原样回放工单请求 ×3（「恒 0」表述的稳定性复现口
+        径；每发独立断言，相邻 3s）：
+        1. 断言1：HTTP 200 + 合法 JSON + output 数组存在
+        2. 断言2：有思考内容——存在 type=="reasoning" 块且
+           summary 文本非空（思考暴露缺失即 FAIL）
+        3. 断言3：有正文——type=="message" 块 output_text 非空
+           （数值正误不定——留证）
+        4. 断言4：reasoning_tokens > 0（恒 0/缺失=缺陷复现——
+           工单形态：思考已下发且计入总量而明细不计数）且 ≤
+           output_tokens（K30 断言4 下界口径——总输出不得小于思
+           考部分）
+        观察（不计判据）：正文全文、output_tokens 与可见正文差
+        值（思考量旁证）、summary 长度、顶层 reasoning 回显、
+        resp_/rs_/msg_ id 形态、error 字段。请求体五字段工单原
+        样，仅 model 环境注入（K43 先例）；工单密钥不入库（鉴权
+        走环境配置）；thinking/reasoning 参数工单未带——不注入；
+        采样参数未含——不注入；非流式（工单 stream=false 原样）；
+        超时沿用全局。GLM-5.3 专用（工单模型 glm-5.3，缺陷为
+        usage 计数口径——响应组装层，无模型分支）。无新增数据文
+        件（请求短小完整内联）。（不进 smoke 集：新用例首跑观察
+        期；×3 请求）
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - responses 端点思考计数核验（工"
+            "单实证：思考已下发（reasoning 块 summary ~3000 字符）且"
+            "计入 output_tokens（545 vs 正文 \"4183\" ≈2 token），而 "
+            "output_tokens_details.reasoning_tokens=0——明细恒 0 与"
+            "总量自相矛盾；原样回放 ×3，每发独立断言：200+有思考内"
+            "容+有正文+reasoning_tokens>0 且 ≤output_tokens）==="
+        )
+
+        # K45: 工单原样请求字段（客户 curl 实证——五字段全原样；
+        # model 由环境注入；工单密钥不入库——鉴权走环境配置）
+        K45_INSTRUCTIONS = "Answer concisely."
+        K45_PROMPT = (
+            "Compute 47*89 step by step, then reply with just the "
+            "number."
+        )
+        K45_MAX_OUTPUT_TOKENS = 1024
+
+        responses_url = f"{api_client.api_prefix}/responses"
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K45_PROMPT}],
+            {
+                "endpoint": "/v1/responses",
+                "instructions": K45_INSTRUCTIONS,
+                "max_output_tokens": "1024（工单原样）",
+                "stream": "false（工单原样）",
+                "thinking": "(工单未带——不注入)",
+                "temperature": "(工单未含——不注入)",
+                "top_p": "(工单未含——不注入)",
+                "seed": "(工单未含——不注入)",
+                "轮次": "原样回放 ×3（每发独立断言，相邻 3s）",
+            },
+        )
+
+        # K45: 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言；
+        # 相邻 3s；超时沿用全局——工单未涉及挂死语义）
+        for i in range(1, 4):
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "instructions": K45_INSTRUCTIONS,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": K45_PROMPT}
+                        ],
+                    }
+                ],
+                "max_output_tokens": K45_MAX_OUTPUT_TOKENS,
+                "stream": False,
+            }
+            start_time = time.time()
+            response = api_client._post_with_retry(
+                responses_url, payload, stream=False
+            )
+            elapsed = time.time() - start_time
+            status = response.status_code
+            body_text = response.text
+
+            # 断言1：HTTP 200 + 合法 JSON + output 数组存在
+            assert status == 200, (
+                f"[第{i}发] 请求失败 HTTP {status}，elapsed="
+                f"{elapsed:.1f}s, 响应体全文: {body_text[:2000]}"
+            )
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            assert isinstance(data, dict), (
+                f"[第{i}发] 响应体非合法 JSON，elapsed={elapsed:.1f}s, "
+                f"响应体全文: {body_text[:2000]}"
+            )
+            output = data.get("output")
+            assert isinstance(output, list) and output, (
+                f"[第{i}发] output 数组缺失或为空（结构不完整），响应"
+                f"体全文: {body_text[:2000]}"
+            )
+
+            # 提取思考内容（type=="reasoning" 块 summary 文本）与
+            # 正文（type=="message" 块 output_text）——工单实证结构
+            reasoning_text_parts: List[str] = []
+            answer_text_parts: List[str] = []
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "reasoning":
+                    for s in item.get("summary") or []:
+                        if isinstance(s, dict):
+                            reasoning_text_parts.append(
+                                str(s.get("text") or "")
+                            )
+                elif item.get("type") == "message":
+                    for c in item.get("content") or []:
+                        if (
+                            isinstance(c, dict)
+                            and c.get("type") == "output_text"
+                        ):
+                            answer_text_parts.append(
+                                str(c.get("text") or "")
+                            )
+            reasoning_text = "".join(reasoning_text_parts).strip()
+            answer_text = "".join(answer_text_parts).strip()
+            usage = data.get("usage") or {}
+            output_tokens = usage.get("output_tokens")
+            # reasoning_tokens 字段位：usage.output_tokens_details.
+            # reasoning_tokens（工单实证 + K30 先例；缺失按 0——恒 0
+            # 与缺失同属「计数未上报」缺陷形态）
+            reasoning_tokens = (
+                (usage.get("output_tokens_details") or {}).get(
+                    "reasoning_tokens"
+                )
+                or 0
+            )
+
+            # 断言2：有思考内容（reasoning 块 summary 非空——思考
+            # 应随响应下发；缺失/空=思考暴露缺陷）
+            assert reasoning_text, (
+                f"[第{i}发] 缺陷复现: 无思考内容（type==\"reasoning\" "
+                f"块缺失或 summary 文本为空——思考应随响应下发），响应"
+                f"体全文: {body_text[:2000]}"
+            )
+            # 断言3：有正文（message 块 output_text 非空；数值正误
+            # 不定——留证）
+            assert answer_text, (
+                f"[第{i}发] 正文为空（type==\"message\" 块缺失或 "
+                f"output_text 为空），响应体全文: {body_text[:2000]}"
+            )
+            # 断言4（核心）：reasoning_tokens>0——思考已下发且计
+            # 入总量而明细恒 0=工单缺陷形态
+            assert reasoning_tokens > 0, (
+                f"[第{i}发] 缺陷复现: usage.output_tokens_details."
+                f"reasoning_tokens={reasoning_tokens}（思考已下发: "
+                f"reasoning 块 {len(reasoning_text)} 字符——明细恒 0/缺"
+                f"失与 output_tokens 总量自相矛盾，计数必须上报），响"
+                f"应体全文: {body_text[:2000]}"
+            )
+            # 断言4b：计数结构一致——reasoning_tokens ≤ output_
+            # tokens（K30 断言4 下界口径：总输出不得小于思考部分）
+            assert isinstance(output_tokens, int) and (
+                output_tokens >= reasoning_tokens
+            ), (
+                f"[第{i}发] 输出计数结构异常: output_tokens="
+                f"{output_tokens!r} < reasoning_tokens="
+                f"{reasoning_tokens}（总输出不得小于思考部分），响应体"
+                f"全文: {body_text[:2000]}"
+            )
+
+            # 观察（不计判据）：正文全文、output_tokens 与可见正文
+            # 差值（思考量旁证——工单形态 545 vs "4183"）、顶层
+            # reasoning 回显、id/status/error 形态
+            delta = output_tokens - max(len(answer_text), 1)
+            test_logger.info(
+                f"[第{i}发] HTTP 200, elapsed={elapsed:.1f}s, 正文="
+                f"{answer_text!r}（{len(answer_text)} 字符）, 思考 "
+                f"summary {len(reasoning_text)} 字符, output_tokens="
+                f"{output_tokens}, reasoning_tokens={reasoning_tokens}"
+                f"（output_tokens 与可见正文差值 {delta}=思考量旁"
+                f"证）, id={data.get('id')!r}, status="
+                f"{data.get('status')!r}, 顶层 reasoning 回显="
+                f"{data.get('reasoning')!r}, error={data.get('error')!r}"
+            )
+            if i < 3:
+                time.sleep(3)
+
+        test_logger.info(
+            "客户问题核验完成: 3/3 思考内容随响应下发（reasoning 块 "
+            "summary 非空）+ 正文非空 + reasoning_tokens 计数上报（>0 "
+            "且 ≤ output_tokens）——responses 端点思考暴露与计数口径"
+            "正常；若客户侧仍见恒 0，收敛到客户参数/网关链路排查"
         )

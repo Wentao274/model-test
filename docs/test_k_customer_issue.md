@@ -9,7 +9,7 @@
   stream_options、temperature、max_tokens 等全部字段与客户原始请求逐字段一致，
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
 - **P0 为主，按工单优先级**：客户报障场景纳入回归验证——K1-K7、K10-K30、
-  K37-K39 为 P0 必测（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42/K43/K44 按客户工单优先级为 P1，K33/K34 为 P2。
+  K37-K39 为 P0 必测（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42/K43/K44/K45 按客户工单优先级为 P1，K33/K34 为 P2。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免（test_k 整套件）**：所有 K 用例保持原始测试参数，不参与
   全局 `--sampling-params` 覆盖（`conftest.py` 模块级规则
@@ -80,7 +80,7 @@
 | K38 | max_completion_tokens 别名单 token 请求不挂起（与 tokens 主路径同延迟水平）（暂挂 SKIP：官方复测亦超时——判定基线失效待口径澄清，用户指定 2026-11-06） | 客户问题（工单 A-A01，异常）：官方判定通过——max_completion_tokens 别名为单 token 请求，被接受并按 max_tokens 语义立即截断返回；贵方实测客户原始请求 1 发即挂起——180s 请求超时、无响应（HTTP 0，采集未落盘）；预期行为（整改）：不得触发 180s 级挂起；需与 tokens 主路径同延迟水平；适用 GLM-5.3 | chat 单协议 2 发（别名轮工单原样 1 发对齐工单口径 + 主路径轮同 prompt max_tokens=1 对照基线 1 发；max_completion_tokens 为 OpenAI 别名字段、Anthropic /v1/messages 无该字段——max_tokens 即协议必需主路径字段，msg 未知参数行为由 K33/K35 覆盖）；别名轮请求体工单原样（单 user "Write a long essay about turbines."、max_completion_tokens=1，字段序 model/messages/max_completion_tokens，无 stream 字段），模型名由环境注入，采样参数原始未指定——保持不注入；单发直发不重试（重试掩盖挂起证据且超时等待翻倍），requests timeout=30s 硬超时；硬断言：别名轮 30s 内返回（超时即 FAIL 挂起复现——工单 180s 无响应形态）+ HTTP 200（官方判定通过）+ 响应体合法 + usage.completion_tokens<=2（别名生效——单 token 截断；字段被丢弃则长文数百 token，usage 未携带时判据降级为延迟判据留观察）；主路径轮 30s 内返回 + 200；同延迟水平判据：别名 elapsed <= 主路径 elapsed×3+10s（容网络抖动）；finish_reason/正文留观察（1 配额默认思考计入易空正文+length——K31 域形态非本例判据）；字节缓流形态留观察人工分派（K37 口径）；相邻间隔 3s | P0 |
 | K39 | 历史 assistant 消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 两字段序） | 客户问题（工单 AGDC2-47，接口协议）：官方行为（AGDC2-47 测试资料·官方 API 验证结论，2026-11-05 Kimi K3 官方端点）——同一历史 assistant 消息同时包含 reasoning 与 reasoning_content，无论内容相同或不同、哪个字段在前均接受，14 组合（字段变体 × 默认/关闭思考）全部 HTTP 200、finish_reason=stop、回答 3；贵方实测：双字段共存即 HTTP 400、错误码 json_parse_error、提示 duplicate field reasoning_content——两字段值相同或不同均报错，单字段（仅 reasoning 或仅 reasoning_content）调用成功，客户生产调用产生较多报错；预期行为（整改）：双字段共存无论值相同或不同、字段顺序如何均不得 400，应正常请求成功；适用 GLM-5.3 与 Kimi K3（双 marker GLM53+KimiK3，用户指定双模型覆盖） | chat 单协议 4 发（相邻间隔 3s；用户指定：只测双字段共存场景——单字段/无字段场景不测；调整两字段顺序 × 覆盖同值/异值），同一三消息结构（AGDC2-47 官方验证请求原样：user "What is 1 + 1? Reply with only the number." / assistant content="2"+双思考字段 / user "Add 1 to the previous answer. Reply with only the number."），请求体官方验证原样（字段序 model/stream/max_tokens=512/messages，stream=false，thinking 默认模式不传），模型名由环境注入，采样参数官方验证请求未含——保持不注入；场景：同值/reasoning 在前、同值/reasoning_content 在前（两字段均 "1 + 1 = 2."）、异值/reasoning 在前、异值/reasoning_content 在前（reasoning="Compute the sum."、reasoning_content="The answer is two."）；硬断言每发（任一失败即 FAIL 报告场景序）：HTTP 200（400 json_parse_error/duplicate field reasoning_content=缺陷复现——同条消息两思考字段被解析层视为同字段别名而拒绝）+ 响应体合法 JSON + choices 非空 + 正文非空（空正文+finish=length 留观察——512 预算默认思考计入耗尽属 K31 域形态；空正文且 finish≠length 即 FAIL）；finish_reason/回答含 3（官方验证回答为 3——生成质量非本例判据）/正文长度留观察；关闭思考模式不测（官方双模式均 200 证明字段兼容性与模式正交；K35 已确立网关对关闭思考 400 拒绝口径——另一缺陷域）；chat 单协议（Anthropic /v1/messages 无 reasoning 字段形态——思考经 thinking content block 承载，msg 未知参数行为由 K33/K35 覆盖） | P0 |
 
-| K40 | thinking enabled 响应 reasoning_content 字段稳定性核验（三轮 × 每轮 10 并发统一携带） | 客户问题（新工单，响应字段稳定性）：请求体 max_tokens=16000 + 单 user 消息「证明：对于任意正整数n，n^3-n能被6整除」+ thinking={"type": "enabled"}（客户环境模型 GLM-5.3-jy-b）——响应有时带、有时不带 reasoning_content 字段，不稳定，客户生产调用产生较多困扰；预期行为（整改）：所有请求统一携带 reasoning_content | 三轮 × 每轮 10 并发（轮内 ThreadPoolExecutor 10 workers 同拍齐发——E5 并发稳定性先例；轮间串行——每轮收齐后再开下一轮；用户指定 2026-11-09：测试分为三轮、每轮 10 并发，所有轮的所有请求 reasoning_content 统一才算通过；同日调整确认：每轮结束收集一次，任一轮次不一致即失败中止——避免后续轮次浪费）验证统一性，请求体工单原样（max_tokens=16000、thinking.type=enabled、单 user 消息；stream 工单未含——不传，非流式默认；采样参数未含——不注入；模型名由环境注入，用户确认——GLM-5.3-jy-b 为客户内部档位名）；逐轮判定（每轮收齐即断言该轮，任一轮次失败即用例失败并中止后续轮次——用户指定：避免无效轮次消耗）：断言1 该轮 10/10 HTTP 200（非 200/发送异常全量列出）；断言2 该轮 10/10 响应体合法 JSON+choices 非空；断言3 该轮 10/10 choices[0].message.reasoning_content 存在且非空（「统一」口径=字段层面全部携带，用户确认——空字符串同样属「没有」，内容逐字一致不作要求；缺失/空串清单全量输出=缺陷复现证据，如「第 2 轮 8/10 携带，缺失 #R2-3/#R2-7」）；观察（不计判据）：逐轮+整体 finish_reason/正文长度/思考长度分布/耗时；超时沿用全局（工单未涉及超时语义）；chat 单协议（客户请求为 chat 形态，缺陷为 chat 响应字段——Anthropic msg 思考经 thinking content block 承载，无 reasoning_content 字段形态）；GLM-5.3 专用（工单模型 GLM-5.3-jy-b 为 GLM-5.3 档位变体，缺陷为响应字段生成逻辑，无模型分支） | P1 |
+| K40 | 跨协议 thinking 链路核验（msg 端点思考 block 稳定+OpenAI 体混用留证，msg 单协议） | 客户问题（K40 工单补充信息，2026-11-10）：客户链路为最终客户 Anthropic 协议 → 乐信网关（协议转换）→ OpenAI 协议 → 本平台；客户反馈 4 点——存在协议转换/已开启透传/客户用例疑似「OpenAI 协议请求体调 Anthropic 协议接口」/部分乐信重现请求看不到 thinking 数据。本例在 alayanew 侧回答：Anthropic 端点对合法 thinking 请求是否稳定返回 thinking content block（「看不到 type:thinking」的正向判据——msg 链路响应映射完整性，工单「统一携带」预期在 msg 侧的口径）；混用形态行为确定性留证（无官方基线，不定 200/400 正误） | 三轮（用户确认：全部三轮）：正向稳定轮 ×3 硬断言（Anthropic 原生体——自拟消息「计算 37×23，并简要给出步骤。」+max_tokens=2048+thinking={"type": "enabled", "budget_tokens": 1024} → /anthropic/v1/messages（x-api-key+anthropic-version: 2023-06-01 头，K3/K35 先例）；断言每发：HTTP 200+含 thinking block 且文本非空+含 text block 且文本非空+stop_reason=="end_turn"）；混用留证轮 ×2 弱断言（OpenAI 体——thinking={"type": "enabled"} 无 budget_tokens（K40 工单形态混用签名）打 msg 端点；弱断言两发行为一致——状态码一致+200 时 thinking 存在性一致；全量留证）；默认档观察轮 ×1 纯观察（同消息不带 thinking——thinking block 有无留痕）；非流式（客户信息未指明 stream——不注入）；模型名由环境注入；相邻间隔 3s；超时沿用全局 | P1 |
 
 | K41 | stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议） | 客户问题（新工单，参数校验）：请求带 stop=[]（空数组）时平台 400 拒绝，两种错误形态（两个 request id）——上游校验错透传 {"error": {"message": "Validation: Stop sequences array cannot be empty (...)", "type": "upstream_error", "param": "400", "code": "bad_response_status_code"}} 与平台参数错 {"code": 1210, "message": "max_tokens 超出范围 [1, 131072] (...)"}；预期行为（整改）：正常响应、正常结束（finish=stop），不应触发模型服务的最大输出上限 128k | 单发 stop=[] 请求（参数处理确定性，K6/K23 先例），请求体最小构造（stop=[] 工单唯一原样参数+自拟最小 user 消息——工单未携带消息内容；max_tokens 不传——用户确认 2026-11-09：工单未提供不注入，且缺省填充上限缺陷路径恰好由不传覆盖；stream/thinking/采样参数未含——不传不注入；模型名由环境注入——工单无模型线索）；断言1 HTTP 200（400=缺陷复现——两种工单错误文案归类留证）；断言2 合法 JSON+choices 非空；断言3 finish_reason=="stop"（正常结束——工单原话；length=触发输出上限 128k 形态）；断言4 正文非空；观察（不计判据）：400 时错误体归类（Stop sequences array cannot be empty→上游校验错形态/max_tokens 超出范围+code 1210→平台参数错形态）；200 时 usage.completion_tokens 异常大（撞 128k 上限痕迹）留痕；超时沿用全局（工单未涉及挂死/超时语义）；chat 单协议（错误体为 chat 形态响应；msg 未知参数行为由 K33/K35 覆盖）；GLM-5.3 专用（工单无模型线索，缺陷为平台/引擎层 stop 校验与 max_tokens 上限路径，无模型分支） | P1 |
 
@@ -89,6 +89,8 @@
 | K43 | responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #48）：相同请求 POST /v1/responses {"model": "glm-5.3", "input": [{"role": "user", "content": [{"type": "input_text", "text": ""}]}], "max_output_tokens": 32}，alayanew 返回 200（错误——空 input 文本被接受并生成 reasoning 内容，status=incomplete/incomplete_details.reason=max_output_tokens，usage output_tokens=32），智谱官方返回 400 {"error": {"code": "invalid_request", "message": "输入不能为空", "type": "invalid_request"}} | 单发非流式原样请求（请求体全部工单原样，仅 model 环境注入；responses 端点 staging 网关已有——报文实证）；断言1 HTTP 400（200=缺陷复现——空输入被接受，响应结构 status/incomplete_details/output/usage 留证）；断言2 错误体 code=="invalid_request"；断言3 message 含「输入不能为空」（对齐官方原文）；观察（不计判据）：400 时错误体全文；200 时缺陷响应结构留证；超时沿用全局（工单未涉及挂死/超时语义）；responses 单协议（缺陷为 responses 端点空输入校验缺失；chat 端点无关）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件（请求短小完整内联） | P1 |
 
 | K44 | reasoning_effort="none" 应被接受核验（对齐官方，chat 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10）：相同请求 POST /v1/chat/completions（确认参数 max_completion_tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，缺陷为参数校验层与消息内容无关），alayanew 返回 400 {"code": 1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）"}，智谱官方返回 200（finish=stop，正文非空，reasoning_content 非空 18 tokens——官方接受 none 并正常生成） | 单发非流式：请求体 = 工单确认参数 max_completion_tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息（工单消息不可得且不影响缺陷路径）；模型名由环境注入；两侧工单响应均非流式形态——stream 不传（不注入）；断言1 HTTP 200（400=缺陷复现——1210「reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）」文案留证）；断言2 合法 JSON+choices 非空；断言3 finish_reason 非空（对齐官方 stop 形态）；断言4 正文非空；观察（不计判据）：reasoning_content 存在性/reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形态留痕——none 语义为不声明思考努力档位，官方仍产出思考）；400 时错误全文留证；超时沿用全局；chat 单协议（缺陷为 chat 参数校验过度严格）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件 | P1 |
+| K45 | responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议） | 客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求（glm-5.3、instructions="Answer concisely."、input 单 user 消息「Compute 47*89 step by step, then reply with just the number.」、max_output_tokens=1024、stream=false）响应 200 completed——思考已下发（output 含 type=="reasoning" 块，summary 为完整思考过程 ~3000 字符）、思考已计入 output_tokens（545 vs 可见正文 "4183" 仅 ~2 token——差值全为思考消耗），但 usage.output_tokens_details.reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客户最初另报「content 无思考块」，报文实证块在——缺陷收敛到计数口径） | 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言，相邻 3s）：请求体五字段工单原样，仅 model 环境注入（K43 先例）；断言1 HTTP 200+合法 JSON+output 数组存在；断言2 有思考内容（type=="reasoning" 块 summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type=="message" 块 output_text 非空——数值正误不定留证）；断言4 reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤output_tokens（K30 断言4 下界口径）；观察（不计判据）：正文全文、output_tokens 与可见正文差值（思考量旁证）、summary 长度、顶层 reasoning 回显、id 形态、error 字段；工单密钥不入库（鉴权走环境配置）；thinking/采样参数未带——不注入；非流式（stream=false 原样）；超时沿用全局；GLM-5.3 专用（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分支）；无新增数据文件 | P1 |
+
 
 ## 运行方式
 
@@ -3367,93 +3369,86 @@ warning
   GLM-5.3 与 Kimi K3，请求同构无模型分支）
 - 不进 smoke 集：新用例首跑观察期
 
-### test_thinking_enabled_reasoning_content_stable (K40)
+### test_anthropic_thinking_block_stable_cross_protocol (K40)
 
-**背景**：（新工单，响应字段稳定性）客户请求体 max_tokens=16000 +
-单 user 消息「证明：对于任意正整数n，n^3-n能被6整除」+
-thinking={"type": "enabled"}（客户环境模型 GLM-5.3-jy-b）——响应
-有时带、有时不带 reasoning_content 字段，不稳定，客户生产调用产
-生较多困扰。预期行为（整改）：thinking enabled 请求的响应须稳定
-携带 reasoning_content——所有请求统一携带。
+**背景**：（K40 工单补充信息，2026-11-10）客户链路为最终客户
+Anthropic 协议 → 乐信网关（协议转换）→ OpenAI 协议 → 本平台；客户反
+馈 4 点——①存在协议转换层；②发现后已开启透传；③客户用例疑似「OpenAI
+协议请求体调 Anthropic 协议接口」；④部分乐信重现请求看不到 thinking
+数据。本例在 alayanew 侧回答两点：Anthropic 端点对合法 thinking 请求
+是否稳定返回 thinking content block（客户「看不到 type:thinking」的
+正向判据——msg 链路响应映射完整性，工单「统一携带」预期在 msg 侧的口径）；客户怀疑的
+混用形态在 alayanew 侧的行为确定性留证（无官方基线，不定 200/400 正
+误）。
 
 **请求构造**：
-- chat 端点：`{base_url}/v1/chat/completions`，`_post_with_retry`
-  直发（超时沿用全局——工单未涉及超时语义，thinking+16000 预算
-  单发通常 10-60s；三轮串行总时长约 1-3min）
-- 请求体工单原样：字段序 model/messages/max_tokens/thinking；
-  max_tokens=16000、单 user 消息、thinking={"type": "enabled"}
-  （对象形态）；stream 工单未含——不传（非流式默认）；采样参
-  数（temperature/top_p/seed）工单未含——不注入；模型名由环境
-  注入（用户确认——staging 端点为 glm-5.3，GLM-5.3-jy-b 为客户
-  内部档位名）
-- 三轮 × 每轮 10 并发：轮内 ThreadPoolExecutor(max_workers=10)
-  同拍齐发（E5 并发稳定性先例），轮间串行——每轮收齐后再开下
-  一轮（用户指定 2026-11-09：测试分为三轮、每轮 10 并发，所
-  有轮的所有请求 reasoning_content 统一才算通过；同日调整确
-  认：每轮结束收集一次，任一轮次不一致即失败中止——避免后
-  续轮次浪费）——不稳定缺陷以多轮并发批次探测，请求标识
-  #R{轮}-{序} 跨轮定位
+- msg 端点：`{base_url}/anthropic/v1/messages`（K3/K35 先例——
+  `x-api-key` + `anthropic-version: 2023-06-01` 头，`session.post`
+  非流式直发；发送异常不抛出统一结构收集；超时沿用全局）
+- 消息自拟：「计算 37×23，并简要给出步骤。」（客户补充信息未提供
+  具体消息——用户确认自拟算术题）
+- 正向轮请求体：`max_tokens=2048` + `thinking={"type": "enabled",
+  "budget_tokens": 1024}`（budget 取 Anthropic 官方最小合法值且须
+  小于 max_tokens；2048 留正文空间）
+- 混用轮请求体：OpenAI 体 + `thinking={"type": "enabled"}` 无
+  budget_tokens（K40 工单形态的混用签名）
+- 非流式（客户信息未指明 stream——不注入）；模型名由环境注入；采样
+  参数客户信息未含——不注入；相邻间隔 3s
 
-**断言（硬，逐轮判定——每轮收齐即断言该轮，任一轮次失败即用
-例失败并中止后续轮次，用户指定 2026-11-09：避免无效轮次消
-耗）**：
-1. 该轮 10/10 HTTP 200（非 200/发送异常全量列出——请求层失败
-   同样破坏统一性验证；失败即中止后续轮次）
-2. 该轮 10/10 响应体合法 JSON 且 choices 非空
-3. 该轮 10/10 choices[0].message.reasoning_content 存在且非空
-   （「统一」口径=字段层面全部携带，用户确认——空字符串同样
-   属「没有」，内容逐字一致不作要求——思考文本天然因请求而
-   异；缺失/空串清单全量输出=缺陷复现证据，如「第 2 轮 8/10
-   携带，缺失 #R2-3/#R2-7」，含缺失发响应留痕 finish/正文/
-   reasoning_content 实值）
+**断言（正向稳定轮 ×3，硬）**：每发
+1. HTTP 200（非 200/发送异常=请求层失败）
+2. content 数组含 `type=="thinking"` block 且 thinking 文本非空
+   （缺失/空=客户「看不到 type:thinking」现象在 alayanew msg 链
+   路复现——msg 响应映射丢失形态）
+3. 含 `type=="text"` block 且文本非空（2048-1024 预算留出正文空
+   间，不应被思考耗光）
+4. `stop_reason=="end_turn"`（自然结束）
 
-**判定矩阵**（任一 FAIL 条件触发即中止后续轮次）：
-- 任一轮内任一发非 200/发送异常 → FAIL（请求层失败破坏统一性
-  验证）
-- 任一轮内任一发响应体非法 JSON/choices 空 → FAIL（响应结构异
-  常）
-- 任一轮内任一发 reasoning_content 缺失或为空串 → FAIL（缺陷
-  复现——工单形态「有时带/有时不带」不稳定直接判据）
-- 三轮全部 10/10 HTTP 200 + reasoning_content 全部存在且非空
-  → PASS（所有轮的所有请求统一携带达标，缺陷未复现）
+**弱断言（混用留证轮 ×2）**：
+- 两发均送达（发送异常=请求层失败）
+- 两发行为一致：HTTP 状态码一致 + 200 时 thinking block 存在性一致
+  （混用形态不得随机摇摆）；200/400 正误不定——无官方基线，全量留
+  证交人工分派（回答客户第 3 点）
 
-**观察记录（不计判据，留日志）**：每发真实响应（HTTP/elapsed/
-reasoning_content 长度/正文长度/finish_reason）按 idx 序全量输
-出（标识 #R{轮}-{序} 跨轮定位）；每轮通过时输出本轮摘要，三
-轮全通过后输出整体汇总（思考长度 min/avg/max、耗时 min/avg/
-max、finish_reason 分布）
+**观察记录（默认档轮 ×1，不计判据）**：同消息不带 thinking →
+thinking block 有无/stop_reason/响应体全文留痕（msg 链路默认思考状
+态——对账客户第 4 点请求侧读法：thinking 丢失后默认档是否仍思考）
+
+**判定矩阵**：
+- 正向任发非 200/发送异常 → FAIL（请求层失败）
+- 正向任发缺 thinking block 或思考文本为空 → FAIL（缺陷复现——
+  msg 链路响应映射丢失/不稳定，客户现象在 alayanew 侧实锤）
+- 正向任发正文为空 → FAIL（预算被思考耗光——非正常形态）
+- 正向任发 stop_reason≠"end_turn" → FAIL（未自然结束）
+- 混用两发行为不一致（状态码摇摆/thinking 存在性摇摆）→ FAIL（混
+  用形态随机摇摆——缺陷形态）
+- 正向 3/3 全过 + 混用行为一致 → PASS（alayanew msg 链路思考响应
+  稳定；客户不稳定现象根因收敛到乐信链路/客户混用侧排查）
 
 **设计决策记录**：
-- **三轮 × 每轮 10 并发（用户指定）**：不稳定缺陷单发难复现
-  ——多轮并发批次探测批次间+批次内差异；轮内 ThreadPoolExec-
-  utor 同拍齐发（E5 并发稳定性先例）；轮间串行——轮次语义清
-  晰；api_client._post_with_retry 共享 session（urllib3 连接池
-  线程安全，无 cookie 状态突变）
-- **逐轮判定、失败即中止（用户指定）**：每轮结束收集一次，任
-  一轮次不一致（非 200/响应异常/reasoning_content 缺失或空）
-  即失败——后续轮次不再执行，避免无效轮次消耗
-- **存在且非空口径（用户确认）**：空字符串同样属「没有」——缺
-  失与空串同列缺陷形态
-- **模型名环境注入（用户确认）**：staging 端点为 glm-5.3，
-  GLM-5.3-jy-b 为客户内部档位名；缺陷为响应字段生成逻辑（与模
-  型档位命名无关），模型名由环境注入即可复现验证
-- **stream 不传**：工单请求体未含 stream 字段——不注入（独立
-  性规则），requests 默认非流式
-- **超时沿用全局**：工单未涉及超时语义；thinking+16000 预算单
-  发通常 10-60s，全局超时充足，不自定覆盖（对照 K32/K37/K38 自
-  定义超时先例——本例无短超时语义需求）
-- **chat 单协议**：客户请求为 chat 形态，缺陷为 chat 响应字段
-  ——Anthropic msg 思考经 thinking content block 承载，无
-  reasoning_content 字段形态（K39 同款排除理由）
+- **全部三轮（用户确认 2026-11-10）**：正向稳定（工单
+  「统一携带」预期在 msg 侧的口径）+ 混用留证（弱断言确定性——无官方基线不
+  定正误）+ 默认档观察（对账客户第 4 点）
+- **budget_tokens=1024/max_tokens=2048**：Anthropic 官方约束
+  enabled 时 budget 必填、≥1024 且小于 max_tokens——取最小合法
+  值并留正文空间
+- **消息自拟**：客户补充信息未提供具体消息——自拟算术题（触发思
+  考且正文可控），用户确认
+- **弱断言口径**：混用形态无官方基线——200（宽容解析/丢 thinking
+  放行）与 400（拒绝）均不定正误，唯一判据为行为确定性（两发一
+  致）；留证交人工分派
+- **非流式**：客户信息未指明 stream——不注入（Anthropic 默认非流
+  式）；乐信转换层流式/非流式映射差异不在本例范围
+- **msg 单协议**：本例核验 Anthropic 端点链路；chat 端点同域
+  行为不在本例范围
+- **signature 不硬断言**：thinking block 的 signature 字段为网关
+  可选实现，不设断言
 
 **注意事项**：
-- reasoning_content 为思考输出字段（默认思考计入共享配额——
-  K31 域）；16000 预算下 length 截断不预期，若出现留观察（非预
-  期形态，交人工分派）
-- marker：仅 `GLM53`（K 套件按模型分组标记；工单模型
-  GLM-5.3-jy-b 为 GLM-5.3 档位变体——缺陷为响应字段生成逻辑，
-  无模型分支）
-- 不进 smoke 集：新用例首跑观察期
+- marker：仅 `GLM53`（K 套件按模型分组标记；工单模型 GLM-5.3-jy-b 为
+  客户内部档位名，缺陷为 msg 链路思考响应映射，无
+  模型分支）
+- 不进 smoke 集：新用例首跑观察期；6 请求（3+2+1）
 
 ### test_empty_stop_array_normal_response (K41)
 
@@ -3591,7 +3586,7 @@ token 问题另行排查）；事件数；最大事件间隔及位置；工具�
 - **数据文件入库**：231KB 原样入库 tests/data/（用户确认）——回
   放保真最高；sha256 与报告一致可校验；客户业务内容不进日志/
   Allure（log_request 摘要占位）
-- **model 环境注入**：用户确认——与既有 K 用例一致（K1-K44 均
+- **model 环境注入**：用户确认——与既有 K 用例一致（K1-K45 均
   环境注入）；运行时环境（Jenkins MODEL/BASE_URL）指向 Kimi-K3
   测试实例，marker KimiK3 既有选择机制（K5-K10/K13/K21/K39 同
   口径）
@@ -3717,4 +3712,99 @@ reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形态留
 
 **注意事项**：
 - marker：仅 `GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
+- 不进 smoke 集：新用例首跑观察期
+
+---
+
+### test_responses_reasoning_tokens_counted (K45)
+
+- **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_reasoning_tokens_counted`
+- **优先级**：P1（按客户工单）
+- **marker**：`k_customer_issue` / `GLM53` / `p1`
+- **协议**：responses 单协议（缺陷为 /v1/responses 端点 usage 计数口径）
+
+**背景**（工单实证，2026-11-10）：客户报告 responses 端点
+「reasoning_tokens 恒 0，content 里也没有思考块」。客户 curl 实证：
+POST `/v1/responses`，请求体五字段（glm-5.3、instructions="Answer
+concisely."、input 单 user 消息「Compute 47*89 step by step, then
+reply with just the number.」、max_output_tokens=1024、
+stream=false），响应 200 completed：
+- `output[0]`：`type=="reasoning"` 块（id `rs_...`），summary 含完
+  整思考过程（~3000 字符）——思考内容**已下发**
+- `output[1]`：`type=="message"` 块（id `msg_...`，status
+  completed），output_text="4183"——正文正常
+- `usage`：input_tokens=34、output_tokens=545、
+  **output_tokens_details.reasoning_tokens=0**、total_tokens=579
+- 顶层 `reasoning`：{"effort": null, "summary": null}
+
+**缺陷定位**：思考已下发（reasoning 块在）且已计入
+output_tokens（545 vs 可见正文 "4183" ≈2 token——差值全为思考消
+耗），但 reasoning_tokens 明细恒 0——明细与总量自相矛盾。客户最
+初另报「content 无思考块」，报文实证块在——缺陷收敛到计数口径
+（「无思考块」子项证伪）。
+
+**请求构造**：原样回放工单请求 ×3（「恒 0」表述的稳定性复现口
+径；每发独立断言，相邻 3s）。请求体五字段工单原样，仅 model 由
+环境注入（K43 先例）；工单密钥不入库（鉴权走环境配置）；
+thinking/reasoning 参数工单未带——不注入；采样参数未含——不注
+入（无全局注入口）；非流式（工单 stream=false 原样）；超时沿用全
+局。URL：`{api_prefix}/responses`。
+
+**断言**（每发独立）：
+1. HTTP 200 + 合法 JSON + `output` 数组存在
+2. 有思考内容：存在 `type=="reasoning"` 块且 summary 文本非空
+   （思考暴露缺失即 FAIL——「无思考块」子项判据）
+3. 有正文：`type=="message"` 块 output_text 非空（数值正误不定
+   ——"4183" 留证不判值）
+4. reasoning_tokens>0：`usage.output_tokens_details.
+   reasoning_tokens`（恒 0/缺失=缺陷复现——工单形态：思考已下
+   发且计入总量而明细不计数；缺失按 0——与恒 0 同属「计数未上
+   报」缺陷形态）
+5. reasoning_tokens ≤ output_tokens（K30 断言4 下界口径——总
+   输出不得小于思考部分）
+
+**观察记录**（不计判据，留日志）：正文全文、output_tokens 与可
+见正文差值（思考量旁证——工单形态 545 vs "4183"）、summary 长
+度、顶层 reasoning 回显、resp_/rs_/msg_ id 形态、error 字段。
+
+**判定矩阵**：
+- HTTP 非 200 / 非法 JSON / output 数组缺失 → FAIL（请求/响应
+  层异常）
+- 200 但无 reasoning 块或 summary 为空 → FAIL（思考暴露缺失）
+- 200 但正文为空 → FAIL（响应结构不完整）
+- 200 + 思考内容非空 + 正文非空 + reasoning_tokens=0 → FAIL
+  （**缺陷复现——工单形态**）
+- 200 + 思考内容非空 + 正文非空 + reasoning_tokens>0 且 ≤
+  output_tokens → PASS
+
+**设计决策记录**：
+- **responses 单协议补盲区**：思考暴露断言此前仅覆盖 chat
+  （K5/K6/K44）与 msg（K40 跨协议），responses 为盲区——本例补
+  齐；K30 已在线但仅边界约束（reasoning_tokens 恒 0 时下界
+  `output_tokens >= reasoning_tokens` 永真、上界仅约束
+  output_tokens 与可见文本比例，不断言思考上报），K43 仅校验空
+  input 拒绝
+- **「恒 0」→ ×3 回放**：客户口径为「恒 0」（稳定性表述）——单
+  发偶发 0 与恒 0 无法区分，按 ×3 相邻 3s 复现口径（每发独立断
+  言）
+- **正文判据取「非空」**：思考消耗预算下数值输出（"4183"）正误
+  与缺陷无关（计数口径）——不判值，全文留证
+- **reasoning_tokens 字段位**：`usage.output_tokens_details.
+  reasoning_tokens`（工单实证 + K30 先例；顶层 reasoning 为档
+  位声明回显，非计数位）
+- **reasoning_tokens=0 与缺失同判**：`(usage.
+  get("output_tokens_details") or {}).get("reasoning_tokens")
+  or 0`——缺失按 0，与恒 0 同属「计数未上报」缺陷形态
+- **工单密钥不入库**：客户 curl 携带 Bearer 密钥——测试鉴权走
+  环境配置，密钥不入库
+- **model 环境注入**：工单 model=glm-5.3 与套件默认一致——与既
+  有 K 用例一致（K43 先例），测试仍按 `api_client.model_name`
+  注入
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- marker：仅 `GLM53`（K 套件按模型分组标记；工单模型 glm-5.3，
+  缺陷为 usage 计数口径——响应组装层，无模型分支）
+- 本用例为缺陷复现用例：工单实证 reasoning_tokens=0——当前线上
+  预期 FAIL（缺陷复现），平台整改后转 PASS
 - 不进 smoke 集：新用例首跑观察期
