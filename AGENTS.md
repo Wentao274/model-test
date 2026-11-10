@@ -9,14 +9,14 @@
    - 测试方法（追加于文件末尾，不改动已有用例）；
      - 模块 docstring：新增用例条目 + 头部优先级范围枚举（当前口径：
        `K1-K7、K10-K30、K37-K39 为 P0，K8/K9/K31/K32/K35/K36/
-       K40/K41/K42 为 P1，K33/K34 为 P2`）。
+       K40/K41/K42/K43/K44 为 P1，K33/K34 为 P2`）。
 2. **注册**（`base/test_definitions.py`）：追加条目
    （id/标题/描述/方法名后缀/优先级）。
 3. **Jenkinsfile**：用例选择参数（choice）列表追加测试节点
    （`tests/test_k_customer_issue.py::TestCustomerIssue::<方法名>`，
    注意前一项补逗号）。
 4. **pytest.ini**：marker 描述中的用例编号枚举同步
-   （如 `GLM53: …（K1/K2/K4/K14-K18, K20, K22-K41）`）。
+   （如 `GLM53: …（K1/K2/K4/K14-K18, K20, K22-K41, K43, K44）`）。
 5. **conftest.py**：采样参数豁免口径——test_k 套件经
    `RAW_SAMPLING_EXEMPT_FILES`（模块级）整体保持原始测试参数，
    不参与全局采样覆盖：工单/原始请求含采样参数的原样保留，

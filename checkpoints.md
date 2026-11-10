@@ -35,7 +35,7 @@
 | F. API 兼容性   | 7    | OpenAI 兼容（含 /v1/responses 新一代接口）、参数一致性     |
 | G. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 客户问题复现 | 42   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（[0, 2] 含端点，chat+msg 双协议）、top_logprobs 放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（流式/多段/结构化 × 双协议）、n=2 请求 400 拒绝且不挂死核验（30s 硬超时 + 提示信息）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）、thinking enabled 响应 reasoning_content 字段稳定性核验（三轮 × 每轮 10 并发统一携带，chat 单协议）、stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议）、Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议）），P0 为主持续追加 |
+| K. 客户问题复现 | 44   | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 宽容解析、双协议前缀缓存命中率对齐、孤儿 tool 消息官方对齐放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（[0, 2] 含端点，chat+msg 双协议）、top_logprobs 放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（流式/多段/结构化 × 双协议）、n=2 请求 400 拒绝且不挂死核验（30s 硬超时 + 提示信息）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）、thinking enabled 响应 reasoning_content 字段稳定性核验（三轮 × 每轮 10 并发统一携带，chat 单协议）、stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议）、Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议）、responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议）、reasoning_effort="none" 应被接受核验（对齐官方，chat 单协议）），P0 为主持续追加 |
 
 ---
 
@@ -197,7 +197,7 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | H10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | H11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（H8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 客户问题复现（42 项）
+### K. 客户问题复现（44 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。与"四、按模型特性的差异化
@@ -250,6 +250,10 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K41 | stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议） | 客户问题（新工单，参数校验）：请求带 stop=[]（空数组）时平台 400 拒绝，两种错误形态（两个 request id）——上游校验错透传 {"error": {"message": "Validation: Stop sequences array cannot be empty (...)", "type": "upstream_error", "param": "400", "code": "bad_response_status_code"}} 与平台参数错 {"code": 1210, "message": "max_tokens 超出范围 [1, 131072] (...)"}；预期行为（整改）：正常响应、正常结束（finish=stop），不应触发模型服务的最大输出上限 128k | 单发 stop=[] 请求（参数处理确定性，K6/K23 先例），请求体最小构造（stop=[] 工单唯一原样参数+自拟最小 user 消息——工单未携带消息内容；max_tokens 不传——用户确认 2026-11-09：工单未提供不注入，且缺省填充上限缺陷路径恰好由不传覆盖；stream/thinking/采样参数未含——不传不注入；模型名由环境注入——工单无模型线索）；断言1 HTTP 200（400=缺陷复现——两种工单错误文案归类留证）；断言2 合法 JSON+choices 非空；断言3 finish_reason=="stop"（正常结束——工单原话；length=触发输出上限 128k 形态）；断言4 正文非空；观察（不计判据）：400 时错误体归类（Stop sequences array cannot be empty→上游校验错形态/max_tokens 超出范围+code 1210→平台参数错形态）；200 时 usage.completion_tokens 异常大（撞 128k 上限痕迹）留痕；超时沿用全局（工单未涉及挂死/超时语义）；chat 单协议（错误体为 chat 形态响应；msg 未知参数行为由 K33/K35 覆盖）；GLM-5.3 专用（工单无模型线索，缺陷为平台/引擎层 stop 校验与 max_tokens 上限路径，无模型分支） | P1  |
 
 | K42 | Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议） | 客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）：kimi-k3 流式请求正常出流（~70 chunk/s、已出 1480 tokens）后正文结束，连续 30s 无任何字节——无 finish_reason/tool_calls/[DONE]，连接未断，客户端按 30s 无数据取消策略断开（网关日志「客户端已断开，已中断渠道 #20 上游请求」）；多条历史请求同形态（中断、finish_reason 为空）。根因（排障报告确认）：SGLang 0.5.21 kimik3_detector 工具调用解析器按完整 call 整包输出、不增量发工具参数——长参数生成阶段参数全部缓存在解析器内，SSE 无新数据无心跳（serving_chat.py 空时不 yield）；线上抓包 3 样本空窗 71.697/89.010/116.724s（恢复时一次性返回 7952/12831/12044 字符参数），均超客户 30s 取消阈值 | 单发原样回放抓包请求 tests/data/k42_request_original.json（231,432 字节，sha256 371b1753...；78 messages/25 tools/31 历史工具调用，agentic 工作流场景——报告方法 C 口径：单并发、读空闲 180s、总时限 600s）；请求构造：messages/tools/temperature=1/max_completion_tokens=131072/stream=true/stream_options={"include_usage": true}/reasoning_effort="high" 全部原样（抓包原样参数）；stop/tool_choice/seed/采样参数未含——不注入；model 由环境注入（用户确认 2026-11-09——与既有 K 用例一致，运行环境指向 Kimi-K3 实例）；断言1 HTTP 200 + SSE 事件流；断言2 正常终止——收到非空 finish_reason 且收到 [DONE]（缺陷形态=两者皆无直至客户端断开）；断言3 全程任意相邻 SSE 事件间隔 < 30s（客户取消阈值；缺陷实测 71.7-116.7s 空窗；TTFT 不计入——首 token 问题报告声明另行排查）；断言4 finish=tool_calls 时逐 tool index 拼接 arguments 为完整 JSON 且工具名非空（报告修复验证标准 4）；观察（不计判据）：TTFT（历史实测 22.6/44.2s）、事件数、最大事件间隔及位置、工具参数增量事件数（修复标准 2 证据——长参数阶段应有多段 delta 而非整包）、参数字符数、usage、请求文件 sha256 留痕；超时：读空闲上限 180s（requests 读超时按字节间隔计——K37/K38 先例；永久停流触发 ReadTimeout=缺陷形态 FAIL）；总时限 600s 墙钟检查；chat 单协议（工单为 chat SSE 流式）；仅 KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工具解析器层，无其他模型分支） | P1  |
+
+| K43 | responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #48）：相同请求 POST /v1/responses {"model": "glm-5.3", "input": [{"role": "user", "content": [{"type": "input_text", "text": ""}]}], "max_output_tokens": 32}，alayanew 返回 200（错误——空 input 文本被接受并生成 reasoning 内容，status=incomplete/incomplete_details.reason=max_output_tokens，usage output_tokens=32），智谱官方返回 400 {"error": {"code": "invalid_request", "message": "输入不能为空", "type": "invalid_request"}} | 单发非流式原样请求（请求体全部工单原样，仅 model 环境注入；responses 端点 staging 网关已有——报文实证）；断言1 HTTP 400（200=缺陷复现——空输入被接受，响应结构 status/incomplete_details/output/usage 留证）；断言2 错误体 code=="invalid_request"；断言3 message 含「输入不能为空」（对齐官方原文）；观察（不计判据）：400 时错误体全文；200 时缺陷响应结构留证；超时沿用全局（工单未涉及挂死/超时语义）；responses 单协议（缺陷为 responses 端点空输入校验缺失；chat 端点无关）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件（请求短小完整内联） | P1  |
+
+| K44 | reasoning_effort="none" 应被接受核验（对齐官方，chat 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10）：相同请求 POST /v1/chat/completions（确认参数 max_completion_tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，缺陷为参数校验层与消息内容无关），alayanew 返回 400 {"code": 1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）"}，智谱官方返回 200（finish=stop，正文非空，reasoning_content 非空 18 tokens——官方接受 none 并正常生成） | 单发非流式：请求体 = 工单确认参数 max_completion_tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息（工单消息不可得且不影响缺陷路径）；模型名由环境注入；两侧工单响应均非流式形态——stream 不传（不注入）；断言1 HTTP 200（400=缺陷复现——1210「reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）」文案留证）；断言2 合法 JSON+choices 非空；断言3 finish_reason 非空（对齐官方 stop 形态）；断言4 正文非空；观察（不计判据）：reasoning_content 存在性/reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形态留痕——none 语义为不声明思考努力档位，官方仍产出思考）；400 时错误全文留证；超时沿用全局；chat 单协议（缺陷为 chat 参数校验过度严格）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件 | P1  |
 
 ---
 
@@ -314,7 +318,7 @@ K1-K7, K10-K30, K37-K39  客户问题复现 31 项（均 P0，客户报障必测
 
 总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 31 = 60 项。
 
-### P1（选测，51 项）
+### P1（选测，53 项）
 
 ```
 A6, A7, A9-A12              基础推理 6 项
@@ -325,7 +329,7 @@ E2, E5-E8                   稳定性 5 项
 F2, F5                      API 兼容 2 项
 G2, G3, G10, G11            Chat Completions API 质量评估 4 项
 H1, H2, H4, H5, H6, H7      clear_thinking 参数行为 6 项
-K8, K9, K31, K32, K35, K36, K40, K41, K42   客户问题复现 9 项（required 工具调用/json_object 嵌套结构完整输出与预算回退核验/temperature 区间校验/关闭思考双路径拒绝/finish_reason 对齐官方/reasoning_content 字段稳定性（三轮 × 每轮 10 并发统一携带）/stop 空数组应正常响应（400 拒绝缺陷，chat 单协议）/Kimi-K3 工具调用长参数流式停流（间隔<30s+正常终止），按客户工单 P1）
+K8, K9, K31, K32, K35, K36, K40, K41, K42, K43, K44   客户问题复现 11 项（required 工具调用/json_object 嵌套结构完整输出与预算回退核验/temperature 区间校验/关闭思考双路径拒绝/finish_reason 对齐官方/reasoning_content 字段稳定性（三轮 × 每轮 10 并发统一携带）/stop 空数组应正常响应（400 拒绝缺陷，chat 单协议）/Kimi-K3 工具调用长参数流式停流（间隔<30s+正常终止）/responses 端点空 input 400 拒绝（对齐官方）/reasoning_effort="none" 应被接受（对齐官方），按客户工单 P1）
 ```
 
 ### P2（低优，17 项）

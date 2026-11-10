@@ -1679,6 +1679,68 @@ TEST_CATEGORIES = {
                 "kimik3_long_tool_args_stream_no_stall",
                 "P1",
             ),
+            (
+                "K43",
+                "responses 端点空 input 400 拒绝核验（对齐官方，"
+                "responses 单协议）",
+                "客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 "
+                "#48）：相同请求 POST /v1/responses {\"model\": \"glm-"
+                "5.3\", \"input\": [{\"role\": \"user\", \"content\": "
+                "[{\"type\": \"input_text\", \"text\": \"\"}]}], "
+                "\"max_output_tokens\": 32}，alayanew 返回 200（错误"
+                "——空 input 文本被接受并生成 reasoning 内容，status="
+                "incomplete/incomplete_details.reason=max_output_"
+                "tokens，usage output_tokens=32），智谱官方返回 400 "
+                "{\"error\": {\"code\": \"invalid_request\", "
+                "\"message\": \"输入不能为空\", \"type\": "
+                "\"invalid_request\"}}。预期（对齐官方）：400 拒绝，"
+                "错误体 code=invalid_request、message 含「输入不能为"
+                "空」。本用例单发非流式原样请求（请求体全部工单原样，"
+                "仅 model 环境注入；responses 端点 staging 网关已"
+                "有——报文实证）。断言：1) HTTP 400（200=缺陷复现"
+                "——空输入被接受，响应结构 status/incomplete_details/"
+                "output/usage 留证）；2) 错误体 code==\"invalid_"
+                "request\"；3) message 含「输入不能为空」（对齐官方原"
+                "文）。观察（不计判据）：400 时错误体全文；200 时缺陷"
+                "响应结构留证。超时沿用全局（工单未涉及挂死/超时语"
+                "义）。responses 单协议（缺陷为 responses 端点空输入"
+                "校验缺失；chat 端点无关）。GLM-5.3 专用（工单模型 "
+                "glm-5.3）。无新增数据文件（请求短小完整内联）",
+                "responses_empty_input_rejected",
+                "P1",
+            ),
+            (
+                "K44",
+                "reasoning_effort=\"none\" 应被接受核验（对齐官方，"
+                "chat 单协议）",
+                "客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 "
+                "#10）：相同请求 POST /v1/chat/completions（确认参数 "
+                "max_completion_tokens=128 + reasoning_effort="
+                "\"none\"——标题与 alayanew 错误文案双重佐证；原始消"
+                "息 349,732 字符被截断不可得，缺陷为参数校验层与消息"
+                "内容无关），alayanew 返回 400 {\"code\": 1210, "
+                "\"message\": \"reasoning_effort 取值非法: none（glm-"
+                "5.3 仅支持 low / high / max）\"}，智谱官方返回 200"
+                "（finish=stop，正文非空，reasoning_content 非空 18 "
+                "tokens——官方接受 none 并正常生成）。预期（对齐官"
+                "方）：200 正常响应。本用例单发非流式：请求体 = 工单"
+                "确认参数 max_completion_tokens=128 + reasoning_"
+                "effort=\"none\" 原样 + 自拟最小 user 消息（工单消"
+                "息不可得且不影响缺陷路径）；模型名由环境注入；两侧工"
+                "单响应均非流式形态——stream 不传（不注入）。断言："
+                "1) HTTP 200（400=缺陷复现——1210「reasoning_effort "
+                "取值非法: none（glm-5.3 仅支持 low / high / max）」"
+                "文案留证）；2) 合法 JSON+choices 非空；3) finish_"
+                "reason 非空（对齐官方 stop 形态）；4) 正文非空。观察"
+                "（不计判据）：reasoning_content 存在性/reasoning_"
+                "tokens（官方 none 仍返回 18 reasoning tokens 的形态"
+                "留痕——none 语义为不声明思考努力档位，官方仍产出思"
+                "考）；400 时错误全文留证。超时沿用全局。chat 单协议"
+                "（缺陷为 chat 参数校验过度严格）。GLM-5.3 专用（工单"
+                "模型 glm-5.3）。无新增数据文件",
+                "reasoning_effort_none_accepted",
+                "P1",
+            ),
         ],
     },
 }

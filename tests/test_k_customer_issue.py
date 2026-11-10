@@ -3,7 +3,7 @@ K. 客户问题复现测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
- K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42 为 P1，K33/K34 为 P2。
+ K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -975,6 +975,50 @@ K. 客户问题复现测试
   流式）。仅 KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工具
   解析器层，无其他模型分支）。（不进 smoke 集：新用例首跑观察
   期；单发大上下文 prefill+131072 上限，耗时约 1.5-4 分钟）
+- K43: responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议） [P1]
+  客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #48）：相
+  同请求 POST /v1/responses {"model": "glm-5.3", "input": [{"role":
+  "user", "content": [{"type": "input_text", "text": ""}]}],
+  "max_output_tokens": 32}，alayanew 返回 200（错误——空 input 文本
+  被接受并生成 reasoning 内容，status=incomplete/
+  incomplete_details.reason=max_output_tokens，usage output_
+  tokens=32），智谱官方返回 400 {"error": {"code":
+  "invalid_request", "message": "输入不能为空", "type":
+  "invalid_request"}}。预期（对齐官方）：400 拒绝，错误体
+  code=invalid_request、message 含「输入不能为空」。本用例单发非
+  流式原样请求（请求体全部工单原样，仅 model 环境注入；responses
+  端点 staging 网关已有——报文实证）。断言：1) HTTP 400（200=缺
+  陷复现——空输入被接受，响应结构 status/incomplete_details/
+  output/usage 留证）；2) 错误体 code=="invalid_request"；3)
+  message 含「输入不能为空」（对齐官方原文）。观察（不计判
+  据）：400 时错误体全文；200 时缺陷响应结构留证。超时沿用全局
+  （工单未涉及挂死/超时语义）。responses 单协议（缺陷为
+  responses 端点空输入校验缺失；chat 端点无关）。GLM-5.3 专用
+  （工单模型 glm-5.3）。无新增数据文件（请求短小完整内联）。
+  （不进 smoke 集：新用例首跑观察期；1 请求）
+- K44: reasoning_effort="none" 应被接受核验（对齐官方，chat 单协议） [P1]
+  客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10）：相
+  同请求 POST /v1/chat/completions（确认参数 max_completion_
+  tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文
+  案双重佐证；原始消息 349,732 字符被截断不可得，缺陷为参数校验
+  层与消息内容无关），alayanew 返回 400 {"code": 1210, "message":
+  "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high /
+  max）"}，智谱官方返回 200（finish=stop，正文非空，reasoning_
+  content 非空 18 tokens——官方接受 none 并正常生成）。预期（对
+  齐官方）：200 正常响应。本用例单发非流式：请求体 = 工单确认参
+  数 max_completion_tokens=128 + reasoning_effort="none" 原样 +
+  自拟最小 user 消息（工单消息不可得且不影响缺陷路径）；模型名
+  由环境注入；两侧工单响应均非流式形态——stream 不传（不注
+  入）。断言：1) HTTP 200（400=缺陷复现——1210「reasoning_
+  effort 取值非法: none（glm-5.3 仅支持 low / high / max）」文案
+  留证）；2) 合法 JSON+choices 非空；3) finish_reason 非空（对齐
+  官方 stop 形态）；4) 正文非空。观察（不计判据）：reasoning_
+  content 存在性/reasoning_tokens（官方 none 仍返回 18 reasoning
+  tokens 的形态留痕——none 语义为不声明思考努力档位，官方仍产
+  出思考）；400 时错误全文留证。超时沿用全局。chat 单协议（缺
+  陷为 chat 参数校验过度严格）。GLM-5.3 专用（工单模型 glm-
+  5.3）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；
+  1 请求）
 """
 
 import base64
@@ -13291,4 +13335,292 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "30s 级空窗（客户取消阈值内）且正常终止（finish+"
             "[DONE]）——工具解析器整包缓冲长参数致流式静默停流缺陷"
             "未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p1
+    def test_responses_empty_input_rejected(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K43 [P1]: 客户问题 - responses 端点空 input 400 拒绝核
+        验（对齐官方，responses 单协议）
+
+        客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐
+        #48）：相同请求 POST /v1/responses {"model": "glm-5.3",
+        "input": [{"role": "user", "content": [{"type": "input_
+        text", "text": ""}]}], "max_output_tokens": 32}，alayanew 返
+        回 200（错误——空 input 文本被接受并生成 reasoning 内容，
+        status=incomplete/incomplete_details.reason=max_output_
+        tokens，usage output_tokens=32），智谱官方返回 400
+        {"error": {"code": "invalid_request", "message": "输入不能
+        为空", "type": "invalid_request"}}。
+        预期（对齐官方）：400 拒绝，错误体 code=invalid_request、
+        message 含「输入不能为空」。
+        本用例单发非流式原样请求（请求体全部工单原样，仅 model 环
+        境注入；responses 端点 staging 网关已有——报文实证）。
+        判定（单发，三断言）：
+        1. 断言1：HTTP 400（200=缺陷复现——空输入被接受，响应结
+           构 status/incomplete_details/output/usage 留证）
+        2. 断言2：错误体 code=="invalid_request"
+        3. 断言3：message 含「输入不能为空」（对齐官方原文）
+        观察（不计判据）：400 时错误体全文；200 时缺陷响应结构留
+        证。超时沿用全局（工单未涉及挂死/超时语义）。responses 单
+        协议（缺陷为 responses 端点空输入校验缺失；chat 端点无
+        关）。GLM-5.3 专用（工单模型 glm-5.3）。无新增数据文件
+        （请求短小完整内联）。（不进 smoke 集：新用例首跑观察
+        期；1 请求）
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - responses 端点空 input 400 拒"
+            "绝核验（工单 #48：alayanew 200/官方 400——预期对齐官方 "
+            "400 invalid_request「输入不能为空」；单发非流式，请求体"
+            "全部工单原样，仅 model 环境注入）==="
+        )
+
+        # K43: 工单原样请求体（#48 完整可见——字段序 model/input/
+        # max_output_tokens；空 input_text 为缺陷触发参数）
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": ""}],
+                }
+            ],
+            "max_output_tokens": 32,
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        '[responses input] [{"type": "input_text", '
+                        '"text": ""}]——空 input_text（工单原样）'
+                    ),
+                }
+            ],
+            {
+                "endpoint": "/v1/responses",
+                "input": '[{"role": "user", "content": [{"type": "input_text", "text": ""}]}]（工单原样）',
+                "max_output_tokens": "32（工单原样）",
+                "stream": "(工单未含——不传，非流式默认)",
+            },
+        )
+
+        # K43: 单发直发（参数校验确定性；超时沿用全局——工单未涉及
+        # 挂死语义）
+        responses_url = f"{api_client.api_prefix}/responses"
+        start_time = time.time()
+        response = api_client._post_with_retry(
+            responses_url, payload, stream=False
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+
+        # K43: 真实响应断言前留痕——200 时按 alayanew 缺陷形态归类
+        if status == 200:
+            test_logger.info(
+                f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s, "
+                f"缺陷形态归类: 空 input 被接受并生成内容（alayanew 形"
+                f"态）, 响应体全文: {body_text}"
+            )
+        else:
+            test_logger.info(
+                f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s, "
+                f"响应体全文: {body_text}"
+            )
+
+        # 断言1：HTTP 400（200=缺陷复现——空输入被接受）
+        assert status == 400, (
+            f"缺陷复现: responses 端点空 input_text 请求未被拒绝（预期"
+            f"对齐官方 400 invalid_request「输入不能为空」——alayanew "
+            f"返回 HTTP {status}），elapsed={elapsed:.1f}s, 响应体全文: "
+            f"{body_text}"
+        )
+
+        # 断言2/3：错误体 code=="invalid_request" 且 message 含「输
+        # 入不能为空」（对齐官方原文）
+        try:
+            err_data = response.json()
+        except ValueError:
+            err_data = None
+        err = (err_data or {}).get("error") or {}
+        assert err.get("code") == "invalid_request", (
+            f"错误码未对齐官方: error.code={err.get('code')!r}（预期 "
+            f"invalid_request），HTTP {status}, 响应体全文: {body_text}"
+        )
+        err_msg = str(err.get("message") or "")
+        assert "输入不能为空" in err_msg, (
+            f"错误文案未对齐官方: error.message={err_msg!r}（预期含"
+            f"「输入不能为空」），HTTP {status}, 响应体全文: {body_text}"
+        )
+
+        test_logger.info(
+            "客户问题整改验证通过: responses 端点空 input_text 请求被 "
+            "HTTP 400 拒绝且错误体对齐官方（invalid_request/「输入不"
+            "能为空」）——空输入校验缺失缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p1
+    def test_reasoning_effort_none_accepted(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K44 [P1]: 客户问题 - reasoning_effort="none" 应被接受核
+        验（对齐官方，chat 单协议）
+
+        客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐
+        #10）：相同请求 POST /v1/chat/completions（确认参数
+        max_completion_tokens=128 + reasoning_effort="none"——标题
+        与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断
+        不可得，缺陷为参数校验层与消息内容无关），alayanew 返回
+        400 {"code": 1210, "message": "reasoning_effort 取值非法:
+        none（glm-5.3 仅支持 low / high / max）"}，智谱官方返回
+        200（finish=stop，正文非空，reasoning_content 非空 18
+        tokens——官方接受 none 并正常生成）。
+        预期（对齐官方）：200 正常响应。
+        本用例单发非流式：请求体 = 工单确认参数 max_completion_
+        tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user
+        消息（工单消息不可得且不影响缺陷路径）；模型名由环境注入；
+        两侧工单响应均非流式形态——stream 不传（不注入）。
+        判定（单发，四断言）：
+        1. 断言1：HTTP 200（400=缺陷复现——1210「reasoning_effort
+           取值非法: none（glm-5.3 仅支持 low / high / max）」文案
+           留证）
+        2. 断言2：合法 JSON + choices 非空
+        3. 断言3：finish_reason 非空（对齐官方 stop 形态）
+        4. 断言4：正文非空
+        观察（不计判据）：reasoning_content 存在性/reasoning_tokens
+        （官方 none 仍返回 18 reasoning tokens 的形态留痕——none 语
+        义为不声明思考努力档位，官方仍产出思考）；400 时错误全文留
+        证。超时沿用全局。chat 单协议（缺陷为 chat 参数校验过度严
+        格）。GLM-5.3 专用（工单模型 glm-5.3）。无新增数据文件。
+        （不进 smoke 集：新用例首跑观察期；1 请求）
+        """
+        # K44: 工单消息被截断不可得——自拟最小 user 消息（缺陷为参
+        # 数校验层，与消息内容无关）
+        K44_PROMPT = "Reply with a single word: OK"
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - reasoning_effort=\"none\" 应被"
+            "接受核验（工单 #10：alayanew 400/官方 200——预期对齐官方 "
+            "200 正常响应；单发非流式，工单确认参数 max_completion_"
+            "tokens=128+reasoning_effort=\"none\" 原样+自拟最小消息）==="
+        )
+
+        # K44: 请求体（工单确认参数原样：max_completion_tokens=128 +
+        # reasoning_effort="none"；stream 不传——不注入）
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K44_PROMPT}],
+            "max_completion_tokens": 128,
+            "reasoning_effort": "none",
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K44_PROMPT}],
+            {
+                "endpoint": "/v1/chat/completions",
+                "max_completion_tokens": "128（工单确认参数原样）",
+                "reasoning_effort": "none（工单确认参数原样——缺陷触发参数）",
+                "messages": "(自拟最小——工单消息 349,732 字符被截断不可得)",
+                "stream": "(工单两侧响应均非流式——不传，非流式默认)",
+            },
+        )
+
+        # K44: 单发直发（参数校验确定性；超时沿用全局）
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        start_time = time.time()
+        response = api_client._post_with_retry(
+            chat_url, payload, stream=False
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+
+        # K44: 真实响应断言前留痕——400 时按工单 1210 文案归类
+        if status == 200:
+            test_logger.info(
+                f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s"
+            )
+        else:
+            defect_kind = (
+                "参数校验过度拒绝形态（1210 reasoning_effort 取值非法: "
+                "none）"
+                if ("reasoning_effort 取值非法: none" in body_text
+                    or "1210" in body_text)
+                else "未归类形态——留证交人工分派"
+            )
+            test_logger.info(
+                f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s, "
+                f"缺陷形态归类: {defect_kind}, 响应体全文: {body_text}"
+            )
+
+        # 断言1：HTTP 200（400=缺陷复现——参数被过度拒绝）
+        assert status == 200, (
+            f"缺陷复现: reasoning_effort=\"none\" 请求被 HTTP {status} "
+            f"拒绝（预期对齐官方 200 正常响应——工单形态：1210 "
+            f"reasoning_effort 取值非法: none（glm-5.3 仅支持 low / "
+            f"high / max）），elapsed={elapsed:.1f}s, 响应体全文: "
+            f"{body_text}"
+        )
+
+        # 断言2：合法 JSON + choices 非空
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        choices = (data or {}).get("choices") or []
+        assert choices, (
+            f"响应体异常（非法 JSON/choices 空）: {body_text}"
+        )
+
+        choice0 = choices[0] or {}
+        message = choice0.get("message") or {}
+        content = message.get("content") or ""
+        finish_reason = choice0.get("finish_reason")
+
+        # 断言3：finish_reason 非空（对齐官方 stop 形态——正常结束）
+        assert finish_reason, (
+            f"缺陷形态: finish_reason 为空（预期正常结束——对齐官方 "
+            f"stop），HTTP {status}, 响应体全文: {body_text}"
+        )
+
+        # 断言4：正文非空（对齐官方正常生成形态）
+        assert str(content).strip(), (
+            f"缺陷形态: 正文为空（预期正常响应非空正文——对齐官方 "
+            f"200 形态），finish_reason={finish_reason!r}, 响应体全文: "
+            f"{body_text}"
+        )
+
+        # 观察记录（不计判据）：reasoning_content 存在性/
+        # reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形
+        # 态留痕）
+        reasoning_content = message.get("reasoning_content")
+        usage = (data or {}).get("usage") or {}
+        details = usage.get("completion_tokens_details")
+        reasoning_tokens = (
+            details.get("reasoning_tokens")
+            if isinstance(details, dict)
+            else None
+        )
+        if reasoning_tokens is None:
+            reasoning_tokens = usage.get("reasoning_tokens")
+        test_logger.info(
+            f"观察: finish_reason={finish_reason!r}, 正文 "
+            f"{len(str(content).strip())} 字符, reasoning_content "
+            f"{'存在' if reasoning_content else '缺失/空'}, "
+            f"reasoning_tokens={reasoning_tokens!r}（官方 none 仍 18 "
+            f"reasoning tokens 形态留痕，观察不计判据）"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: reasoning_effort=\"none\" 请求被接"
+            "受且正常响应（finish_reason 非空+正文非空）——参数校验过"
+            "度拒绝（1210）缺陷未复现"
         )
