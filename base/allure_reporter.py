@@ -437,7 +437,13 @@ def generate_allure_summary_report(
         for test_info in executed_tests:
             test_idx = test_info[0]
             test_name = test_info[1]
-            test_desc = test_info[2]
+            # K 类（反馈问题验证）条目含第 6 字段 brief——对外报告用的
+            # 脱敏一句话简介（不含客户/工单/编号等敏感信息），优先作为
+            # “测试内容”列输出且不截断；其他分类沿用 description 截断。
+            if marker == "k_customer_issue" and len(test_info) >= 6:
+                test_desc = test_info[5]
+            else:
+                test_desc = test_info[2]
 
             key = f"{marker}_{test_idx}"
             status = test_results.get(key, "未运行")
@@ -482,8 +488,9 @@ def generate_allure_summary_report(
             total_tests += 1
             category_stats[category_name]["total"] += 1
 
-            if len(test_desc) > 26:
-                test_desc = test_desc[:23] + "..."
+            if not (marker == "k_customer_issue" and len(test_info) >= 6):
+                if len(test_desc) > 26:
+                    test_desc = test_desc[:23] + "..."
 
             lines.append(
                 f"| {test_idx:2s} | {test_name:10s} | {test_desc:26s} | {status_icon} | {remark} |"

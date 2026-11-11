@@ -14,7 +14,7 @@
 | [test_f_api_compatibility.md](test_f_api_compatibility.md) | F. API兼容性 | 7 |
 | [test_g_quality_chat_completions.md](test_g_quality_chat_completions.md) | G. Chat Completions API 质量评估与回答相关性 | 13 |
 | [test_h_clear_thinking.md](test_h_clear_thinking.md) | H. clear_thinking 参数行为 | 11 |
-| [test_k_customer_issue.md](test_k_customer_issue.md) | K. 客户问题复现 | 45 |
+| [test_k_customer_issue.md](test_k_customer_issue.md) | K. 反馈问题验证 | 46 |
 
 ## 报告文档
 

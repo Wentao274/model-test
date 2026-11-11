@@ -491,7 +491,7 @@ TEST_CATEGORIES = {
         ],
     },
     "k_customer_issue": {
-        "name": "K. 客户问题复现",
+        "name": "K. 反馈问题验证",
         "criticality": "关键",
         "tests": [
             (
@@ -500,8 +500,9 @@ TEST_CATEGORIES = {
                 "客户问题复现：thinking+stream+强制tool_choice+Pydantic v2生成的"
                 "$defs/$ref JSON Schema 报【$$不兼容】，原样复现请求验证服务端兼容"
                 "（工单原始请求含 temperature=0.1——原样保留并豁免全局采样覆盖）",
-                "pydantic_schema_tool_call_stream",
+                "pydantic_schema_tool_call_stream_agdc2_2",
                 "P0",
+                "thinking+stream+强制 tool_choice 场景下，含 $defs/$ref 引用的 Pydantic v2 Schema 工具调用应正常返回流式 chunks 与合法工具参数",
             ),
             (
                 "K2",
@@ -510,8 +511,9 @@ TEST_CATEGORIES = {
                 "X-Cache-Buster）循环执行5次左右出现返回信息异常，原样复现并连续"
                 "执行5次（间隔3s），验证每次响应与内容均正常（工单原始请求含 "
                 "temperature=1、top_p=0.95——原样保留并豁免全局采样覆盖）",
-                "repeated_request_stability",
+                "repeated_request_stability_agdc2_3",
                 "P0",
+                "同一复杂参数请求（logprobs/top_logprobs/惩罚参数/防缓存头）连续执行 5 次，每次均应正常返回流式 chunks 且 finish_reason 合法、正文非空",
             ),
             (
                 "K3",
@@ -519,8 +521,9 @@ TEST_CATEGORIES = {
                 "客户问题复现：Anthropic 协议（/anthropic/v1/messages）请求的"
                 "cache_creation_tokens 一直为0（未创建缓存），构造带 cache_control "
                 "断点的唯一长前缀连发两次，验证第1次创建、第2次命中",
-                "anthropic_prompt_cache_creation",
+                "anthropic_prompt_cache_creation_agdc2_4",
                 "P0",
+                "Anthropic 协议请求带 cache_control 断点的唯一长前缀连发两次，第 1 次应创建缓存（cache_creation_tokens>0）、第 2 次应命中",
             ),
             (
                 "K4",
@@ -529,8 +532,9 @@ TEST_CATEGORIES = {
                 "无界生成、请求一直无返回；修复契约为 fp<0 按 0 处理，输入保持 "
                 "-2、不传 max_tokens 连发 3 次（消息各异，间隔3s），断言每次均按"
                 "fp=0 预期（预算内返回+自然结束+内容非空）",
-                "negative_frequency_penalty_treated_as_zero",
-                "P0",
+                "negative_frequency_penalty_treated_as_zero_agdc2_13",
+                "P1",
+                "frequency_penalty=-2（合法极值）且不传 max_tokens 时按 fp=0 防御性钳制，请求应在预算时间内自然结束且正文非空",
             ),
             (
                 "K5",
@@ -541,8 +545,9 @@ TEST_CATEGORIES = {
                 "为准）。输入保持 disabled、temperature=0.6（官方关思考档唯一"
                 "合法温度）连发 3 次（消息各异，间隔3s），断言每次均符合官方"
                 "实测预期（无思考内容+rt 为空+正文正常返回+自然结束）",
-                "thinking_disabled_suppresses_reasoning",
+                "thinking_disabled_suppresses_reasoning_agdc2_7",
                 "P0",
+                "thinking.type=disabled 应完全关闭思考：无思考内容、reasoning_tokens 为空、正文正常返回且自然结束",
             ),
             (
                 "K6",
@@ -554,8 +559,9 @@ TEST_CATEGORIES = {
                 "客户影响为关思考温度档失效。本用例对 6 个组合各发一次请求，"
                 "断言合法组合 200+正文非空、非法组合 400+错误信息含官方文案"
                 "（忽略大小写子串）",
-                "thinking_temperature_tier",
+                "thinking_temperature_tier_agdc2_8",
                 "P0",
+                "思考与温度档位联动校验：关思考仅允许 temperature=0.6、开思考仅允许 1，合法组合 200、非法组合 400 且错误信息符合预期文案",
             ),
             (
                 "K7",
@@ -569,8 +575,9 @@ TEST_CATEGORIES = {
                 "（废弃配置下非法档位，客户指定契约）；间隔3s、内容与温度相同"
                 "（temperature=1）；硬断言每次 200+正文非空+自然结束；倒挂/"
                 "持平不判失败，仅告警记入报告",
-                "thinking_effort_reasoning_length",
+                "thinking_effort_reasoning_length_agdc2_8",
                 "P0",
+                "官方顶层 reasoning_effort 档位（low/high/max）的思考长度应随档位递增；medium 顶层放行、嵌套 400；倒挂/持平仅告警不判失败",
             ),
             (
                 "K8",
@@ -585,8 +592,9 @@ TEST_CATEGORIES = {
                 "arguments 合法 JSON）、finish=tool_calls（而非 "
                 "length）、ct<max_tokens、开思考 rt<max_tokens"
                 "（双拼写兼容）；耗时双峰仅日志留痕",
-                "required_chitchat_calls_tool",
+                "required_chitchat_calls_tool_agdc2_9",
                 "P1",
+                "tool_choice=required 叠加闲聊时应强制发起工具调用：finish=tool_calls、completion_tokens 不吃满 max_tokens、开思考 reasoning_tokens 低于预算",
             ),
             (
                 "K9",
@@ -601,8 +609,9 @@ TEST_CATEGORIES = {
                 "calls 强制返回（get_weather、arguments 合法 JSON）、"
                 "finish=tool_calls、ct<max_tokens、开思考 rt<max_"
                 "tokens（双拼写兼容）",
-                "required_chitchat_official_behavior",
+                "required_chitchat_official_behavior_agdc2_11",
                 "P1",
+                "按官方行为，required+闲聊必须强制返回指定工具调用（finish=tool_calls、参数合法、tokens 不耗满预算）",
             ),
             (
                 "K10",
@@ -625,8 +634,9 @@ TEST_CATEGORIES = {
                 "同时适用 Kimi K3（OpenAI 协议通用语义，默认思考不"
                 "做断言；2026-10-26 staging 实测 required 轮 500 "
                 "prefill_internal_error，该 FAIL 为待修复基线）",
-                "tool_choice_four_modes_support",
+                "tool_choice_four_modes_support_agdc2_15",
                 "P0",
+                "OpenAI 协议 tool_choice 四种模式（auto/required/named/none）应分别按语义生成或禁止工具调用",
             ),
             (
                 "K11",
@@ -644,8 +654,9 @@ TEST_CATEGORIES = {
                 "为数值、键集合恰为 {city,temperature}（weather "
                 "strict schema）、text 正文非空；每轮 finish=stop；"
                 "usage 仅日志",
-                "response_format_three_modes_support",
+                "response_format_three_modes_support_agdc2_16",
                 "P0",
+                "OpenAI 协议 response_format 三种模式（json_object/json_schema/text）应按指定格式输出，schema 模式字段类型与键集合符合约束",
             ),
             (
                 "K12",
@@ -667,8 +678,9 @@ TEST_CATEGORIES = {
                 "effort 放进 chat_template_kwargs），断言每轮 "
                 "200+正文非空+finish=stop；档位对思考的实际影响"
                 "（rt/reasoning 长度）仅日志留痕；usage 仅日志",
-                "reasoning_effort_levels_support",
+                "reasoning_effort_levels_support_agdc2_17",
                 "P0",
+                "reasoning_effort 置于顶层或嵌套 chat_template_kwargs 时，low/high/max/空四档均应被正常接受并输出正常响应",
             ),
             (
                 "K13",
@@ -684,8 +696,9 @@ TEST_CATEGORIES = {
                 "量；finish=stop；合并正文严格等于 \"苹果、香蕉、\""
                 "（多余前缀/停止词泄漏/未截断均 FAIL）；正文不含 "
                 "\"橘子\"。usage 仅日志",
-                "stop_sequence_prefix_leak",
+                "stop_sequence_prefix_leak_agdc2_21",
                 "P0",
+                "stop 序列（如 stop=[\"橘子\"]）流式请求应在停止词处精确截断：正文无多余前缀字符、不含停止词、finish=stop",
             ),
             (
                 "K14",
@@ -699,8 +712,9 @@ TEST_CATEGORIES = {
                 "thinking/采样参数）；GLM-5.3 与 GLM-5.3-Flash 断言完"
                 "全一致。硬断言：HTTP 400；若 200 放行（缺陷形态）："
                 "取样若干 SSE 事件留证后 FAIL。响应体与 usage 仅日志",
-                "orphan_tool_message_rejected",
+                "orphan_tool_message_rejected_agdc2_21",
                 "P0",
+                "孤儿 tool 消息（前无 assistant tool_calls 且未定义 tools）属协议非法请求，应 HTTP 400 拒绝而非 200 放行",
             ),
             (
                 "K15",
@@ -716,8 +730,9 @@ TEST_CATEGORIES = {
                 "取 usage.prompt_tokens_details.cached_tokens（兼容 "
                 "usage.cached_tokens）。GLM-5.3 与 GLM-5.3-Flash 断言"
                 "一致，非流式、不发送采样参数。响应体与 usage 仅日志",
-                "short_input_prefix_cache_threshold",
-                "P0",
+                "short_input_prefix_cache_threshold_agdc2_21",
+                "P1",
+                "开启细粒度前缀匹配后，64<N<640 tokens 的短输入第二次相同请求应命中缓存（cached_tokens>0），N<64 不缓存",
             ),
             (
                 "K16",
@@ -734,8 +749,9 @@ TEST_CATEGORIES = {
                 "prompt_tokens 总和均 ≥90%，任一 <90% 即 FAIL。GLM-5.3 "
                 "与 GLM-5.3-Flash 断言一致，非流式、不发送采样参数。"
                 "usage 仅日志",
-                "prefix_cache_hit_rate_threshold",
+                "prefix_cache_hit_rate_threshold_agdc2_39",
                 "P0",
+                "固定前缀与多轮上下文两种模式下各 9 轮实测缓存命中率均应 ≥90%",
             ),
             (
                 "K17",
@@ -751,8 +767,9 @@ TEST_CATEGORIES = {
                 "真实响应（合并正文/思考全文）断言前打印（失败时同样"
                 "可见）；usage "
                 "仅日志",
-                "stop_newline_in_reasoning",
-                "P0",
+                "stop_newline_in_reasoning_agdc2_12",
+                "P1",
+                "指定 stop=[\"\\n\"] 并开启思考时，推理输出中首个换行即触发停止：正文为空、finish_reason=stop、reasoning 不含换行符",
             ),
             (
                 "K18",
@@ -792,8 +809,9 @@ TEST_CATEGORIES = {
                 "参数不发送——test_k 保持原始测试参数（工单原始请"
                 "求未指定，不注入），"
                 "三个请求一致",
-                "output_json_as_input_context",
+                "output_json_as_input_context_agdc2_28",
                 "P0",
+                "上次请求输出的 assistant JSON（含真实工具调用与 reasoning 双字段）回填为下次请求输入上下文应被正常接受，且模型输出的每条工具调用结构完整",
             ),
             (
                 "K19",
@@ -814,8 +832,9 @@ TEST_CATEGORIES = {
                 "口，手工 payload 直发）；"
                 "恰好 16 张正向对照未纳入（测试要点仅两条且避免重度"
                 "视觉计算）",
-                "over_image_limit_rejected",
-                "P0",
+                "over_image_limit_rejected_agdc2_35",
+                "P1",
+                "单次请求携带超过 16 张图片时应拒绝（HTTP 400）并返回指明图片数量上限的恰当错误信息",
             ),
             (
                 "K20",
@@ -862,6 +881,7 @@ TEST_CATEGORIES = {
                 "原始测试参数（工单原始请求未指定，不注入）",
                 "1m_context_request_supported",
                 "P0",
+                "约 960K tokens 输入在 low/max 两档思考强度下均应正常响应（HTTP 200、正文非空），压过原 781754 上限",
             ),
             (
                 "K21",
@@ -883,8 +903,9 @@ TEST_CATEGORIES = {
                 "Kimi-K3；采样参数不发送——test_k 保持原始测试参数"
                 "（工单原始请求未指定，不注入）；打印口径：运行日志不含具体模型名（系统"
                 "提示词正文含模型自我介绍，仅记字符数概要）",
-                "system_message_embedded_tools_accepted",
-                "P0",
+                "system_message_embedded_tools_accepted_agdc2_20",
+                "P1",
+                "system 消息内嵌 tools 的非标请求结构应被兼容接受（HTTP 200 正常响应），不因结构非标而报错",
             ),
             (
                 "K22",
@@ -937,8 +958,9 @@ TEST_CATEGORIES = {
                 "creation>0（前缀逐请求重建=剥离失效直接信号）与双"
                 "低形态仅日志留痕。运行日志不含具体模型名；适用 "
                 "GLM-5.3；采样参数不发送——test_k 保持原始测试参数",
-                "cross_protocol_prefix_cache_parity",
+                "cross_protocol_prefix_cache_parity_agdc2_14",
                 "P0",
+                "剥离 system 头部动态计费行后，同轮等价请求两协议热轮缓存命中率差值应 ≤3 个百分点，5 组中至少 4 组符合",
             ),
             (
                 "K23",
@@ -977,8 +999,9 @@ TEST_CATEGORIES = {
                 "入）；模型真实响应（状"
                 "态码/响应体全文）断言前打印；适用 GLM-5.3；运行日"
                 "志不含具体模型名",
-                "orphan_tool_message_accepted",
+                "orphan_tool_message_accepted_agdc2_43",
                 "P0",
+                "tool 角色消息前无带 tool_calls 的 assistant 消息（且未定义 tools）时，对齐官方行为放行（HTTP 200）并正常消费工具数据",
             ),
             (
                 "K24",
@@ -1004,8 +1027,9 @@ TEST_CATEGORIES = {
                 "出——留证交开发）；finish/usage 仅日志；模型真实"
                 "响应（状态码/响应体全文）断言前打印；适用 "
                 "GLM-5.3；运行日志不含具体模型名",
-                "dual_request_response_with_effort_fallback",
+                "dual_request_response_with_effort_fallback_agdc2_18",
                 "P0",
+                "中文写作题与英文数学题两个请求（temperature=0.0、max_completion_tokens=32768）应正常返回正文；思考耗尽预算时以 reasoning_effort=low 回退重发",
             ),
             (
                 "K25",
@@ -1058,8 +1082,9 @@ TEST_CATEGORIES = {
                 "三次请求一致；usage 仅日志；模型真实响应（状态码/"
                 "合并正文/思考）断言前打印（失败时同样可见）；适用 "
                 "GLM-5.3",
-                "duplicate_reasoning_content_history_accepted",
+                "duplicate_reasoning_content_history_accepted_agdc2_28",
                 "P0",
+                "历史 assistant 消息携带两个同名 reasoning_content 字段时应被兼容接受（保留最后一个值），HTTP 200 且正常响应",
             ),
             (
                 "K26",
@@ -1084,8 +1109,9 @@ TEST_CATEGORIES = {
                 "具被调用与参数满足 pattern（兼容绕过明确口径）。适"
                 "用 GLM-5.3；采样参数不发送——test_k 保持原始测试参"
                 "数（工单原始请求未指定，不注入），两个请求一致",
-                "negative_lookahead_tool_pattern_accepted",
-                "P0",
+                "negative_lookahead_tool_pattern_accepted_agdc2_40",
+                "P1",
+                "工具参数 schema 的 pattern 含 ^(?!...) 负向前瞻正则时，非流式与流式请求均应 HTTP 200 放行（不报 grammar 编译错误）",
             ),
             (
                 "K27",
@@ -1114,8 +1140,9 @@ TEST_CATEGORIES = {
                 "均未产出即 FAIL。适用 GLM-5.3；采样参数不发送——"
                 "test_k 保持原始测试参数（工单原始请求未指定，不注"
                 "入）",
-                "invalid_arguments_history_tolerated",
+                "invalid_arguments_history_tolerated_agdc2_19",
                 "P0",
+                "历史 assistant 工具调用的 arguments 为非法 JSON 时应按字符串保留放行（HTTP 200），且模型修正后重新发起的调用参数为合法 JSON",
             ),
             (
                 "K28",
@@ -1139,8 +1166,9 @@ TEST_CATEGORIES = {
                 "T2=0、T3=100%——任一不符合即 FAIL。模型名由环境注"
                 "入；请求体不含 temperature/top_p/seed——按用户指定"
                 "保持工单原始请求体不变、不注入采样参数",
-                "output_fields_think_tag_probe",
+                "output_fields_think_tag_probe_agdc2_24",
                 "P0",
+                "3 用例×5 次流式请求核验三项判据：content 尾部裸 think 标记 0 次、content→reasoning 字段回流 0 次、工具参数完整性 100%",
             ),
             (
                 "K29",
@@ -1166,8 +1194,9 @@ TEST_CATEGORIES = {
                 "环境注入；stream/max_tokens=4096 按脚本口径覆盖；"
                 "temperature/top_p 原始未指定——按用户指定保持不指"
                 "定（不注入）",
-                "dual_protocol_zero_delta_tool_call",
+                "dual_protocol_zero_delta_tool_call_agdc2_25",
                 "P0",
+                "同一业务会话报文分别请求 chat 与 messages 双协议各 10 次：零增量响应 0 次、工具调用返回率 100%",
             ),
             (
                 "K30",
@@ -1191,8 +1220,9 @@ TEST_CATEGORIES = {
                 "[42,44]；output_tokens 满足 reasoning_tokens ≤ "
                 "output ≤ reasoning + len(正文)（总计=思考+正文，1 "
                 "token/字符宽松上界）",
-                "responses_api_marker_output_usage",
-                "P0",
+                "responses_api_marker_output_usage_agdc2_44",
+                "P1",
+                "Responses API 应原样输出指定校验码，input_tokens 在基准 ±3% 内，output_tokens 总计 ≈ 正文 + 思考",
             ),
             (
                 "K31",
@@ -1226,8 +1256,9 @@ TEST_CATEGORIES = {
                 "构为预算回退链并聚焦双协议（用户指定），/v1/"
                 "responses 轮移除。模型名由环境注入；采样参数/thin"
                 "king/stream 工单未指定——不注入",
-                "json_object_nested_empty_content",
+                "json_object_nested_empty_content_agdc2_48",
                 "P1",
+                "json_object 模式嵌套结构应在 max_tokens 预算内输出完整合法 JSON；预算不足时按 256→512 回退链重发，双协议覆盖",
             ),
             (
                 "K32",
@@ -1286,8 +1317,9 @@ TEST_CATEGORIES = {
                 "不注入；所有轮均须 max_tokens 限制（用户指定 "
                 "2026-11-09，当前无限制的 chat 越界轮取 1024）；"
                 "msg 协议 max_tokens 为必需字段",
-                "temperature_range_validation",
+                "temperature_range_validation_agdc2_48",
                 "P1",
+                "chat 协议按原厂区间 [0, 2] 放行 1.5/2.0/0.0、越界 2.5/-0.5 返回 400 并指明参数名与区间；msg 协议按官方 [0, 1] 分别校验",
             ),
             (
                 "K33",
@@ -1327,8 +1359,9 @@ TEST_CATEGORIES = {
                 "（不注入）；msg 协议 max_tokens 为必需字段；A-04 "
                 "工单三发采集间隔 1s（节奏非判据），复现按套件相邻 "
                 "3s",
-                "top_logprobs_stable_support",
+                "top_logprobs_stable_support_agdc2_48",
                 "P2",
+                "chat 协议 top_logprobs=5 单独出现（未开 logprobs）应 HTTP 200 接受；msg 协议对未知字段行为统一（全 400 指明字段或全 200）",
             ),
             (
                 "K34",
@@ -1373,8 +1406,9 @@ TEST_CATEGORIES = {
                 "audio/音频/语音、video/视频，大小写不敏感——"
                 "20261104 实测整改错误体为中文，原纯英文口径误判"
                 "已扩展双语匹配）；'text' 痕迹留观察日志",
-                "multimodal_rejection_error_detail",
+                "multimodal_rejection_error_detail_agdc2_48",
                 "P2",
+                "非多模态模型收到图片/音频/视频/文档媒体块（base64 与 URL 载体）时，双协议各 5 发均应 400 明确拒绝并指明媒体类型",
             ),
             (
                 "K35",
@@ -1411,8 +1445,9 @@ TEST_CATEGORIES = {
                 "用失败』不含参数名缺陷形态）；max_tokens=512 "
                 "工单 2 发同值（豁免注入）；采样参数未含——不注"
                 "入；相邻间隔 3s",
-                "enable_thinking_param_rejection",
+                "enable_thinking_param_rejection_agdc2_48",
                 "P1",
+                "chat 侧 enable_thinking=false 与 msg 侧 thinking.type=disabled 两条路径均应 HTTP 400 拒绝，不得一条拒一条放",
             ),
             (
                 "K36",
@@ -1437,8 +1472,9 @@ TEST_CATEGORIES = {
                 "单未附原始 payload——适中值，正文远低于配额而计入"
                 "思考的实现易触顶误判，对判定语义敏感）；thinking/"
                 "采样参数未指定——不注入",
-                "finish_reason_stop_semantics",
-                "P1",
+                "finish_reason_stop_semantics_agdc2_46",
+                "P0",
+                "finish_reason 判定对齐官方 stop 语义：流式/多段/结构化 × 双协议下，正常结束不得被误判为 length 截断",
             ),
             (
                 "K37",
@@ -1468,8 +1504,9 @@ TEST_CATEGORIES = {
                 "msg 无该语义——工单证据仅 chat，msg 未知参数行"
                 "为由 K33/K35 覆盖）；thinking/采样参数未含——"
                 "不注入",
-                "n2_request_hang_timeout",
+                "n2_request_hang_timeout_agdc2_48",
                 "P0",
+                "n=2 请求应在 30s 内返回 HTTP 400 且错误信息指明 n 参数限制（不得挂死或无提示）",
             ),
             (
                 "K38",
@@ -1501,8 +1538,9 @@ TEST_CATEGORIES = {
                 "OpenAI 别名字段、Anthropic /v1/messages 无该字段"
                 "——msg 未知参数行为由 K33/K35 覆盖）；模型名由环"
                 "境注入；thinking/采样参数工单未含——不注入",
-                "max_completion_tokens_alias_single_token",
+                "max_completion_tokens_alias_single_token_agdc2_48",
                 "P0",
+                "max_completion_tokens 别名单 token 请求应与 tokens 主路径同延迟水平，不得触发长时间挂起",
             ),
             (
                 "K39",
@@ -1551,8 +1589,9 @@ TEST_CATEGORIES = {
                 "验证请求未含——不注入；适用 GLM-5.3 与 Kimi K3"
                 "（双 marker GLM53+KimiK3——工单缺陷经 Kimi K3 官"
                 "方端点验证，请求同构无模型分支）",
-                "reasoning_dual_field_history_accepted",
+                "reasoning_dual_field_history_accepted_agdc2_47",
                 "P0",
+                "同一历史 assistant 消息同时携带 reasoning 与 reasoning_content 双字段时（同值/异值 × 两字段序 4 组合）均应 HTTP 200 正常响应",
             ),
             (
                 "K40",
@@ -1587,8 +1626,9 @@ TEST_CATEGORIES = {
                 "入）；模型名由环境注入；相邻间隔 3s；超时沿用全"
                 "局。GLM-5.3 专用（工单模型为客户内部档位名）。不进 smoke 集"
                 "：新用例首跑观察期；3+2+1 共 6 请求",
-                "anthropic_thinking_block_stable_cross_protocol",
-                "P1",
+                "anthropic_thinking_block_stable_cross_protocol_agdc2_54",
+                "P0",
+                "Anthropic 端点对合法 thinking 请求应稳定返回 thinking+text 双 block（3 发硬断言）；OpenAI 体混用形态行为一致性留证（2 发弱断言）",
             ),
             (
                 "K41",
@@ -1623,8 +1663,9 @@ TEST_CATEGORIES = {
                 "K33/K35 覆盖）。GLM-5.3 专用（工单无模型线索，缺陷"
                 "为平台/引擎层 stop 校验与 max_tokens 上限路径，无模"
                 "型分支）",
-                "empty_stop_array_normal_response",
+                "empty_stop_array_normal_response_agdc2_53",
                 "P1",
+                "stop=[]（空数组）请求应正常响应：HTTP 200、finish_reason=stop、正文非空，不得触发 400 或 128k 输出上限",
             ),
             (
                 "K42",
@@ -1669,8 +1710,9 @@ TEST_CATEGORIES = {
                 "钟检查。chat 单协议（工单为 chat SSE 流式）。仅 "
                 "KimiK3（工单模型 Kimi-K3，缺陷为 SGLang K3 工具解析"
                 "器层，无其他模型分支）",
-                "kimik3_long_tool_args_stream_no_stall",
-                "P1",
+                "kimik3_long_tool_args_stream_no_stall_agdc2_45",
+                "P0",
+                "工具调用长参数流式输出场景，增量间隔应 <30s 且流正常终止，不得中途停流",
             ),
             (
                 "K43",
@@ -1699,8 +1741,9 @@ TEST_CATEGORIES = {
                 "义）。responses 单协议（缺陷为 responses 端点空输入"
                 "校验缺失；chat 端点无关）。GLM-5.3 专用（工单模型 "
                 "glm-5.3）。无新增数据文件（请求短小完整内联）",
-                "responses_empty_input_rejected",
+                "responses_empty_input_rejected_agdc2_55",
                 "P1",
+                "responses 端点空 input 请求应对齐官方返回 400 invalid_request（输入不能为空），不得 200 放行",
             ),
             (
                 "K44",
@@ -1731,8 +1774,9 @@ TEST_CATEGORIES = {
                 "考）；400 时错误全文留证。超时沿用全局。chat 单协议"
                 "（缺陷为 chat 参数校验过度严格）。GLM-5.3 专用（工单"
                 "模型 glm-5.3）。无新增数据文件",
-                "reasoning_effort_none_accepted",
+                "reasoning_effort_none_accepted_agdc2_55",
                 "P1",
+                "reasoning_effort=\"none\" 应对齐官方被接受（HTTP 200 正常响应），不得以取值非法 400 拒绝",
             ),
             (
                 "K45",
@@ -1758,7 +1802,41 @@ TEST_CATEGORIES = {
                 "（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分"
                 "支）。无新增数据文件",
                 "responses_reasoning_tokens_counted",
-                "P1",
+                "P0",
+                "responses 端点思考已下发时 usage.output_tokens_details.reasoning_tokens 必须如实上报（不得恒 0 或缺失）",
+            ),
+            (
+                "K46",
+                "用户正文含聊天模版控制词转义核验（<think> 字面量"
+                "截断缺陷，chat 单协议，AGDC2-58）",
+                "客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-"
+                "10，状态修复中）：POST /v1/chat/completions（glm-"
+                "5.3-flash、max_tokens=2000、单 user 消息 \"Reply "
+                "with exactly this line and nothing else: A<think>B"
+                "</think>C\"）——模型仅输出 \"A\"，加大推理程度无效；"
+                "期望输出 A<think>B</think>C。开发分析确证根因（输入"
+                "侧编码链路，非推理解析器）：用户提示词正文含聊天模"
+                "版控制词 <think>/</think> 字面量，模版渲染未做转义被"
+                "编码成控制 token 与模版自身思考标签碰撞——<think>B..."
+                " 部分被提前截断；修复=transformers≥5.20.2 sanitize_"
+                "control_tokens（vLLM main-1106+transformers v5.21.0 "
+                "支持，部署默认开启）或改造 Dynamo 编码器。原样回放"
+                "单发（编码链路确定性——K41 先例）：断言1 HTTP 200+合"
+                "法 JSON+choices 非空；断言2 finish_reason 非空；断言"
+                "3 正文非空；断言4（核心）正文 strip 后包含完整控制词"
+                "字面量 <think>B</think>（缺陷形态仅 \"A\"——B/C 被吞"
+                "即截断）。观察（不计判据）：与期望行严格相等对照、"
+                "reasoning_content 存在性与长度（输出侧是否二次吞标"
+                "签留证）、finish 值。请求体工单原样（max_tokens="
+                "2000+消息原文——控制词字面量精确复现），model 环"
+                "境注入；seed/temperature（Wiki 复现辅助参数）不注"
+                "入；stream/thinking/采样参数未含——不注入；超时沿"
+                "用全局。chat 单协议；仅 GLM-5.3-Flash（工单模型 "
+                "glm-5.3-flash，缺陷实证于 flash 编码链路）。无新增"
+                "数据文件",
+                "user_content_control_word_escape_agdc2_58",
+                "P0",
+                "用户正文含聊天模板特殊标记时应被正确转义/处理，不得被解析为模板指令而影响生成",
             ),
         ],
     },

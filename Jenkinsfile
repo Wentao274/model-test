@@ -51,7 +51,7 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K45，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K46，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
         booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
@@ -61,7 +61,7 @@ pipeline {
         booleanParam(name: 'MARKER_F_API', defaultValue: false, description: 'F类测试 - API兼容性')
         booleanParam(name: 'MARKER_G_QUALITY_CHAT_COMPLETIONS', defaultValue: false, description: 'G类测试 - Chat Completions API质量评估')
         booleanParam(name: 'MARKER_H_CLEAR_THINKING', defaultValue: false, description: 'H类测试 - clear_thinking 参数行为')
-        booleanParam(name: 'MARKER_K_CUSTOMER_ISSUE', defaultValue: false, description: 'K类测试 - 客户问题复现')
+        booleanParam(name: 'MARKER_K_CUSTOMER_ISSUE', defaultValue: false, description: 'K类测试 - 反馈问题验证')
         booleanParam(name: 'MARKER_GLM52', defaultValue: false, description: 'GLM-5.2 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_GLM53', defaultValue: false, description: 'GLM-5.3 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_KIMIK3', defaultValue: false, description: 'Kimi K3 模型缺陷相关用例（K套件按模型分组标记）')
@@ -159,51 +159,52 @@ pipeline {
             'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_default_behavior',
             'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_behavioral_verification',
             'tests/test_h_clear_thinking.py::TestClearThinking::test_clear_thinking_after_last_user_boundary',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_pydantic_schema_tool_call_stream',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_repeated_request_stability',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_anthropic_prompt_cache_creation',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_frequency_penalty_treated_as_zero',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_disabled_suppresses_reasoning',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_temperature_tier',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_effort_reasoning_length',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_calls_tool',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_official_behavior',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_tool_choice_four_modes_support',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_response_format_three_modes_support',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_effort_levels_support',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stop_sequence_prefix_leak',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_orphan_tool_message_rejected',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_short_input_prefix_cache_threshold',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_prefix_cache_hit_rate_threshold',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stop_newline_in_reasoning',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_output_json_as_input_context',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_over_image_limit_rejected',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_pydantic_schema_tool_call_stream_agdc2_2',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_repeated_request_stability_agdc2_3',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_anthropic_prompt_cache_creation_agdc2_4',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_frequency_penalty_treated_as_zero_agdc2_13',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_disabled_suppresses_reasoning_agdc2_7',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_temperature_tier_agdc2_8',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_thinking_effort_reasoning_length_agdc2_8',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_calls_tool_agdc2_9',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_required_chitchat_official_behavior_agdc2_11',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_tool_choice_four_modes_support_agdc2_15',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_response_format_three_modes_support_agdc2_16',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_effort_levels_support_agdc2_17',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stop_sequence_prefix_leak_agdc2_21',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_orphan_tool_message_rejected_agdc2_21',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_short_input_prefix_cache_threshold_agdc2_21',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_prefix_cache_hit_rate_threshold_agdc2_39',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stop_newline_in_reasoning_agdc2_12',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_output_json_as_input_context_agdc2_28',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_over_image_limit_rejected_agdc2_35',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_1m_context_request_supported',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_system_message_embedded_tools_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_cross_protocol_prefix_cache_parity',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_orphan_tool_message_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_dual_request_response_with_effort_fallback',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_duplicate_reasoning_content_history_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_lookahead_tool_pattern_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_invalid_arguments_history_tolerated',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_output_fields_think_tag_probe',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_dual_protocol_zero_delta_tool_call',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_api_marker_output_usage',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_json_object_nested_empty_content',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_temperature_range_validation',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_top_logprobs_stable_support',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_multimodal_rejection_error_detail',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_enable_thinking_param_rejection',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_finish_reason_stop_semantics',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_n2_request_hang_timeout',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_max_completion_tokens_alias_single_token',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_dual_field_history_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_anthropic_thinking_block_stable_cross_protocol',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_empty_stop_array_normal_response',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_long_tool_args_stream_no_stall',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_empty_input_rejected',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_effort_none_accepted',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_reasoning_tokens_counted'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_system_message_embedded_tools_accepted_agdc2_20',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_cross_protocol_prefix_cache_parity_agdc2_14',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_orphan_tool_message_accepted_agdc2_43',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_dual_request_response_with_effort_fallback_agdc2_18',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_duplicate_reasoning_content_history_accepted_agdc2_28',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_negative_lookahead_tool_pattern_accepted_agdc2_40',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_invalid_arguments_history_tolerated_agdc2_19',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_output_fields_think_tag_probe_agdc2_24',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_dual_protocol_zero_delta_tool_call_agdc2_25',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_api_marker_output_usage_agdc2_44',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_json_object_nested_empty_content_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_temperature_range_validation_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_top_logprobs_stable_support_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_multimodal_rejection_error_detail_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_enable_thinking_param_rejection_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_finish_reason_stop_semantics_agdc2_46',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_n2_request_hang_timeout_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_max_completion_tokens_alias_single_token_agdc2_48',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_dual_field_history_accepted_agdc2_47',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_anthropic_thinking_block_stable_cross_protocol_agdc2_54',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_empty_stop_array_normal_response_agdc2_53',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_long_tool_args_stream_no_stall_agdc2_45',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_empty_input_rejected_agdc2_55',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_effort_none_accepted_agdc2_55',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_reasoning_tokens_counted',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_user_content_control_word_escape_agdc2_58'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

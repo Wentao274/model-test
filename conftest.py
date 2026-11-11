@@ -668,7 +668,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "k_customer_issue: K类测试 - 客户问题复现",
+        "k_customer_issue: K类测试 - 反馈问题验证",
     )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")

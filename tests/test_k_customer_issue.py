@@ -1,9 +1,10 @@
 """
-K. 客户问题复现测试
+K. 反馈问题验证测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
-标准模型请求进行复现与回归验证。优先级按客户工单标定：K1-K7、K10-K30、
- K37-K39 为 P0（任何失败应阻断发布），K8/K9/K31/K32/K35/K36/K40/K41/K42/K43/K44/K45 为 P1，K33/K34 为 P2。
+标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
+2026-11-11）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
+K36-K40、K42、K45、K46 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -35,7 +36,7 @@ K. 客户问题复现测试
   一直为 0（同时 cache_read_tokens 有值），说明 cache_control 断点未被落实、
   未创建缓存。本用例构造带 cache_control 断点的唯一长前缀，连续发送两次
   请求，断言第 1 次创建缓存（creation > 0）、第 2 次命中缓存（read > 0）。
-- K4: frequency_penalty=-2 且不传 max_tokens 请求一直无返回 [P0]
+- K4: frequency_penalty=-2 且不传 max_tokens 请求一直无返回 [P1]
   客户问题：fp=-2（OpenAI 规范 [-2,2] 的合法极值）且不传 max_tokens 时
   请求一直没有返回——fp<0 按出现次数奖励已出现 token，形成无饱和正反馈，
   循环 token 的 logit 压制 EOS 导致自然终止失效，输出只能跑到上下文
@@ -205,7 +206,7 @@ K. 客户问题复现测试
   HTTP 400；若 200 放行（缺陷形态）：取样若干 SSE 事件留证后
   FAIL。GLM-5.3 与 GLM-5.3-Flash 断言完全一致。响应体与 usage
   仅日志。（不进 smoke 集：新用例首跑观察期）
-- K15: 细粒度前缀匹配短输入缓存阈值 [P0]
+- K15: 细粒度前缀匹配短输入缓存阈值 [P1]
   客户问题（平台原始验证信息）：短文本缓存命中率不达标，根因推理
   引擎默认前缀缓存分块撮合的最小可缓存块长过大（vLLM 默认 640
   token 量级），客户输入低于该块长（如 625 token）时完全不缓存，
@@ -233,7 +234,7 @@ K. 客户问题复现测试
   cached_tokens 总和/prompt_tokens 总和 ≥90%。  GLM-5.3 与
    GLM-5.3-Flash 断言  一致，非流式、不发送采样参数（test_k 保
    持原始测试参数——工单原始请求未指定，不发送）。（不进 smoke 集：新用例首跑观察期）
-- K17: stop 停止符（换行符）在推理阶段生效 [P0]
+- K17: stop 停止符（换行符）在推理阶段生效 [P1]
   客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样作用
   于推理（reasoning）输出——推理里出现的第一个换行即触发停止，
   正文（content）不会生成；反之若换行未触发停止、继续输出正文，
@@ -287,7 +288,7 @@ K. 客户问题复现测试
   "assitant" 判定为笔误（报错与修复均不涉及 role），按标准
   assistant 还原。usage 仅日志。（不进 smoke 集：新用例首跑观
   察期）
-- K19: 单次请求图片数超限（>16）应拒绝并返回恰当错误 [P0]
+- K19: 单次请求图片数超限（>16）应拒绝并返回恰当错误 [P1]
   客户问题：单次请求携带超过 16 张图片导致请求失败。根因：服务端
   serving-pool 启动参数显式配置 --limit-mm-per-prompt
   {"image":16,"video":1,"audio":0}（vLLM 多模态单项限额）。契
@@ -343,7 +344,7 @@ K. 客户问题复现测试
    试参数（工单原始请求未指定，不注入）。模型真实响应（状态码/响应体全文）断言前每
   轮打印（失败时同样可见）；usage 仅日志。  （不进 smoke 集：
   新用例首跑观察期）
-- K21: system 消息内嵌 tools 的非标请求结构应被接受 [P0]
+- K21: system 消息内嵌 tools 的非标请求结构应被接受 [P1]
   客户问题（kimi-k3 工单原始请求体）：messages[2] 为 role=system
   且无 content 字段、代之以内嵌 tools 数组（Calculator 单工具
   ——算术表达式求值），服务端反序列化直接报 400
@@ -487,7 +488,7 @@ K. 客户问题复现测试
   usage 仅日志；
   模型真实响应（状态码/合并正文/思考）断言前打印（失败时同样可
   见）。（不进 smoke 集：新用例首跑观察期）
-- K26: 工具 schema 负向前瞻正则应被兼容放行 [P0]
+- K26: 工具 schema 负向前瞻正则应被兼容放行 [P1]
   客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前瞻正
   则——后端编译为 structural_tag 生成约束时，底层语法编译器不支
   持 lookahead：非流式报 400（Failed to compile structural_tag
@@ -567,7 +568,7 @@ K. 客户问题复现测试
   名由环境注入；stream/max_tokens=4096 按脚本口径覆盖；
   temperature/top_p 原始未指定——按用户指定保持不指定（不注
   入）。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
-- K30: /v1/responses 校验码输出与 token 计数核验 [P0]
+- K30: /v1/responses 校验码输出与 token 计数核验 [P1]
   客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：
   probe 三项断言未通过——请求明确要求只输出
   SYNTHETIC_SHORT_TEXT_MARKER 实际正文输出 '4b69a88e6b'（模型
@@ -768,7 +769,7 @@ K. 客户问题复现测试
   tokens=512 工单 2 发同值（豁免注入）；采样参数未含——不注
   入；相邻间隔 3s。GLM-5.3 专用。（不进 smoke 集：新用例首
   跑观察期）
-- K36: finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） [P1]
+- K36: finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） [P0]
   客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=
   stop（20_chat_stream_002 / 20_chat_ms_001 /
   20_chat_structured_002 三例）；贵方实测同一请求渠道返回
@@ -883,7 +884,7 @@ K. 客户问题复现测试
   同时适用 GLM-5.3 与 Kimi K3（请求同构，模型名由环境注入，
   无模型分支）。（不进 smoke 集：新用例首跑观察期；4 请求）
 - K40: 跨协议 thinking 链路核验（msg 端点思考 block 稳定+OpenAI
-  体混用留证，msg 单协议） [P1]
+  体混用留证，msg 单协议） [P0]
   客户问题（K40 工单补充信息，2026-11-10）：客户链路为最终客户
   Anthropic 协议 → 乐信网关（协议转换）→ OpenAI 协议 → 本平台；
   客户反馈 4 点——①存在协议转换层；②发现后已开启透传；③客户
@@ -938,7 +939,7 @@ K. 客户问题复现测试
   数行为由 K33/K35 覆盖）。GLM-5.3 专用（工单无模型线索，缺
   陷为平台/引擎层 stop 校验与 max_tokens 上限路径，无模型分
   支）。（不进 smoke 集：新用例首跑观察期；1 请求）
-- K42: Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议） [P1]
+- K42: Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议） [P0]
   客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）：kimi-k3 流
   式请求正常出流（~70 chunk/s、已出 1480 tokens）后正文结束，连
   续 30s 无任何字节——无 finish_reason/tool_calls/[DONE]，连接
@@ -1019,7 +1020,7 @@ K. 客户问题复现测试
   5.3）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；
   1 请求）
 - K45: responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，
-  responses 单协议） [P1]
+  responses 单协议） [P0]
   客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求
   （glm-5.3、instructions="Answer concisely."、input 单 user 消
   息「Compute 47*89 step by step, then reply with just the
@@ -1045,6 +1046,30 @@ K. 客户问题复现测试
   （工单模型 glm-5.3，缺陷为 usage 计数口径——响应组装层，无模
   型分支）。无新增数据文件。（不进 smoke 集：新用例首跑观察
   期；×3 请求）
+- K46: 用户正文含聊天模版控制词转义核验（<think> 字面量截断缺
+  陷，chat 单协议，AGDC2-58） [P0]
+  客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10）：POST
+  /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user
+  消息 "Reply with exactly this line and nothing else: A<think>B
+  </think>C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A
+  <think>B</think>C。开发分析确证根因（输入侧编码链路，非推理解
+  析器）：用户提示词正文含聊天模版控制词 <think>/</think> 字面
+  量，模版渲染未做转义被编码成控制 token 与模版自身思考标签碰
+  撞——<think>B... 部分被提前截断；修复=transformers≥5.20.2
+  sanitize_control_tokens（vLLM main-1106+transformers v5.21.0
+  支持部署默认开启）或改造 Dynamo 编码器。本用例原样回放单发
+  （编码链路确定性——K41 先例）：断言1 HTTP 200+合法 JSON+
+  choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4
+  （核心）正文（strip 后）包含完整控制词字面量 <think>B
+  </think>（缺陷形态仅 "A"——B/C 被吞即截断）。观察（不计判
+  据）：与期望行严格相等对照、reasoning_content 存在性与长度
+  （输出侧是否二次吞标签留证）、finish 值。请求体工单原样
+  （max_tokens=2000+消息原文——控制词字面量精确复现），model
+  环境注入；seed/temperature（Wiki 复现带 seed=123/
+  temperature=0.7）为开发侧复现辅助——不注入；stream/thinking/
+  采样参数未含——不注入；超时沿用全局。仅 GLM-5.3-Flash（工单
+  模型 glm-5.3-flash，缺陷实证于 flash 编码链路）。无新增数据文
+  件。（不进 smoke 集：新用例首跑观察期；1 请求）
 """
 
 import base64
@@ -1077,12 +1102,12 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     """
 
     def get_test_category(self) -> str:
-        return "K. 客户问题复现"
+        return "K. 反馈问题验证"
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_pydantic_schema_tool_call_stream(
+    def test_pydantic_schema_tool_call_stream_agdc2_2(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K1 [P0]: 客户问题 - Pydantic $defs/$ref Schema 工具调用报【$$不兼容】
@@ -1384,7 +1409,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_repeated_request_stability(
+    def test_repeated_request_stability_agdc2_3(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K2 [P0]: 客户问题 - 同一请求循环执行5次返回信息异常
@@ -1537,7 +1562,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM52
     @pytest.mark.p0
-    def test_anthropic_prompt_cache_creation(
+    def test_anthropic_prompt_cache_creation_agdc2_4(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K3 [P0]: 客户问题 - Anthropic 协议请求 cache_creation_tokens 一直为 0
@@ -1762,11 +1787,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p0
-    def test_negative_frequency_penalty_treated_as_zero(
+    @pytest.mark.p1
+    def test_negative_frequency_penalty_treated_as_zero_agdc2_13(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K4 [P0]: 客户问题 - frequency_penalty=-2 且不传 max_tokens 请求一直无返回
+        """K4 [P1]: 客户问题 - frequency_penalty=-2 且不传 max_tokens 请求一直无返回
 
         客户问题：frequency_penalty=-2（OpenAI 规范 [-2,2] 的合法极值）且
         不传 max_tokens 时请求一直没有返回。机理：fp<0 按出现次数奖励已
@@ -1967,7 +1992,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    def test_thinking_disabled_suppresses_reasoning(
+    def test_thinking_disabled_suppresses_reasoning_agdc2_7(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K5 [P0]: 客户问题 - thinking.type=disabled 后思考未关闭
@@ -2186,7 +2211,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    def test_thinking_temperature_tier(
+    def test_thinking_temperature_tier_agdc2_8(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K6 [P0]: 客户问题 - 关思考温度档未联动校验
@@ -2400,7 +2425,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    def test_thinking_effort_reasoning_length(
+    def test_thinking_effort_reasoning_length_agdc2_8(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
         """K7 [P0]: 客户问题 - 思考强度档位思考长度倒挂（官方 reasoning_effort）
@@ -2755,7 +2780,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p1
-    def test_required_chitchat_calls_tool(
+    def test_required_chitchat_calls_tool_agdc2_9(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K8 [P1]: 客户问题 - required+闲聊必须调用工具（客户工单级别，finish=tool_calls、预算不被吃满）
@@ -3017,7 +3042,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
     @pytest.mark.p1
-    def test_required_chitchat_official_behavior(
+    def test_required_chitchat_official_behavior_agdc2_11(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K9 [P1]: 客户问题 - required+闲聊必须强制调用工具（按官方行为为预期）
@@ -3274,7 +3299,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.GLM53FLASH
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    def test_tool_choice_four_modes_support(
+    def test_tool_choice_four_modes_support_agdc2_15(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K10 [P0]: 客户问题 - GLM-5.3-Flash tool_choice 四种模式支持
@@ -3581,7 +3606,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53FLASH
     @pytest.mark.p0
-    def test_response_format_three_modes_support(
+    def test_response_format_three_modes_support_agdc2_16(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K11 [P0]: 客户问题 - GLM-5.3-Flash response_format 三种模式支持
@@ -3791,7 +3816,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53FLASH
     @pytest.mark.p0
-    def test_reasoning_effort_levels_support(
+    def test_reasoning_effort_levels_support_agdc2_17(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K12 [P0]: 客户问题 - GLM-5.3-Flash reasoning_effort 档位支持
@@ -3981,7 +4006,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.GLM53FLASH
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    def test_stop_sequence_prefix_leak(
+    def test_stop_sequence_prefix_leak_agdc2_21(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K13 [P0]: 客户问题 - stop 序列遵循且被截断正文前置多余字符
@@ -4146,7 +4171,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.GLM53FLASH
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_orphan_tool_message_rejected(
+    def test_orphan_tool_message_rejected_agdc2_21(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K14 [P0]: 客户问题 - 孤儿 tool 消息应 HTTP 400 拒绝
@@ -4287,11 +4312,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.GLM53FLASH
-    @pytest.mark.p0
-    def test_short_input_prefix_cache_threshold(
+    @pytest.mark.p1
+    def test_short_input_prefix_cache_threshold_agdc2_21(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K15 [P0]: 客户问题 - 细粒度前缀匹配短输入缓存阈值
+        """K15 [P1]: 客户问题 - 细粒度前缀匹配短输入缓存阈值
 
         客户问题：vLLM 分块撮合后最小缓存块长 640 tok，用户输入
         625 tok 不被缓存（短输入缓存失效）。修复：开启细粒度前缀
@@ -4426,7 +4451,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.GLM53
     @pytest.mark.GLM53FLASH
     @pytest.mark.p0
-    def test_prefix_cache_hit_rate_threshold(
+    def test_prefix_cache_hit_rate_threshold_agdc2_39(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K16 [P0]: 客户问题 - 固定前缀/多轮上下文缓存命中率达标
@@ -4651,11 +4676,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p0
-    def test_stop_newline_in_reasoning(
+    @pytest.mark.p1
+    def test_stop_newline_in_reasoning_agdc2_12(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K17 [P0]: 客户问题 - stop 停止符（换行符）在推理阶段生效
+        """K17 [P1]: 客户问题 - stop 停止符（换行符）在推理阶段生效
 
         客户契约：指定停止符为换行符 "\n" 并开启思考时，停止符同样
         作用于推理（reasoning）输出——推理里出现的第一个换行即触发
@@ -4819,7 +4844,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_output_json_as_input_context(
+    def test_output_json_as_input_context_agdc2_28(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K18 [P0]: 客户问题 - 模型输出 JSON 可回填为下次请求输入上下文
@@ -5383,11 +5408,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53FLASH
-    @pytest.mark.p0
-    def test_over_image_limit_rejected(
+    @pytest.mark.p1
+    def test_over_image_limit_rejected_agdc2_35(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K19 [P0]: 客户问题 - 单次请求图片数超限（>16）应拒绝并返回恰当错误
+        """K19 [P1]: 客户问题 - 单次请求图片数超限（>16）应拒绝并返回恰当错误
 
         客户问题：单次请求携带超过 16 张图片导致请求失败。根因：服务
         端 serving-pool 启动参数显式配置 --limit-mm-per-prompt
@@ -5878,11 +5903,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
-    @pytest.mark.p0
-    def test_system_message_embedded_tools_accepted(
+    @pytest.mark.p1
+    def test_system_message_embedded_tools_accepted_agdc2_20(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K21 [P0]: 客户问题 - system 消息内嵌 tools 的非标请求结构应被接受
+        """K21 [P1]: 客户问题 - system 消息内嵌 tools 的非标请求结构应被接受
 
         客户问题（kimi-k3 工单原始请求体，request id
         2026101517465272830754257355159）：messages[2] 为 role=system
@@ -6095,7 +6120,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_cross_protocol_prefix_cache_parity(
+    def test_cross_protocol_prefix_cache_parity_agdc2_14(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K22 [P0]: 客户问题 - /v1/messages 缓存命中率应与
@@ -6822,7 +6847,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_orphan_tool_message_accepted(
+    def test_orphan_tool_message_accepted_agdc2_43(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K23 [P0]: 客户问题 - 孤儿 tool 消息应对齐官方放行并正常消费
@@ -6838,7 +6863,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         据被模型正常消费）。
         新契约（客户指定）：预期结果同官方一致——此类消息序列不做
         校验、正常出结果。
-        与 K14 的关系：K14（test_orphan_tool_message_rejected）为
+        与 K14 的关系：K14（test_orphan_tool_message_rejected_agdc2_21）为
         当时工单口径的原始契约（网关校验拒绝 400），按用户指令保
         持不变；本用例记录新客户需求（官方对齐契约：接受并正常消
         费）。二者输入同类、预期相反——平台采纳官方对齐修复后
@@ -7097,7 +7122,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_dual_request_response_with_effort_fallback(
+    def test_dual_request_response_with_effort_fallback_agdc2_18(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K24 [P0]: 客户问题 - 双请求正常响应（思考耗尽预算 low 强度回退）
@@ -7355,7 +7380,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_duplicate_reasoning_content_history_accepted(
+    def test_duplicate_reasoning_content_history_accepted_agdc2_28(
         self, api_client: ModelAPIClient, test_logger, record_warning
     ):
         """K25 [P0]: 客户问题 - assistant 历史重复 reasoning_content
@@ -7911,11 +7936,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p0
-    def test_negative_lookahead_tool_pattern_accepted(
+    @pytest.mark.p1
+    def test_negative_lookahead_tool_pattern_accepted_agdc2_40(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K26 [P0]: 客户问题 - 工具 schema 负向前瞻正则应被兼容放行
+        """K26 [P1]: 客户问题 - 工具 schema 负向前瞻正则应被兼容放行
 
         客户问题：工具参数 schema 的 pattern 包含 ^(?!...) 负向前
         瞻正则——后端将其编译为 structural_tag 生成约束时，底层语
@@ -8200,7 +8225,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_invalid_arguments_history_tolerated(
+    def test_invalid_arguments_history_tolerated_agdc2_19(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K27 [P0]: 客户问题 - 历史非法 JSON arguments 应被容忍
@@ -8573,7 +8598,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_output_fields_think_tag_probe(
+    def test_output_fields_think_tag_probe_agdc2_24(
         self, api_client: ModelAPIClient, test_logger, request
     ):
         """K28 [P0]: 客户问题 - 模型输出字段核验（尾裸/回流/工具参数）
@@ -8741,7 +8766,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_dual_protocol_zero_delta_tool_call(
+    def test_dual_protocol_zero_delta_tool_call_agdc2_25(
         self, api_client: ModelAPIClient, test_logger, request
     ):
         """K29 [P0]: 客户问题 - 双协议零增量响应与工具调用核验
@@ -8920,11 +8945,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p0
-    def test_responses_api_marker_output_usage(
+    @pytest.mark.p1
+    def test_responses_api_marker_output_usage_agdc2_44(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K30 [P0]: 客户问题 - /v1/responses 校验码输出与 token 计数核验
+        """K30 [P1]: 客户问题 - /v1/responses 校验码输出与 token 计数核验
 
         客户问题（合成短文本 Token 对照测试，/v1/responses 接口）：
         probe 三项断言未通过——①严重：请求明确要求只输出
@@ -9172,7 +9197,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_json_object_nested_empty_content(
+    def test_json_object_nested_empty_content_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K31 [P1]: 客户问题 - json_object 嵌套结构完整输出与预
@@ -9611,7 +9636,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_temperature_range_validation(
+    def test_temperature_range_validation_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K32 [P1]: 客户问题 - temperature 原厂区间 [0, 2] 放
@@ -10235,7 +10260,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p2
-    def test_top_logprobs_stable_support(
+    def test_top_logprobs_stable_support_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K33 [P2]: 客户问题 - top_logprobs=5 放行核验
@@ -10543,7 +10568,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p2
-    def test_multimodal_rejection_error_detail(
+    def test_multimodal_rejection_error_detail_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K34 [P2]: 客户问题 - 多模态媒体块该拒未拒（msg 侧静
@@ -11159,7 +11184,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_enable_thinking_param_rejection(
+    def test_enable_thinking_param_rejection_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K35 [P1]: 客户问题 - 关闭思考应按原厂 400 拒绝
@@ -11367,11 +11392,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p1
-    def test_finish_reason_stop_semantics(
+    @pytest.mark.p0
+    def test_finish_reason_stop_semantics_agdc2_46(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K36 [P1]: 客户问题 - finish_reason 判定对齐官方（stop
+        """K36 [P0]: 客户问题 - finish_reason 判定对齐官方（stop
         语义——流式/多段/结构化）
 
         客户问题（工单 P1 R-06 · finish_reason 语义与官方不一致，
@@ -11904,7 +11929,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p0
-    def test_n2_request_hang_timeout(
+    def test_n2_request_hang_timeout_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K37 [P0]: 客户问题 - n=2 请求应 400 拒绝且不挂死
@@ -12109,7 +12134,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         "求亦超时——工单『官方判定通过（别名按 max_tokens 语义立"
         "即截断返回）』基线失效，判定口径待澄清后恢复执行"
     )
-    def test_max_completion_tokens_alias_single_token(
+    def test_max_completion_tokens_alias_single_token_agdc2_48(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K38 [P0]: 客户问题 - max_completion_tokens 别名单
@@ -12335,7 +12360,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.GLM53
     @pytest.mark.KimiK3
     @pytest.mark.p0
-    def test_reasoning_dual_field_history_accepted(
+    def test_reasoning_dual_field_history_accepted_agdc2_47(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K39 [P0]: 客户问题 - 历史 assistant 消息 reasoning/
@@ -12562,11 +12587,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p1
-    def test_anthropic_thinking_block_stable_cross_protocol(
+    @pytest.mark.p0
+    def test_anthropic_thinking_block_stable_cross_protocol_agdc2_54(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K40 [P1]: 客户问题 - 跨协议 thinking 链路核验（msg 端点
+        """K40 [P0]: 客户问题 - 跨协议 thinking 链路核验（msg 端点
         思考 block 稳定 + OpenAI 体混用形态留证）
 
         客户问题（K40 工单补充信息，2026-11-10）：客户链路为最终
@@ -12876,7 +12901,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_empty_stop_array_normal_response(
+    def test_empty_stop_array_normal_response_agdc2_53(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K41 [P1]: 客户问题 - stop 空数组应正常响应（400 拒
@@ -13064,11 +13089,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.KimiK3
-    @pytest.mark.p1
-    def test_kimik3_long_tool_args_stream_no_stall(
+    @pytest.mark.p0
+    def test_kimik3_long_tool_args_stream_no_stall_agdc2_45(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K42 [P1]: 客户问题 - Kimi-K3 工具调用长参数流式停流
+        """K42 [P0]: 客户问题 - Kimi-K3 工具调用长参数流式停流
         核验（间隔<30s+正常终止，chat 单协议）
 
         客户问题（工单 AGDC2-45 · Kimi-K3 流式中途停流）：kimi-k3
@@ -13378,7 +13403,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_responses_empty_input_rejected(
+    def test_responses_empty_input_rejected_agdc2_55(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K43 [P1]: 客户问题 - responses 端点空 input 400 拒绝核
@@ -13506,7 +13531,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_reasoning_effort_none_accepted(
+    def test_reasoning_effort_none_accepted_agdc2_55(
         self, api_client: ModelAPIClient, test_logger
     ):
         """K44 [P1]: 客户问题 - reasoning_effort="none" 应被接受核
@@ -13665,11 +13690,11 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
-    @pytest.mark.p1
+    @pytest.mark.p0
     def test_responses_reasoning_tokens_counted(
         self, api_client: ModelAPIClient, test_logger
     ):
-        """K45 [P1]: 客户问题 - responses 端点思考计数核验
+        """K45 [P0]: 客户问题 - responses 端点思考计数核验
         （reasoning_tokens 恒 0 缺陷）
 
         客户问题（工单实证，2026-11-10）：POST /v1/responses 原样
@@ -13876,4 +13901,166 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "summary 非空）+ 正文非空 + reasoning_tokens 计数上报（>0 "
             "且 ≤ output_tokens）——responses 端点思考暴露与计数口径"
             "正常；若客户侧仍见恒 0，收敛到客户参数/网关链路排查"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53FLASH
+    @pytest.mark.p0
+    def test_user_content_control_word_escape_agdc2_58(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K46 [P0]: 客户问题 - 用户正文含聊天模版控制词转义核验
+        （<think> 字面量截断缺陷，chat 单协议，工单 AGDC2-58）
+
+        客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10）：
+        POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、
+        单 user 消息 "Reply with exactly this line and nothing else:
+        A<think>B</think>C"）——模型仅输出 "A"，加大推理程度无效；期
+        望输出 A<think>B</think>C。客户初判「推理内容解析器未正常
+        工作」。
+        开发分析确证根因（输入侧编码链路，非推理解析器）：用户提
+        示词正文含聊天模版控制词 <think>/</think> 字面量，
+        transformers 应用聊天模版时未对用户输入关键字做转义——渲
+        染时被编码成模版控制 token 与模版自身思考标签碰撞，令牌
+        器无法区分用户正文与模版控制词——<think>B... 部分被提前截
+        断。修复=transformers≥5.20.2 chat_template_kwargs
+        {"sanitize_control_tokens": true}（vLLM main-1106 +
+        transformers v5.21.0 支持，部署默认开启 --default-chat-
+        template-kwargs）或改造 Dynamo 自制编码器（dynamo-
+        renderer==6.0.0/dynamo-tokenizers==2.0.0）。
+        本用例原样回放客户测试用例，单发（编码链路确定性——K41
+        先例）：
+        1. 断言1：HTTP 200 + 合法 JSON + choices 非空
+        2. 断言2：finish_reason 非空（正常结束）
+        3. 断言3：正文非空
+        4. 断言4（核心）：正文（strip 后）包含完整控制词字面量
+           <think>B</think>（缺陷形态仅 "A"——B/C 被吞即截断；
+           修复后正文应含完整标签字面量）
+        观察（不计判据）：正文与期望行 "A<think>B</think>C" 严格相
+        等对照（生成层空白/换行差异不判）、reasoning_content 存在
+        性与长度（输出侧解析器是否二次吞标签留证）、finish 值、非
+        200 时错误全文留证。请求体工单原样（max_tokens=2000+消息
+        原文——控制词字面量精确复现），model 环境注入；seed/
+        temperature（Wiki 复现带 seed=123/temperature=0.7）为开发
+        侧复现辅助——非客户原始请求参数，不注入；stream/thinking/
+        采样参数未含——不注入；超时沿用全局。仅 GLM-5.3-Flash（工
+        单模型 glm-5.3-flash，缺陷实证于 flash 编码链路）。无新增
+        数据文件。（不进 smoke 集：新用例首跑观察期；1 请求）
+        """
+        test_logger.info(
+            "=== 测试开始: 客户问题 - 用户正文含聊天模版控制词转义核"
+            "验（工单 AGDC2-58：消息正文含 A<think>B</think>C 仅输出 "
+            "\"A\"——模版渲染未转义控制词致 <think>B... 提前截断；修复"
+            "=sanitize_control_tokens；原样回放单发，四断言：200+"
+            "finish 非空+正文非空+含完整 <think>B</think> 字面量）==="
+        )
+
+        # K46: 工单测试用例原样（AGDC2-58：消息原文含聊天模版控制
+        # 词字面量——必须精确复现，是否转义即缺陷路径）
+        K46_PROMPT = (
+            "Reply with exactly this line and nothing else: "
+            "A<think>B</think>C"
+        )
+        K46_CONTROL_LITERAL = "<think>B</think>"
+        K46_EXPECTED = "A<think>B</think>C"
+
+        # K46: 请求体（工单原样：max_tokens=2000 + 消息原文；
+        # seed/temperature 为 Wiki 开发侧复现辅助参数——客户原始请求
+        # 未含，不注入；stream/thinking/采样参数未含——不注入）
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "max_tokens": 2000,
+            "messages": [{"role": "user", "content": K46_PROMPT}],
+        }
+
+        TestLogger.log_request(
+            test_logger,
+            [{"role": "user", "content": K46_PROMPT}],
+            {
+                "endpoint": "/v1/chat/completions",
+                "max_tokens": "2000（工单原样）",
+                "stream": "(工单未含——不注入)",
+                "thinking": "(工单未含——不注入)",
+                "temperature": "(Wiki 复现辅助参数，客户原始请求未含——不注入)",
+                "seed": "(Wiki 复现辅助参数，客户原始请求未含——不注入)",
+                "messages": "工单原文（含 <think>/</think> 控制词字面量——缺陷触发）",
+            },
+        )
+
+        # K46: 单发直发（编码链路确定性——K41 先例；超时沿用全局）
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        start_time = time.time()
+        response = api_client._post_with_retry(
+            chat_url, payload, stream=False
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+
+        # 断言1：HTTP 200 + 合法 JSON + choices 非空
+        assert status == 200, (
+            f"请求失败 HTTP {status}，elapsed={elapsed:.1f}s, 响应体全"
+            f"文: {body_text[:2000]}"
+        )
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        assert isinstance(data, dict), (
+            f"响应体非合法 JSON，elapsed={elapsed:.1f}s, 响应体全文: "
+            f"{body_text[:2000]}"
+        )
+        choices = data.get("choices")
+        assert isinstance(choices, list) and choices, (
+            f"choices 缺失或为空（结构不完整），响应体全文: "
+            f"{body_text[:2000]}"
+        )
+        message = choices[0].get("message") or {}
+        content_text = str(message.get("content") or "")
+        reasoning_content = message.get("reasoning_content")
+
+        # 断言2：finish_reason 非空（正常结束）
+        finish_reason = choices[0].get("finish_reason")
+        assert finish_reason, (
+            f"finish_reason 为空（未正常结束），响应体全文: "
+            f"{body_text[:2000]}"
+        )
+        # 断言3：正文非空
+        assert content_text.strip(), (
+            f"正文为空，响应体全文: {body_text[:2000]}"
+        )
+        # 断言4（核心）：正文（strip 后）包含完整控制词字面量
+        # <think>B</think>（缺陷形态仅 "A"——B/C 被吞即截断；客户期
+        # 望 A<think>B</think>C 的必要内容）
+        stripped = content_text.strip()
+        assert K46_CONTROL_LITERAL in stripped, (
+            f"缺陷复现: 正文未含完整控制词字面量 <think>B</think>"
+            f"（工单期望输出 {K46_EXPECTED!r} 的必要内容——实际正文 "
+            f"{stripped[:200]!r}，B/C 被吞即模版渲染未转义控制词致正"
+            f"文被提前截断），响应体全文: {body_text[:2000]}"
+        )
+
+        # 观察（不计判据）：与期望行严格相等对照、reasoning_content
+        # 存在性与长度（输出侧解析器是否二次吞标签留证）
+        strict_equal = stripped == K46_EXPECTED
+        rc_len = len(str(reasoning_content)) if reasoning_content else 0
+        test_logger.info(
+            f"HTTP 200, elapsed={elapsed:.1f}s, finish_reason="
+            f"{finish_reason!r}, 正文={stripped[:300]!r}"
+            f"（{len(stripped)} 字符，与期望行严格相等: {strict_equal}"
+            f"）, reasoning_content 存在性={reasoning_content is not None}"
+        )
+        if reasoning_content:
+            test_logger.info(
+                f"reasoning_content {rc_len} 字符（输出侧解析器是否二"
+                f"次吞标签留证）, usage={data.get('usage')!r}"
+            )
+        else:
+            test_logger.info(f"usage={data.get('usage')!r}")
+
+        test_logger.info(
+            "客户问题整改验证通过: 正文包含完整控制词字面量 "
+            "<think>B</think>（模版渲染控制词转义正常——无提前截"
+            "断）；严格相等与 reasoning_content 形态留观察，缺陷未"
+            "复现"
         )
