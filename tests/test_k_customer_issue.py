@@ -4,7 +4,7 @@ K. 反馈问题验证测试
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
 2026-11-11）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45、K46 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+K36-K40、K42、K45-K47 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -996,29 +996,36 @@ K36-K40、K42、K45、K46 为 P0（任何失败应阻断发布），K4/K8/K9/K15
   responses 端点空输入校验缺失；chat 端点无关）。GLM-5.3 专用
   （工单模型 glm-5.3）。无新增数据文件（请求短小完整内联）。
   （不进 smoke 集：新用例首跑观察期；1 请求）
-- K44: reasoning_effort="none" 应被接受核验（对齐官方，chat 单协议） [P1]
-  客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10）：相
-  同请求 POST /v1/chat/completions（确认参数 max_completion_
-  tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文
-  案双重佐证；原始消息 349,732 字符被截断不可得，缺陷为参数校验
-  层与消息内容无关），alayanew 返回 400 {"code": 1210, "message":
-  "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high /
-  max）"}，智谱官方返回 200（finish=stop，正文非空，reasoning_
-  content 非空 18 tokens——官方接受 none 并正常生成）。预期（对
-  齐官方）：200 正常响应。本用例单发非流式：请求体 = 工单确认参
-  数 max_completion_tokens=128 + reasoning_effort="none" 原样 +
-  自拟最小 user 消息（工单消息不可得且不影响缺陷路径）；模型名
-  由环境注入；两侧工单响应均非流式形态——stream 不传（不注
-  入）。断言：1) HTTP 200（400=缺陷复现——1210「reasoning_
-  effort 取值非法: none（glm-5.3 仅支持 low / high / max）」文案
-  留证）；2) 合法 JSON+choices 非空；3) finish_reason 非空（对齐
-  官方 stop 形态）；4) 正文非空。观察（不计判据）：reasoning_
-  content 存在性/reasoning_tokens（官方 none 仍返回 18 reasoning
-  tokens 的形态留痕——none 语义为不声明思考努力档位，官方仍产
-  出思考）；400 时错误全文留证。超时沿用全局。chat 单协议（缺
-  陷为 chat 参数校验过度严格）。GLM-5.3 专用（工单模型 glm-
-  5.3）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；
-  1 请求）
+- K44: reasoning_effort="none" 应被 400 拒绝核验（code 1210 硬
+  断言；message 按官方文案对齐为警告观察，chat 单协议） [P1]
+  客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10，
+  2026-11-11 复测修正）：相同请求 POST /v1/chat/completions（确
+  认参数 max_completion_tokens=128 + reasoning_effort="none"——
+  标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断
+  不可得，校验为参数校验层与消息内容无关），实测两侧均 400（工
+  单原记录「官方 200 接受」有误）：alayanew 返回 400 {"code":
+  1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅
+  支持 low / high / max）"}（顶层 code/message 形态），智谱官方
+  返回 400 {"error": {"code": "1210", "message": "该模型始终思
+  考，不支持关闭思考；请使用 low、high 或 max。"}}（嵌套 error
+  形态）——两侧同拒，仅文案与结构不同。预期（用户指定
+  2026-11-11）：400 拒绝 + code==1210；message 按官方文案对齐为
+  警告观察（alayanew 文案与官方不一致时 warning 留证、不致失
+  败）。本用例单发非流式：请求体 = 工单确认参数 max_completion_
+  tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息
+  （工单消息不可得且不影响校验路径）；模型名由环境注入；两侧实
+  测响应均非流式形态——stream 不传（不注入）。断言：1) HTTP
+  400（200=none 被接受——与两侧实测预期不符，留证 FAIL；500 等
+  其他状态同样 FAIL）；2) 错误体合法 JSON 且 code==1210（顶层
+  code 与嵌套 error.code 兼容解析，int/字符串兼容——两侧实测均
+  为 1210）。观察（警告不计判据）：message 对齐官方文案「该模
+  型始终思考，不支持关闭思考；请使用 low、high 或 max。」——
+  一致时 info 留痕；不一致（alayanew「reasoning_effort 取值非
+  法: none（glm-5.3 仅支持 low / high / max）」形态即不一致）时
+  warning+record_warning 留证（实际/官方文案对照），不致失败。超
+  时沿用全局。chat 单协议（校验为 chat 参数校验层）。GLM-5.3
+  专用（工单模型 glm-5.3）。无新增数据文件。（不进 smoke 集：
+  新用例首跑观察期；1 请求）
 - K45: responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，
   responses 单协议） [P0]
   客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求
@@ -1070,6 +1077,20 @@ K36-K40、K42、K45、K46 为 P0（任何失败应阻断发布），K4/K8/K9/K15
   采样参数未含——不注入；超时沿用全局。仅 GLM-5.3-Flash（工单
   模型 glm-5.3-flash，缺陷实证于 flash 编码链路）。无新增数据文
   件。（不进 smoke 集：新用例首跑观察期；1 请求）
+- K47: Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、
+  disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） [P0]
+  客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关
+  参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而
+  渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_
+  effort+disabled 双方不思考；reasoning_effort（low/medium/high/
+  max）双方思考（渠道唯一开思考通路）。预期全按官方行为断言（S1/S2
+  当前渠道预期 FAIL——缺陷复现）：思考场景断言 reasoning 信号存在
+  （message.reasoning_content/reasoning 非空 或 usage.reasoning_
+  tokens>0），不思考场景断言 reasoning 空+reasoning_tokens==0+
+  content 非空+finish 非空。请求体自拟（工单仅含参数形态）：短算
+  术 prompt，思考场景 max_tokens=512、不思考场景 64，非流式 8 请求
+  相邻 3s。仅 Kimi-K3（思考开关契约为模型方行为）。无新增数据文
+  件。（不进 smoke 集：新用例首跑观察期；8 请求）
 """
 
 import base64
@@ -13531,48 +13552,63 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
     @pytest.mark.k_customer_issue
     @pytest.mark.GLM53
     @pytest.mark.p1
-    def test_reasoning_effort_none_accepted_agdc2_55(
-        self, api_client: ModelAPIClient, test_logger
+    def test_reasoning_effort_none_rejected_agdc2_55(
+        self, api_client: ModelAPIClient, test_logger, record_warning
     ):
-        """K44 [P1]: 客户问题 - reasoning_effort="none" 应被接受核
-        验（对齐官方，chat 单协议）
+        """K44 [P1]: 客户问题 - reasoning_effort="none" 应被 400 拒
+        绝核验（code 1210 硬断言；message 按官方文案对齐为警告观
+        察，chat 单协议）
 
         客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐
-        #10）：相同请求 POST /v1/chat/completions（确认参数
-        max_completion_tokens=128 + reasoning_effort="none"——标题
-        与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断
-        不可得，缺陷为参数校验层与消息内容无关），alayanew 返回
-        400 {"code": 1210, "message": "reasoning_effort 取值非法:
-        none（glm-5.3 仅支持 low / high / max）"}，智谱官方返回
-        200（finish=stop，正文非空，reasoning_content 非空 18
-        tokens——官方接受 none 并正常生成）。
-        预期（对齐官方）：200 正常响应。
+        #10，2026-11-11 复测修正）：相同请求 POST /v1/chat/
+        completions（确认参数 max_completion_tokens=128 +
+        reasoning_effort="none"——标题与 alayanew 错误文案双重佐
+        证；原始消息 349,732 字符被截断不可得，校验为参数校验层
+        与消息内容无关），实测两侧均 400（工单原记录「官方 200
+        接受」有误）：alayanew 返回 400 {"code": 1210,
+        "message": "reasoning_effort 取值非法: none（glm-5.3 仅
+        支持 low / high / max）"}（顶层 code/message 形态），智
+        谱官方返回 400 {"error": {"code": "1210", "message":
+        "该模型始终思考，不支持关闭思考；请使用 low、high 或
+        max。"}}（嵌套 error 形态）——两侧同拒，仅文案与结构不
+        同。
+        预期（用户指定 2026-11-11）：400 拒绝 + code==1210；
+        message 按官方文案对齐为警告观察（alayanew 文案与官方不
+        一致时 warning 留证、不致失败）。
         本用例单发非流式：请求体 = 工单确认参数 max_completion_
         tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user
-        消息（工单消息不可得且不影响缺陷路径）；模型名由环境注入；
-        两侧工单响应均非流式形态——stream 不传（不注入）。
-        判定（单发，四断言）：
-        1. 断言1：HTTP 200（400=缺陷复现——1210「reasoning_effort
-           取值非法: none（glm-5.3 仅支持 low / high / max）」文案
-           留证）
-        2. 断言2：合法 JSON + choices 非空
-        3. 断言3：finish_reason 非空（对齐官方 stop 形态）
-        4. 断言4：正文非空
-        观察（不计判据）：reasoning_content 存在性/reasoning_tokens
-        （官方 none 仍返回 18 reasoning tokens 的形态留痕——none 语
-        义为不声明思考努力档位，官方仍产出思考）；400 时错误全文留
-        证。超时沿用全局。chat 单协议（缺陷为 chat 参数校验过度严
-        格）。GLM-5.3 专用（工单模型 glm-5.3）。无新增数据文件。
+        消息（工单消息不可得且不影响校验路径）；模型名由环境注入；
+        两侧实测响应均非流式形态——stream 不传（不注入）。
+        判定（单发，两断言 + 警告观察）：
+        1. 断言1：HTTP 400（200=none 被接受——与两侧实测预期不
+           符，留证 FAIL；500 等其他状态同样 FAIL）
+        2. 断言2：错误体合法 JSON 且 code==1210（顶层 code 与嵌
+           套 error.code 兼容解析，int/字符串兼容——两侧实测均
+           为 1210）
+        3. 观察（警告不计判据）：message 对齐官方文案「该模型始
+           终思考，不支持关闭思考；请使用 low、high 或 max。」
+           ——一致时 info 留痕；不一致（alayanew「reasoning_
+           effort 取值非法: none（glm-5.3 仅支持 low / high /
+           max）」形态即不一致）时 warning+record_warning 留证
+           （实际/官方文案对照），不致失败
+        超时沿用全局。chat 单协议（校验为 chat 参数校验层）。
+        GLM-5.3 专用（工单模型 glm-5.3）。无新增数据文件。
         （不进 smoke 集：新用例首跑观察期；1 请求）
         """
-        # K44: 工单消息被截断不可得——自拟最小 user 消息（缺陷为参
+        # K44: 工单消息被截断不可得——自拟最小 user 消息（校验为参
         # 数校验层，与消息内容无关）
         K44_PROMPT = "Reply with a single word: OK"
+        # K44: 官方 message 文案（2026-11-11 复测实测）——message 对
+        # 齐基线（警告观察不计判据）
+        K44_OFFICIAL_MSG = (
+            "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"
+        )
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - reasoning_effort=\"none\" 应被"
-            "接受核验（工单 #10：alayanew 400/官方 200——预期对齐官方 "
-            "200 正常响应；单发非流式，工单确认参数 max_completion_"
+            "=== 测试开始: 客户问题 - reasoning_effort=\"none\" 应被 "
+            "400 拒绝核验（工单 #10 复测修正：两侧实测均 400——工单"
+            "原记录官方 200 有误；断言 code==1210；message 按官方文案"
+            "对齐为警告观察；单发非流式，工单确认参数 max_completion_"
             "tokens=128+reasoning_effort=\"none\" 原样+自拟最小消息）==="
         )
 
@@ -13591,9 +13627,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             {
                 "endpoint": "/v1/chat/completions",
                 "max_completion_tokens": "128（工单确认参数原样）",
-                "reasoning_effort": "none（工单确认参数原样——缺陷触发参数）",
+                "reasoning_effort": "none（工单确认参数原样——校验触发参数）",
                 "messages": "(自拟最小——工单消息 349,732 字符被截断不可得)",
-                "stream": "(工单两侧响应均非流式——不传，非流式默认)",
+                "stream": "(两侧实测响应均非流式——不传，非流式默认)",
             },
         )
 
@@ -13607,85 +13643,79 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         status = response.status_code
         body_text = response.text
 
-        # K44: 真实响应断言前留痕——400 时按工单 1210 文案归类
-        if status == 200:
+        # K44: 真实响应断言前留痕——非 400 时按形态归类
+        if status == 400:
             test_logger.info(
                 f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s"
             )
         else:
             defect_kind = (
-                "参数校验过度拒绝形态（1210 reasoning_effort 取值非法: "
-                "none）"
-                if ("reasoning_effort 取值非法: none" in body_text
-                    or "1210" in body_text)
+                "none 被接受并正常生成形态（与两侧实测预期 400 拒绝不"
+                "符）"
+                if status == 200
                 else "未归类形态——留证交人工分派"
             )
             test_logger.info(
                 f"真实响应: HTTP {status}, elapsed={elapsed:.1f}s, "
-                f"缺陷形态归类: {defect_kind}, 响应体全文: {body_text}"
+                f"形态归类: {defect_kind}, 响应体全文: {body_text}"
             )
 
-        # 断言1：HTTP 200（400=缺陷复现——参数被过度拒绝）
-        assert status == 200, (
-            f"缺陷复现: reasoning_effort=\"none\" 请求被 HTTP {status} "
-            f"拒绝（预期对齐官方 200 正常响应——工单形态：1210 "
-            f"reasoning_effort 取值非法: none（glm-5.3 仅支持 low / "
-            f"high / max）），elapsed={elapsed:.1f}s, 响应体全文: "
+        # 断言1：HTTP 400（200=none 被接受——与两侧实测预期不符；
+        # 500 等=非预期拒绝形态）
+        assert status == 400, (
+            f"reasoning_effort=\"none\" 请求未被 HTTP 400 拒绝（预期 "
+            f"400+code 1210——2026-11-11 复测两侧实测均 400：alayanew "
+            f"顶层 1210「reasoning_effort 取值非法: none（glm-5.3 仅支"
+            f"持 low / high / max）」、官方嵌套 1210「该模型始终思考，"
+            f"不支持关闭思考；请使用 low、high 或 max。」），实际 "
+            f"HTTP {status}，elapsed={elapsed:.1f}s, 响应体全文: "
             f"{body_text}"
         )
 
-        # 断言2：合法 JSON + choices 非空
+        # 断言2：错误体合法 JSON 且 code==1210（顶层 code/嵌套
+        # error.code 兼容解析，int/字符串兼容——两侧实测均为 1210）
         try:
-            data = response.json()
+            err_data = response.json()
         except ValueError:
-            data = None
-        choices = (data or {}).get("choices") or []
-        assert choices, (
-            f"响应体异常（非法 JSON/choices 空）: {body_text}"
-        )
-
-        choice0 = choices[0] or {}
-        message = choice0.get("message") or {}
-        content = message.get("content") or ""
-        finish_reason = choice0.get("finish_reason")
-
-        # 断言3：finish_reason 非空（对齐官方 stop 形态——正常结束）
-        assert finish_reason, (
-            f"缺陷形态: finish_reason 为空（预期正常结束——对齐官方 "
-            f"stop），HTTP {status}, 响应体全文: {body_text}"
-        )
-
-        # 断言4：正文非空（对齐官方正常生成形态）
-        assert str(content).strip(), (
-            f"缺陷形态: 正文为空（预期正常响应非空正文——对齐官方 "
-            f"200 形态），finish_reason={finish_reason!r}, 响应体全文: "
+            err_data = None
+        data_dict = err_data if isinstance(err_data, dict) else {}
+        err_obj = data_dict.get("error")
+        code_val = data_dict.get("code")
+        if code_val is None and isinstance(err_obj, dict):
+            code_val = err_obj.get("code")
+        assert str(code_val) == "1210", (
+            f"错误码未对齐: code={code_val!r}（预期 1210——2026-11-11 "
+            f"复测两侧实测同码 1210），HTTP {status}, 响应体全文: "
             f"{body_text}"
         )
 
-        # 观察记录（不计判据）：reasoning_content 存在性/
-        # reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形
-        # 态留痕）
-        reasoning_content = message.get("reasoning_content")
-        usage = (data or {}).get("usage") or {}
-        details = usage.get("completion_tokens_details")
-        reasoning_tokens = (
-            details.get("reasoning_tokens")
-            if isinstance(details, dict)
-            else None
-        )
-        if reasoning_tokens is None:
-            reasoning_tokens = usage.get("reasoning_tokens")
+        # 观察（警告不计判据）：message 按官方文案对齐——一致时
+        # info 留痕；不一致（如 alayanew「reasoning_effort 取值非
+        # 法: none…」形态）时 warning+record_warning 留证，不致失败
+        # （用户指定 2026-11-11）
+        msg_val = data_dict.get("message")
+        if not msg_val and isinstance(err_obj, dict):
+            msg_val = err_obj.get("message")
+        msg_text = str(msg_val or "")
+        if K44_OFFICIAL_MSG in msg_text:
+            test_logger.info(
+                f"观察: message 已对齐官方文案（不计判据）: "
+                f"{msg_text!r}"
+            )
+        else:
+            warn_msg = (
+                "K44: message 未对齐官方文案（警告不计判据、不致失败"
+                "——工单 #10 alayanew 形态即不一致）: 官方预期"
+                f"「{K44_OFFICIAL_MSG}」, 实际 {msg_text!r}（HTTP "
+                f"{status}, 响应体全文: {body_text}）"
+            )
+            test_logger.warning(warn_msg)
+            record_warning(warn_msg)
+
         test_logger.info(
-            f"观察: finish_reason={finish_reason!r}, 正文 "
-            f"{len(str(content).strip())} 字符, reasoning_content "
-            f"{'存在' if reasoning_content else '缺失/空'}, "
-            f"reasoning_tokens={reasoning_tokens!r}（官方 none 仍 18 "
-            f"reasoning tokens 形态留痕，观察不计判据）"
-        )
-        test_logger.info(
-            "客户问题整改验证通过: reasoning_effort=\"none\" 请求被接"
-            "受且正常响应（finish_reason 非空+正文非空）——参数校验过"
-            "度拒绝（1210）缺陷未复现"
+            "客户问题核验通过: reasoning_effort=\"none\" 请求被 "
+            "HTTP 400 拒绝且错误码 1210——与两侧实测预期一致；"
+            "message 文案对齐情况见上方观察日志（不计判据）"
         )
 
     @pytest.mark.k_customer_issue
@@ -14063,4 +14093,185 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "<think>B</think>（模版渲染控制词转义正常——无提前截"
             "断）；严格相等与 reasoning_content 形态留观察，缺陷未"
             "复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
+    @pytest.mark.p0
+    def test_kimik3_thinking_switch_contract(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K47 [P0]: 客户问题 - Kimi-K3 思考开关参数对齐官方核验
+        （不传/enabled 应思考，disabled/effort+disabled 不思考，
+        reasoning_effort 四档应思考，chat 单协议）
+
+        客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方的
+        思考开关参数行为不一致——①不传任何思考参数：官方思考、渠道
+        不思考；②thinking={"type": "enabled"}：官方思考、渠道被
+        忽略不思考；③thinking={"type": "disabled"}：双方不思考；
+        ④reasoning_effort（low/medium/high/max）：双方思考（渠道
+        唯一能开思考的方式）；⑤reasoning_effort+thinking=
+        {"type": "disabled"}：双方不思考。预期全按 Kimi 官方行为断
+        言（S1/S2 当前渠道预期 FAIL——缺陷复现）。
+        请求体自拟（工单仅含参数形态不含报文）：短算术 prompt+小预
+        算，8 请求非流式相邻 3s。
+        判定（8 请求逐发断言）：
+        1. 断言1（全部）：HTTP 200+合法 JSON+choices 非空
+        2. 断言2（思考场景 S1/S2/S4×4）：思考信号存在——message.
+           reasoning_content/reasoning 非空 或 usage.
+           reasoning_tokens>0（不思考=缺陷复现——工单形态）
+        3. 断言3（不思考场景 S3/S5）：无思考——reasoning 空 且
+           reasoning_tokens==0；且 content 非空、finish_reason 非空
+        观察（不计判据）：思考信号具体形态（字段名/token 数/文本长
+        度）、content 长度、finish_reason、usage 全文；相邻请求间
+        隔 3s。超时沿用全局。chat 单协议（比对为 chat 思考参数语
+        义）。仅 KimiK3（工单模型 Kimi-K3，思考开关契约为模型方行
+        为）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；
+        8 请求）
+        """
+        # K47: 自拟短 prompt——算术题触发思考（思考场景需要推理信号）
+        K47_PROMPT = "Compute 17*23. Reply with the number only."
+
+        # K47: 工单比对表 5 场景全覆盖（S4 四档各一发）：
+        # (场景名, 附加参数, 官方预期是否思考, max_tokens)
+        # 思考场景预算 512（够推理信号即可——token 消耗短），不思考 64
+        scenarios = [
+            ("S1_no_params", {}, True, 512),
+            ("S2_thinking_enabled",
+             {"thinking": {"type": "enabled"}}, True, 512),
+            ("S3_thinking_disabled",
+             {"thinking": {"type": "disabled"}}, False, 64),
+            ("S4_reasoning_effort_low",
+             {"reasoning_effort": "low"}, True, 512),
+            ("S4_reasoning_effort_medium",
+             {"reasoning_effort": "medium"}, True, 512),
+            ("S4_reasoning_effort_high",
+             {"reasoning_effort": "high"}, True, 512),
+            ("S4_reasoning_effort_max",
+             {"reasoning_effort": "max"}, True, 512),
+            ("S5_effort_plus_thinking_disabled",
+             {"reasoning_effort": "low",
+              "thinking": {"type": "disabled"}}, False, 64),
+        ]
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - Kimi-K3 思考开关参数对齐官方核"
+            "验（工单比对文档：不传/enabled 官方思考而渠道不思考、"
+            "disabled/effort+disabled 不思考、effort 四档思考——预期"
+            "全按官方行为断言；自拟请求体 8 发非流式相邻 3s，短 "
+            "prompt+小预算）==="
+        )
+
+        def _k47_single(name, extra_params, expect_think, max_tokens):
+            """K47 单场景：构造请求→直发→按 Kimi 官方行为断言"""
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": K47_PROMPT}],
+                "max_tokens": max_tokens,
+            }
+            payload.update(extra_params)
+            official_expect = "思考" if expect_think else "不思考"
+            test_logger.info(
+                f"--- K47 场景 {name}: 附加参数={extra_params!r}, "
+                f"官方预期={official_expect}, max_tokens={max_tokens}"
+            )
+            chat_url = f"{api_client.api_prefix}/chat/completions"
+            start_time = time.time()
+            response = api_client._post_with_retry(
+                chat_url, payload, stream=False
+            )
+            elapsed = time.time() - start_time
+            status = response.status_code
+            body_text = response.text
+
+            # 断言1：HTTP 200 + 合法 JSON + choices 非空（全部场景）
+            assert status == 200, (
+                f"场景 {name}: HTTP {status}（预期 200 正常响应——"
+                f"Kimi 官方行为比对不含拒绝形态），elapsed="
+                f"{elapsed:.1f}s, 响应体全文: {body_text}"
+            )
+            try:
+                data = response.json()
+            except ValueError:
+                data = None
+            choices = (data or {}).get("choices") or []
+            assert choices, (
+                f"场景 {name}: 响应体异常（非法 JSON/choices 空）: "
+                f"{body_text}"
+            )
+            choice0 = choices[0] or {}
+            message = choice0.get("message") or {}
+            content = message.get("content") or ""
+            finish_reason = choice0.get("finish_reason")
+
+            # K47: 思考信号双通道（K5 先例）——reasoning_content/
+            # reasoning 字段文本 + usage.reasoning_tokens
+            reasoning_text = ""
+            for field in ("reasoning_content", "reasoning"):
+                value = message.get(field)
+                if isinstance(value, str):
+                    reasoning_text += value
+            usage = (data or {}).get("usage") or {}
+            raw_rt = usage.get("reasoning_tokens")
+            try:
+                reasoning_tokens = (
+                    int(raw_rt) if raw_rt is not None else 0
+                )
+            except (TypeError, ValueError):
+                reasoning_tokens = 0
+            think_signal = bool(
+                reasoning_text.strip() or reasoning_tokens > 0
+            )
+
+            test_logger.info(
+                f"K47 场景 {name}: HTTP {status}, elapsed="
+                f"{elapsed:.1f}s, 思考信号: reasoning_text_len="
+                f"{len(reasoning_text.strip())}, reasoning_tokens="
+                f"{reasoning_tokens}, content_len="
+                f"{len((content or '').strip())}, finish_reason="
+                f"{finish_reason!r}, usage={usage!r}"
+            )
+
+            if expect_think:
+                # 断言2：官方行为=思考——思考信号必须存在
+                assert think_signal, (
+                    f"缺陷复现: 场景 {name} 未按 Kimi 官方行为返回思考"
+                    f"（官方: 思考——reasoning_content/reasoning 非空"
+                    f" 或 reasoning_tokens>0；渠道现状: 不思考——工单"
+                    f"比对形态），HTTP {status}, finish_reason="
+                    f"{finish_reason!r}, usage={usage!r}, 响应体全"
+                    f"文: {body_text}"
+                )
+            else:
+                # 断言3：官方行为=不思考——无思考信号+正常正文
+                assert not reasoning_text.strip() and (
+                    reasoning_tokens == 0
+                ), (
+                    f"缺陷复现: 场景 {name} 官方行为应不思考，但返回"
+                    f"思考（reasoning_text_len="
+                    f"{len(reasoning_text.strip())}, reasoning_tokens="
+                    f"{reasoning_tokens}），HTTP {status}, usage="
+                    f"{usage!r}, 响应体全文: {body_text}"
+                )
+                assert (content or "").strip(), (
+                    f"场景 {name}: 官方不思考形态正文应非空，HTTP "
+                    f"{status}, 响应体全文: {body_text}"
+                )
+                assert finish_reason, (
+                    f"场景 {name}: finish_reason 为空（预期正常结"
+                    f"束），HTTP {status}, 响应体全文: {body_text}"
+                )
+            return think_signal
+
+        # K47: 8 场景逐发（相邻 3s——K5/K45 先例），全过才计达标
+        results = {}
+        for idx, (name, extra, expect, mt) in enumerate(scenarios, 1):
+            results[name] = _k47_single(name, extra, expect, mt)
+            if idx < len(scenarios):
+                time.sleep(3)
+
+        test_logger.info(
+            "客户问题整改验证通过: Kimi-K3 思考开关 8 请求全部对齐官方"
+            "行为（不传/enabled/effort 四档回思考，disabled/effort+"
+            "disabled 不思考），思考开关参数行为差异缺陷未复现"
         )

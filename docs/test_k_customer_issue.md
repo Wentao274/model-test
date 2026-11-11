@@ -10,7 +10,7 @@
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
 - **P0 为主，优先级经使用重要性重划（2026-11-11 用户确认）**：客户报障
   场景纳入回归验证——K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-  K36-K40、K42、K45、K46 为 P0 必测（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+  K36-K40、K42、K45-K47 为 P0 必测（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免（test_k 整套件）**：所有 K 用例保持原始测试参数，不参与
   全局 `--sampling-params` 覆盖（`conftest.py` 模块级规则
@@ -89,9 +89,10 @@
 
 | K43 | responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #48）：相同请求 POST /v1/responses {"model": "glm-5.3", "input": [{"role": "user", "content": [{"type": "input_text", "text": ""}]}], "max_output_tokens": 32}，alayanew 返回 200（错误——空 input 文本被接受并生成 reasoning 内容，status=incomplete/incomplete_details.reason=max_output_tokens，usage output_tokens=32），智谱官方返回 400 {"error": {"code": "invalid_request", "message": "输入不能为空", "type": "invalid_request"}} | 单发非流式原样请求（请求体全部工单原样，仅 model 环境注入；responses 端点 staging 网关已有——报文实证）；断言1 HTTP 400（200=缺陷复现——空输入被接受，响应结构 status/incomplete_details/output/usage 留证）；断言2 错误体 code=="invalid_request"；断言3 message 含「输入不能为空」（对齐官方原文）；观察（不计判据）：400 时错误体全文；200 时缺陷响应结构留证；超时沿用全局（工单未涉及挂死/超时语义）；responses 单协议（缺陷为 responses 端点空输入校验缺失；chat 端点无关）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件（请求短小完整内联） | P1 |
 
-| K44 | reasoning_effort="none" 应被接受核验（对齐官方，chat 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10）：相同请求 POST /v1/chat/completions（确认参数 max_completion_tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，缺陷为参数校验层与消息内容无关），alayanew 返回 400 {"code": 1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）"}，智谱官方返回 200（finish=stop，正文非空，reasoning_content 非空 18 tokens——官方接受 none 并正常生成） | 单发非流式：请求体 = 工单确认参数 max_completion_tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息（工单消息不可得且不影响缺陷路径）；模型名由环境注入；两侧工单响应均非流式形态——stream 不传（不注入）；断言1 HTTP 200（400=缺陷复现——1210「reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）」文案留证）；断言2 合法 JSON+choices 非空；断言3 finish_reason 非空（对齐官方 stop 形态）；断言4 正文非空；观察（不计判据）：reasoning_content 存在性/reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形态留痕——none 语义为不声明思考努力档位，官方仍产出思考）；400 时错误全文留证；超时沿用全局；chat 单协议（缺陷为 chat 参数校验过度严格）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件 | P1 |
+  | K44 | reasoning_effort="none" 应被 400 拒绝核验（code 1210 硬断言；message 按官方文案对齐为警告观察，chat 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10，2026-11-11 复测修正）：相同请求 POST /v1/chat/completions（确认参数 max_completion_tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，校验为参数校验层与消息内容无关），实测两侧均 400（工单原记录「官方 200 接受」有误）：alayanew 返回 400 {"code": 1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）"}（顶层 code/message 形态），智谱官方返回 400 {"error": {"code": "1210", "message": "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"}}（嵌套 error 形态）——两侧同拒，仅文案与结构不同 | 单发非流式：请求体 = 工单确认参数 max_completion_tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息（工单消息不可得且不影响校验路径）；模型名由环境注入；两侧实测响应均非流式形态——stream 不传（不注入）；断言1 HTTP 400（200=none 被接受——与两侧实测预期不符，留证 FAIL；500 等其他状态同样 FAIL）；断言2 错误体合法 JSON 且 code==1210（顶层 code 与嵌套 error.code 兼容解析，int/字符串兼容——两侧实测均为 1210）；观察（警告不计判据）：message 对齐官方文案「该模型始终思考，不支持关闭思考；请使用 low、high 或 max。」——一致时 info 留痕，不一致（alayanew「reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）」形态即不一致）时 warning 留证不致失败；超时沿用全局；chat 单协议（校验为 chat 参数校验层）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件 | P1 |
 | K45 | responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议） | 客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求（glm-5.3、instructions="Answer concisely."、input 单 user 消息「Compute 47*89 step by step, then reply with just the number.」、max_output_tokens=1024、stream=false）响应 200 completed——思考已下发（output 含 type=="reasoning" 块，summary 为完整思考过程 ~3000 字符）、思考已计入 output_tokens（545 vs 可见正文 "4183" 仅 ~2 token——差值全为思考消耗），但 usage.output_tokens_details.reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客户最初另报「content 无思考块」，报文实证块在——缺陷收敛到计数口径） | 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言，相邻 3s）：请求体五字段工单原样，仅 model 环境注入（K43 先例）；断言1 HTTP 200+合法 JSON+output 数组存在；断言2 有思考内容（type=="reasoning" 块 summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type=="message" 块 output_text 非空——数值正误不定留证）；断言4 reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤output_tokens（K30 断言4 下界口径）；观察（不计判据）：正文全文、output_tokens 与可见正文差值（思考量旁证）、summary 长度、顶层 reasoning 回显、id 形态、error 字段；工单密钥不入库（鉴权走环境配置）；thinking/采样参数未带——不注入；非流式（stream=false 原样）；超时沿用全局；GLM-5.3 专用（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分支）；无新增数据文件 | P0 |
 | K46 | 用户正文含聊天模版控制词转义核验（  | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A  | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量  | P0 |
+| K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_effort+disabled 双方不思考；reasoning_effort（low/medium/high/max）双方思考（渠道唯一开思考通路）——预期全按官方行为断言 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景）reasoning 空+reasoning_tokens==0+content 非空+finish_reason 非空；相邻 3s；超时沿用全局；model 环境注入；仅 Kimi-K3；无新增数据文件 | P0 |
 
 
 ## 运行方式
@@ -3658,59 +3659,69 @@ incomplete_details.reason=max_output_tokens，usage output_tokens=
 - marker：仅 `GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
 - 不进 smoke 集：新用例首跑观察期
 
-### test_reasoning_effort_none_accepted_agdc2_55 (K44)
+### test_reasoning_effort_none_rejected_agdc2_55 (K44)
 
-**背景**：（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10）相同
-请求 POST /v1/chat/completions（确认参数 max_completion_tokens=
-128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐
-证；原始消息 349,732 字符被截断不可得，缺陷为参数校验层与消息内
-容无关），alayanew 返回 400 {"code": 1210, "message":
-"reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high /
-max）"}，智谱官方返回 200（finish=stop，正文非空，reasoning_
-content 非空 18 tokens——官方接受 none 并正常生成）。预期（对齐
-官方）：200 正常响应。
+**背景**：（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10，
+2026-11-11 复测修正）相同请求 POST /v1/chat/completions（确认参
+数 max_completion_tokens=128 + reasoning_effort="none"——标题与
+alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，
+校验为参数校验层与消息内容无关），实测两侧均 400（工单原记录
+「官方 200 接受」有误）：alayanew 返回 400 {"code": 1210,
+"message": "reasoning_effort 取值非法: none（glm-5.3 仅支持
+low / high / max）"}（顶层 code/message 形态），智谱官方返回
+400 {"error": {"code": "1210", "message": "该模型始终思考，不
+支持关闭思考；请使用 low、high 或 max。"}}（嵌套 error 形态）—
+—两侧同拒，仅文案与结构不同。预期（用户指定 2026-11-11）：400
+拒绝 + code==1210；message 按官方文案对齐为警告观察（alayanew
+文案与官方不一致时 warning 留证、不致失败）。
 
 **请求构造**：
 - chat 端点：`{base_url}/v1/chat/completions`，`_post_with_retry`
-  直发（非流式——工单两侧响应均非流式形态；超时沿用全局）
+  直发（非流式——两侧实测响应均非流式形态；超时沿用全局）
 - 请求体 = 工单确认参数原样（max_completion_tokens=128 +
-  reasoning_effort="none"——后者为缺陷触发参数）+ 自拟最小 user
-  消息（工单消息被截断不可得且不影响缺陷路径——349,732 字符报
+  reasoning_effort="none"——后者为校验触发参数）+ 自拟最小 user
+  消息（工单消息被截断不可得且不影响校验路径——349,732 字符报
   文截断）；stream 不传（不注入）；模型名由环境注入
 - 单发（参数校验确定性，K6/K23 先例）
 
-**断言（硬，单发四断言）**：
-1. HTTP 200（400=缺陷复现——1210「reasoning_effort 取值非法:
-   none（glm-5.3 仅支持 low / high / max）」文案留证）
-2. 合法 JSON + choices 非空
-3. finish_reason 非空（对齐官方 stop 形态）
-4. 正文非空
+**断言（硬，单发两断言）**：
+1. HTTP 400（200=none 被接受——与两侧实测预期不符，留证 FAIL；
+   500 等其他状态同样 FAIL）
+2. 错误体合法 JSON 且 code==1210（顶层 code 与嵌套 error.code
+   兼容解析，int/字符串兼容——两侧实测均为 1210）
 
 **判定矩阵**：
-- HTTP 400（1210 参数校验过度拒绝）→ FAIL（缺陷复现——错误全
-  文留证）
-- 非法 JSON/choices 空 → FAIL（响应结构异常）
-- finish_reason 为空 → FAIL（未正常结束——对齐官方 stop）
-- 正文为空 → FAIL（非「正常响应」形态）
-- 200 + finish 非空 + 正文非空 → PASS
+- HTTP 200（none 被接受并正常生成）→ FAIL（与两侧实测预期 400
+  拒绝不符——响应体全文留证）
+- 400 但 code≠1210 → FAIL（错误码未对齐——两侧实测同码）
+- 400 + code==1210 → PASS（message 对齐情况仅警告观察）
 
-**观察记录（不计判据，留日志）**：reasoning_content 存在性/
-reasoning_tokens（官方 none 仍返回 18 reasoning tokens 的形态留
-痕——none 语义为不声明思考努力档位，官方仍产出思考）；400 时
-错误全文留证
+**观察记录（警告不计判据）**：message 按官方文案「该模型始终思
+考，不支持关闭思考；请使用 low、high 或 max。」对齐——一致时
+info 留痕；不一致（alayanew「reasoning_effort 取值非法: none
+（glm-5.3 仅支持 low / high / max）」形态即不一致）时
+warning+record_warning 留证（实际/官方文案对照），不致失败
 
 **设计决策记录**：
+- **工单信息修正**：工单原记录「官方 200 接受 none」经 2026-11-
+  11 复测证伪——两侧实测均 400（官方嵌套 1210「该模型始终思
+  考，不支持关闭思考；请使用 low、high 或 max。」）；本用例按
+  实测修正判定口径（用户指定）
+- **code 硬断言、message 警告观察**：两侧实测同码 1210——稳定
+  判据取 code；文案两侧不一致（alayanew「取值非法」vs 官方「始
+  终思考」）——按用户指定以官方文案为对齐基线，不一致仅
+  warning 留证不致失败（文案后续趋同自动消警）
+- **兼容解析**：alayanew 顶层 {code, message} 与官方嵌套
+  {error:{code, message}} 两种结构均解析——顶层优先、嵌套兜底；
+  code int/字符串兼容（str 归一比对）
 - **消息自拟最小**：工单原始消息 349,732 字符在两个材料文件中
   均被截断（完整内容不可得——大报告文件中的 reasoning_effort 记
-  录为另一组实验）；缺陷为参数校验层（1210 校验拒绝在业务处理
-  前），与消息内容无关——最小消息不影响缺陷路径
-- **对齐判据取「接受」而非内容**：官方语义为接受 none 并正常生
-  成——断言 200+正常结束+正文非空；reasoning_content 是否产出
-  留观察（官方 none 仍 18 reasoning tokens，非本用例判据）
-- **stream 不传**：工单两侧响应均为完整 JSON 非流式形态——
+  录为另一组实验）；校验为参数校验层（1210 校验拒绝在业务处理
+  前），与消息内容无关——最小消息不影响校验路径
+- **stream 不传**：两侧实测响应均为完整 JSON 非流式形态——
   stream 未提供不注入
-- **chat 单协议**：缺陷为 chat 参数校验过度严格（仅 low/high/
-  max）；responses 端点同参数行为未在工单范围
+- **chat 单协议**：校验为 chat 参数校验层（none 不在 low/high/
+  max 合法档位）；responses 端点同参数行为未在工单范围
 
 **注意事项**：
 - marker：仅 `GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
@@ -3781,7 +3792,8 @@ thinking/reasoning 参数工单未带——不注入；采样参数未含——�
 
 **设计决策记录**：
 - **responses 单协议补盲区**：思考暴露断言此前仅覆盖 chat
-  （K5/K6/K44）与 msg（K40 跨协议），responses 为盲区——本例补
+  （K5/K6；K44 原含思考暴露观察，2026-11-11 口径变更为 400 拒
+  绝核验后移出）与 msg（K40 跨协议），responses 为盲区——本例补
   齐；K30 已在线但仅边界约束（reasoning_tokens 恒 0 时下界
   `output_tokens >= reasoning_tokens` 永真、上界仅约束
   output_tokens 与可见文本比例，不断言思考上报），K43 仅校验空
@@ -3899,4 +3911,70 @@ C 严格相等对照（生成层空白/换行差异不判）、reasoning_content
 - 本用例为缺陷复现用例：工单状态「修复中」——修复部署前预期
   FAIL（正文仅 "A" 截断形态），sanitize_control_tokens 部署后转
   PASS
+- 不进 smoke 集：新用例首跑观察期
+
+### test_kimik3_thinking_switch_contract (K47)
+
+- **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_thinking_switch_contract`
+- **优先级**：P0（用户确认 2026-11-11）
+- **marker**：`k_customer_issue` / `KimiK3` / `p0`
+- **协议**：chat 单协议（比对为 chat 思考参数语义）
+- **来源**：工单比对文档（无 AGDC2 编号——方法名不拼接后缀）
+
+**背景**（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方的思考开关
+参数行为不一致（5 参数形态比对）：
+
+| 参数 | 官方 Kimi-K3 | 该渠道 |
+|---|---|---|
+| 不传 | 思考 | 不思考 |
+| thinking={type: enabled} | 思考 | 被忽略，不思考 |
+| thinking={type: disabled} | 不思考 | 不思考 |
+| reasoning_effort（low/medium/high/max） | 思考 | 思考（唯一能打开思考的方式） |
+| reasoning_effort + thinking={type: disabled} | 不思考 | 不思考 |
+
+预期全按 Kimi 官方行为断言——S1（不传）/S2（enabled）当前渠道预期
+FAIL（缺陷复现形态：渠道不思考）。
+
+**请求构造**：自拟请求体（工单仅含参数形态比对表，不含报文）8 发
+非流式：短算术 prompt "Compute 17*23. Reply with the number
+only."；思考场景 max_tokens=512（够推理信号即可——token 消耗短）、
+不思考场景 64；模型名由环境注入（运行环境指向 Kimi-K3 实例）；
+stream 不传（比对不含流式语义）；超时沿用全局；相邻请求间隔 3s。
+
+**断言**（8 请求逐发）：
+1. 断言1（全部场景）：HTTP 200 + 合法 JSON + choices 非空
+2. 断言2（思考场景 S1/S2/S4×4）：思考信号存在——message.
+   reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0
+   （不思考 = 缺陷复现——工单形态）
+3. 断言3（不思考场景 S3/S5）：无思考——reasoning 字段空 且
+   reasoning_tokens==0；且 content 非空、finish_reason 非空
+
+**观察记录**（不计判据，留日志）：思考信号具体形态（字段名/token
+数/文本长度）、content 长度、finish_reason、usage 全文。
+
+**判定矩阵**：
+- HTTP 非 200 / 非法 JSON / choices 空 → FAIL（请求/响应层异常）
+- 思考场景（S1/S2/S4×4）无思考信号 → FAIL（**缺陷复现——工单形
+  态：渠道不思考**）
+- 不思考场景（S3/S5）出现思考信号 → FAIL（与官方 disabled 语义不
+  符）
+- 不思考场景正文为空 / finish_reason 为空 → FAIL（响应结构不完整）
+- 8 请求全部符合官方行为 → PASS
+
+**设计决策记录**：
+- **请求体自拟**（用户确认）：工单仅含参数形态比对表不含报文——
+  prompt/预算自拟，短 token 消耗（思考 512/不思考 64）
+- **S4 四档各一发**（用户确认）：文档括号枚举 low/medium/high/max
+  全覆盖，共 8 请求
+- **预期全按官方行为断言**（用户指定）：S1/S2 当前渠道预期 FAIL
+  ——缺陷复现用例（对齐后转 PASS）
+- **思考信号双通道**（K5 先例）：reasoning_content/reasoning 字段
+  文本 或 usage.reasoning_tokens——任一存在即计思考，兼容字段拼写
+- **P0**（用户确认 2026-11-11）：客户报障渠道与官方行为未对齐
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- marker：仅 `KimiK3`（K 套件按模型分组标记；工单模型 Kimi-K3）
+- 本用例为缺陷复现用例：修复部署前 S1/S2 预期 FAIL（渠道不思考形
+  态），思考开关对齐官方后转 PASS
 - 不进 smoke 集：新用例首跑观察期

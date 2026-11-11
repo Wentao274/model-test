@@ -1747,36 +1747,45 @@ TEST_CATEGORIES = {
             ),
             (
                 "K44",
-                "reasoning_effort=\"none\" 应被接受核验（对齐官方，"
+                "reasoning_effort=\"none\" 应被 400 拒绝核验（code "
+                "1210 硬断言；message 按官方文案对齐为警告观察，"
                 "chat 单协议）",
-                "客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 "
-                "#10）：相同请求 POST /v1/chat/completions（确认参数 "
+                "客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对"
+                "齐 #10，2026-11-11 复测修正）：相同请求 POST "
+                "/v1/chat/completions（确认参数 max_completion_"
+                "tokens=128 + reasoning_effort=\"none\"——标题与 "
+                "alayanew 错误文案双重佐证；原始消息 349,732 字符被截"
+                "断不可得，校验为参数校验层与消息内容无关），实测两侧"
+                "均 400（工单原记录「官方 200 接受」有误）：alayanew "
+                "返回 400 {\"code\": 1210, \"message\": "
+                "\"reasoning_effort 取值非法: none（glm-5.3 仅支持 "
+                "low / high / max）\"}（顶层 code/message 形态），智"
+                "谱官方返回 400 {\"error\": {\"code\": \"1210\", "
+                "\"message\": \"该模型始终思考，不支持关闭思考；请使"
+                "用 low、high 或 max。\"}}（嵌套 error 形态）——两侧"
+                "同拒，仅文案与结构不同。预期（用户指定 2026-11-11）："
+                "400 拒绝 + code==1210；message 按官方文案对齐为警告"
+                "观察（alayanew 文案与官方不一致时 warning 留证、不"
+                "致失败）。本用例单发非流式：请求体 = 工单确认参数 "
                 "max_completion_tokens=128 + reasoning_effort="
-                "\"none\"——标题与 alayanew 错误文案双重佐证；原始消"
-                "息 349,732 字符被截断不可得，缺陷为参数校验层与消息"
-                "内容无关），alayanew 返回 400 {\"code\": 1210, "
-                "\"message\": \"reasoning_effort 取值非法: none（glm-"
-                "5.3 仅支持 low / high / max）\"}，智谱官方返回 200"
-                "（finish=stop，正文非空，reasoning_content 非空 18 "
-                "tokens——官方接受 none 并正常生成）。预期（对齐官"
-                "方）：200 正常响应。本用例单发非流式：请求体 = 工单"
-                "确认参数 max_completion_tokens=128 + reasoning_"
-                "effort=\"none\" 原样 + 自拟最小 user 消息（工单消"
-                "息不可得且不影响缺陷路径）；模型名由环境注入；两侧工"
-                "单响应均非流式形态——stream 不传（不注入）。断言："
-                "1) HTTP 200（400=缺陷复现——1210「reasoning_effort "
-                "取值非法: none（glm-5.3 仅支持 low / high / max）」"
-                "文案留证）；2) 合法 JSON+choices 非空；3) finish_"
-                "reason 非空（对齐官方 stop 形态）；4) 正文非空。观察"
-                "（不计判据）：reasoning_content 存在性/reasoning_"
-                "tokens（官方 none 仍返回 18 reasoning tokens 的形态"
-                "留痕——none 语义为不声明思考努力档位，官方仍产出思"
-                "考）；400 时错误全文留证。超时沿用全局。chat 单协议"
-                "（缺陷为 chat 参数校验过度严格）。GLM-5.3 专用（工单"
-                "模型 glm-5.3）。无新增数据文件",
-                "reasoning_effort_none_accepted_agdc2_55",
+                "\"none\" 原样 + 自拟最小 user 消息（工单消息不可得"
+                "且不影响校验路径）；模型名由环境注入；两侧实测响应均"
+                "非流式形态——stream 不传（不注入）。断言：1) HTTP "
+                "400（200=none 被接受——与两侧实测预期不符，留证 "
+                "FAIL；500 等其他状态同样 FAIL）；2) 错误体合法 JSON "
+                "且 code==1210（顶层 code 与嵌套 error.code 兼容解"
+                "析，int/字符串兼容——两侧实测均为 1210）。观察（警告"
+                "不计判据）：message 对齐官方文案「该模型始终思考，不"
+                "支持关闭思考；请使用 low、high 或 max。」——一致时 "
+                "info 留痕；不一致（alayanew「reasoning_effort 取值非"
+                "法: none（glm-5.3 仅支持 low / high / max）」形态即"
+                "不一致）时 warning+record_warning 留证（实际/官方文"
+                "案对照），不致失败。超时沿用全局。chat 单协议（校验"
+                "为 chat 参数校验层）。GLM-5.3 专用（工单模型 "
+                "glm-5.3）。无新增数据文件",
+                "reasoning_effort_none_rejected_agdc2_55",
                 "P1",
-                "reasoning_effort=\"none\" 应对齐官方被接受（HTTP 200 正常响应），不得以取值非法 400 拒绝",
+                "reasoning_effort=\"none\" 应返回 400 拒绝且错误码 1210，message 文案与官方对齐情况仅警告观察不计判据",
             ),
             (
                 "K45",
@@ -1837,6 +1846,32 @@ TEST_CATEGORIES = {
                 "user_content_control_word_escape_agdc2_58",
                 "P0",
                 "用户正文含聊天模板特殊标记时应被正确转义/处理，不得被解析为模板指令而影响生成",
+            ),
+            (
+                "K47",
+                "Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、"
+                "disabled/effort+disabled 不思考、effort 四档应思考，"
+                "chat 单协议）",
+                "客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方"
+                "思考开关参数行为不一致——①不传思考参数：官方思考、渠道"
+                "不思考（缺陷）；②thinking={\"type\": \"enabled\"}：官方思"
+                "考、渠道被忽略不思考（缺陷）；③thinking={\"type\": "
+                "\"disabled\"}：双方不思考；④reasoning_effort（low/"
+                "medium/high/max）：双方思考（渠道唯一能开思考的方式）；"
+                "⑤reasoning_effort+thinking={\"type\": \"disabled\"}：双"
+                "方不思考。预期全按 Kimi 官方行为断言：思考场景（S1/S2/"
+                "S4 四档）断言 reasoning 信号存在（message.reasoning_"
+                "content/reasoning 非空 或 usage.reasoning_tokens>0），"
+                "不思考场景（S3/S5）断言 reasoning 字段空 且 reasoning_"
+                "tokens==0 且 content 非空、finish_reason 非空。请求体"
+                "自拟（工单仅含参数形态）：短算术 prompt，思考场景 max_"
+                "tokens=512、不思考场景 64，非流式 8 请求相邻 3s；模型"
+                "名环境注入；stream 不传；超时沿用全局。chat 单协议；仅"
+                "KimiK3（工单模型 Kimi-K3，思考开关契约为模型方行为）。"
+                "无新增数据文件",
+                "kimik3_thinking_switch_contract",
+                "P0",
+                "思考开关五种参数形态（不传/thinking enabled/thinking disabled/reasoning_effort 各档位/effort+disabled）应与官方模型行为一致：不传与 enabled 应回思考内容，disabled 与 effort+disabled 不应思考，各 effort 档位应思考",
             ),
         ],
     },
