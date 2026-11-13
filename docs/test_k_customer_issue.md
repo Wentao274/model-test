@@ -10,7 +10,7 @@
   不做任何"规范化"改写——保证复现的是客户遇到的确切请求形态。
 - **P0 为主，优先级经使用重要性重划（2026-11-11 用户确认）**：客户报障
   场景纳入回归验证——K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-  K36-K40、K42、K45-K47 为 P0 必测（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+  K36-K40、K42、K45-K48 为 P0 必测（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 - **修复后转为回归**：问题修复后用例保留，作为该场景的长期回归用例。
 - **参数豁免（test_k 整套件）**：所有 K 用例保持原始测试参数，不参与
   全局 `--sampling-params` 覆盖（`conftest.py` 模块级规则
@@ -93,6 +93,7 @@
 | K45 | responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议） | 客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求（glm-5.3、instructions="Answer concisely."、input 单 user 消息「Compute 47*89 step by step, then reply with just the number.」、max_output_tokens=1024、stream=false）响应 200 completed——思考已下发（output 含 type=="reasoning" 块，summary 为完整思考过程 ~3000 字符）、思考已计入 output_tokens（545 vs 可见正文 "4183" 仅 ~2 token——差值全为思考消耗），但 usage.output_tokens_details.reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客户最初另报「content 无思考块」，报文实证块在——缺陷收敛到计数口径） | 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言，相邻 3s）：请求体五字段工单原样，仅 model 环境注入（K43 先例）；断言1 HTTP 200+合法 JSON+output 数组存在；断言2 有思考内容（type=="reasoning" 块 summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type=="message" 块 output_text 非空——数值正误不定留证）；断言4 reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤output_tokens（K30 断言4 下界口径）；观察（不计判据）：正文全文、output_tokens 与可见正文差值（思考量旁证）、summary 长度、顶层 reasoning 回显、id 形态、error 字段；工单密钥不入库（鉴权走环境配置）；thinking/采样参数未带——不注入；非流式（stream=false 原样）；超时沿用全局；GLM-5.3 专用（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分支）；无新增数据文件 | P0 |
 | K46 | 用户正文含聊天模版控制词转义核验（  | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A  | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量  | P0 |
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_effort+disabled 双方不思考；reasoning_effort（low/medium/high/max）双方思考（渠道唯一开思考通路）——预期全按官方行为断言 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景）reasoning 空+reasoning_tokens==0+content 非空+finish_reason 非空；相邻 3s；超时沿用全局；model 环境注入；仅 Kimi-K3；无新增数据文件 | P0 |
+| K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——渠道未支持智谱官方参数（官方：每帧返回当前累计用量，prompt_tokens 恒定、completion/reasoning 逐帧累计；区别于 OpenAI include_usage 仅末帧 usage）——预期按官方行为断言 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage（缺失即缺陷复现）；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用；无新增数据文件 | P0 |
 
 
 ## 运行方式
@@ -3977,4 +3978,74 @@ stream 不传（比对不含流式语义）；超时沿用全局；相邻请求�
 - marker：仅 `KimiK3`（K 套件按模型分组标记；工单模型 Kimi-K3）
 - 本用例为缺陷复现用例：修复部署前 S1/S2 预期 FAIL（渠道不思考形
   态），思考开关对齐官方后转 PASS
+- 不进 smoke 集：新用例首跑观察期
+
+### test_stream_chunk_include_usage_agdc2_63 (K48)
+
+- **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_stream_chunk_include_usage_agdc2_63`
+- **优先级**：P0（用户确认 2026-11-13）
+- **marker**：`k_customer_issue` / `GLM53` / `p0`
+- **协议**：chat 单协议（chunk_include_usage 为 chat SSE 语义）
+- **来源**：工单 AGDC2-63（广西智算，请求信息见工单图片——官方 vs 渠道 SSE 帧形态对照）
+
+**背景**（工单 AGDC2-63，广西智算）：客户验证 glm-5.3 发现，chat 接口
+流式请求设置 stream_options.chunk_include_usage=true 后，SSE 响应帧的
+中间每一条 event 都没有累计 usage 数据。chunk_include_usage 为智谱官
+方参数：设置后每一帧返回当前累计用量（区别于 OpenAI include_usage
+仅末帧返回 usage）。
+
+官方证据（工单图片）：同请求官方 SSE 每帧携带
+"usage":{"prompt_tokens":23,"completion_tokens":N,"total_tokens":23+N,
+"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":
+{"reasoning_tokens":M}}——completion/reasoning tokens 逐帧累计
+（1,2,3,4,5,7…11）；渠道（staging）实测中间帧仅 choices/created/id/
+model/object，完全无 usage 字段——缺陷。预期按官方行为断言（当前渠
+道预期 FAIL——缺陷复现）。
+
+**请求构造**：单发流式，请求体工单原样（两图一致，8 字段，仅 model 由
+环境注入）：messages=[{"role": "user", "content": "9.8和9.11，哪个更
+大？"}]、reasoning_effort="max"、temperature=1、top_p=0.95、thinking=
+{"type": "enabled"}、stream=true、stream_options={"chunk_include_
+usage": true}；max_tokens 未含——不注入（test_k 保持原始测试参数）；
+temperature/top_p 工单原值原样保留（套件豁免全局采样覆盖）；超时沿用
+全局。
+
+**断言**：
+1. 断言1：HTTP 200 + SSE 数据帧非空 + [DONE] 收到
+2. 断言2（核心）：含 delta 内容（role/content/reasoning_content/
+   tool_calls）的每个数据帧必带 usage 字典——缺失即缺陷复现
+3. 断言3：usage.prompt_tokens/completion_tokens/total_tokens 均为非
+   负整数，且 completion_tokens 单调不减（累计语义）
+4. 断言4：正常终止——finish_reason 非空
+
+**观察记录**（不计判据，留日志）：finish 帧 usage 有无、usage-only 帧
+（choices 空，OpenAI include_usage 形态）有无、completion_tokens 序列
+首尾、帧数、elapsed、帧原文（断言失败时）。
+
+**判定矩阵**：
+- HTTP 非 200 / SSE 无数据帧 / 数据帧非法 JSON → FAIL（请求/响应层异常）
+- 任一含 delta 内容的数据帧未携带 usage → FAIL（**缺陷复现——工单形
+  态：中间帧无累计 usage**）
+- usage 三项 tokens 非非负整数 / completion_tokens 序列非单调不减 →
+  FAIL（累计语义破坏）
+- 未收到 [DONE] 或 finish_reason 为空 → FAIL（流未正常终止）
+- 全部符合官方行为 → PASS
+
+**设计决策记录**：
+- **请求体工单原样**（K 类惯例）：8 字段原值仅 model 环境注入；
+  max_tokens 未含不注入——不注入未提供参数（test_k 独立性规则）
+- **单发**（K41/K43 先例）：参数支持为确定性协议行为，无需连发
+- **按官方行为断言**：当前渠道预期 FAIL——缺陷复现用例（修复后转
+  PASS）；断言对象为「含 delta 内容的帧」——finish 帧 usage 有无官
+  方证据未覆盖，留观察不硬绑
+- **单调不减而非严格递增**（稳健口径）：官方示例逐帧 +1，但完成帧等
+  特殊帧可能不增量——非减即满足累计语义
+- **P0**（用户确认 2026-11-13）：客户报障渠道缺失官方参数支持
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- marker：仅 `GLM53`（K 套件按模型分组标记；工单模型 glm-5.3）
+- chunk_include_usage（智谱，每帧累计）≠ include_usage（OpenAI，末帧
+  usage）——本用例仅覆盖前者
+- 本用例为缺陷复现用例：修复部署前预期 FAIL，支持后转 PASS
 - 不进 smoke 集：新用例首跑观察期

@@ -4,7 +4,7 @@
 
 ---
 
-## 一、测试点总览（9 大类 × 133 个测试点）
+## 一、测试点总览（9 大类 × 134 个测试点）
 
 ### 分类概览
 
@@ -18,7 +18,7 @@
 | F. API 兼容性   | 7    | OpenAI 兼容（含 /v1/responses 新一代接口）、参数一致性     |
 | G. Chat Completions API 质量评估与回答相关性 | 13   | ChatCompletions API 生成质量、一致性、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | 11   | 多轮对话下历史思考的清除/保留、与 enable_thinking 的正交组合、reasoning_content 字段、多 assistant 边界、默认行为、行为级验证、last_user 边界、deployment 能力探测 |
-| K. 反馈问题验证 | 47   | 线上测试反馈的相关模型使用问题 |
+| K. 反馈问题验证 | 48   | 线上测试反馈的相关模型使用问题 |
 
 ---
 
@@ -180,7 +180,7 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | H10  | clear_thinking 行为级验证 | follow-up 依赖历史思考内容（而非最终答案），验证模型是否真的"看到"历史 thinking | clear=false 应命中思考关键词、true 不命中（软断言）；两者均命中/均不命中则 record_warning | P2  |
 | H11  | last_user 之后 assistant 思考保留边界 | 验证模版 loop.index0 > last_user_index 的"保留"分支（H8 只覆盖"剥除"分支） | user1→assistant1→user2→assistant2，assistant2 在 last_user 之后应保留思考；对比 prompt_tokens | P2  |
 
-### K. 反馈问题验证（47 项）
+### K. 反馈问题验证（48 项）
 
 收录客户反馈的真实问题，按客户原始请求（curl）逐字段原样复现。全部 P0：客户报障
 场景纳入每次回归的必验范围；修复后保留为长期回归用例。
@@ -234,13 +234,14 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K45 | responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议） | responses 端点思考已下发时 usage.output_tokens_details.reasoning_tokens 必须如实上报（不得恒 0 或缺失） | 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言，相邻 3s）：请求体五字段工单原样，仅 model 环境注入（K43 先例）；断言1 HTTP 200+合法 JSON+output 数组存在；断言2 有思考内容（type=="reasoning" 块 summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type=="message" 块 output_text 非空——数值正误不定留证）；断言4 reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤output_tokens（K30 断言4 下界口径）；观察（不计判据）：正文全文、output_tokens 与可见正文差值（思考量旁证）、summary 长度、顶层 reasoning 回显、id 形态、error 字段；工单密钥不入库（鉴权走环境配置）；thinking/采样参数未带——不注入；非流式（stream=false 原样）；超时沿用全局；GLM-5.3 专用（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分支）；无新增数据文件 | P0  |
 | K46 | 用户正文含聊天模版控制词转义核验（  | 用户正文含聊天模板特殊标记时应被正确转义/处理，不得被解析为模板指令而影响生成 | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量  | P0  |
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 思考开关五种参数形态应与 Kimi-K3 官方行为一致：不传与 thinking={"type": "enabled"} 应回思考，thinking={"type": "disabled"} 与 effort+disabled 不应思考，reasoning_effort（low/medium/high/max）应思考 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考场景 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景 S1/S2/S4×4）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景 S3/S5）reasoning 空+reasoning_tokens==0+content 非空+finish 非空；相邻 3s；超时沿用全局；model 环境注入；仅 KimiK3 | P0  |
+| K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 流式请求设置 stream_options.chunk_include_usage=true 后，SSE 各数据帧应携带累计 usage（prompt/completion/total tokens 及 details），中间帧缺失 usage 即未支持该智谱官方参数 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage——缺失即缺陷复现；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减（累计语义）；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用 | P0  |
 
 
 ---
 
 ## 三、测试执行优先级建议
 
-### P0（上线必测，59 项）
+### P0（上线必测，60 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -252,10 +253,10 @@ E1, E4           稳定性 2 项（E1 空输入、E4 特殊字符注入；E2/E3/
 F1, F3, F4, F6, F7   API 兼容 5 项（F3 模型列表升至 P0，F7 Responses API 新增）
 G1, G4, G5, G6, G7, G8, G9, G12  Chat Completions API 质量评估 8 项（G2 降为 P1，G8 升至 P0）
                      clear_thinking 参数行为 0 项（H 类全部降为 P1/P2，仅做选测）
-K1-K3, K5-K7, K10-K14, K16, K18, K20, K22-K25, K27-K29, K36-K40, K42, K45-K47  反馈问题验证 30 项（均 P0，客户报障必测；经使用重要性重划，2026-11-11 用户确认）
+K1-K3, K5-K7, K10-K14, K16, K18, K20, K22-K25, K27-K29, K36-K40, K42, K45-K48  反馈问题验证 31 项（均 P0，客户报障必测；经使用重要性重划，2026-11-11 用户确认）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 30 = 59 项。
+总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 31 = 60 项。
 
 K46（AGDC2-58 · 杭州永沐科技，P0，仅 GLM53FLASH）用户正文含聊天
 模版控制词转义核验——消息正文含 <think*>B</think*> 字面量（期望输

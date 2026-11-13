@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 133 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 134 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -33,9 +33,9 @@
 | F. API 兼容性 | `f_api` | 7 | OpenAI 接口兼容（Chat/Completions/Models/SDK/错误码，含 /v1/responses 新一代接口） |
 | G. Chat Completions API 质量评估 | `g_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | `h_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
-| K. 反馈问题验证 | `k_customer_issue` | 47 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、required 强制调用工具对齐官方、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（chat [0, 2] 含端点/msg [0, 1] 双协议）、top_logprobs 放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（stop 语义——流式/多段/结构化 × chat/msg 双协议）、n=2 请求 400 拒绝且不挂死核验（30s 硬超时 + 提示信息）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）、跨协议 thinking 链路核验（msg 端点思考 block 稳定+OpenAI 体混用留证，msg 单协议）、stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议）、Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议）、responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议）、reasoning_effort="none" 应被 400 拒绝核验（code 1210，message 对齐情况警告观察，chat 单协议）、responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议）、用户正文含聊天模版控制词转义核验（chat 单协议）、Kimi-K3 思考开关参数对齐官方核验（不传与 thinking enabled 应思考、disabled 与 effort+disabled 不思考、reasoning_effort 四档应思考，chat 单协议）），P0 为主持续追加 |
+| K. 反馈问题验证 | `k_customer_issue` | 48 | 客户报障场景原样复现（Pydantic $defs/$ref Schema 工具调用、同一请求循环执行5次、Anthropic 协议 prompt cache、frequency_penalty 防御性钳制、thinking 关闭、关思考温度档、思考强度档位思考长度、required 强制工具调用、required 强制调用工具对齐官方、tool_choice 四种模式、response_format 三种模式、reasoning_effort 档位（顶层/嵌套）、stop 序列截断正文前置多余字符、孤儿 tool 消息 400 拒绝、短输入缓存阈值、固定前缀/多轮缓存命中率达标、推理换行停止符生效、输出 JSON 回填上下文、图片数超限拒绝、1M 上下文支持、system 消息内嵌 tools 非标结构接受、双协议前缀缓存命中率一致、孤儿 tool 消息对齐官方放行、双请求正常响应（思考耗光 low 强度回退）、assistant 历史重复 reasoning_content 兼容接受、工具 schema 负向前瞻正则兼容放行、历史非法 JSON arguments 容忍与模型自我纠正、输出字段核验（尾裸标记/字段回流/工具参数完整性）、双协议零增量响应与工具调用核验、/v1/responses 校验码输出与 token 计数核验、json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议）、temperature 区间放行与越界校验（chat [0, 2] 含端点/msg [0, 1] 双协议）、top_logprobs 放行核验（未开 logprobs 也接受，chat+msg 双协议）、多模态拒绝核验（静默丢弃 200 → 400 明确拒绝，chat+msg 双协议）、关闭思考双路径拒绝核验（chat/msg 双协议）、finish_reason 判定对齐官方核验（stop 语义——流式/多段/结构化 × chat/msg 双协议）、n=2 请求 400 拒绝且不挂死核验（30s 硬超时 + 提示信息）、max_completion_tokens 别名单 token 请求不挂起核验（与 tokens 主路径同延迟水平，chat 单协议）、历史消息 reasoning/reasoning_content 双字段共存兼容核验（同值/异值 × 字段序，chat 单协议）、跨协议 thinking 链路核验（msg 端点思考 block 稳定+OpenAI 体混用留证，msg 单协议）、stop 空数组应正常响应核验（400 拒绝缺陷，chat 单协议）、Kimi-K3 工具调用长参数流式停流核验（间隔<30s+正常终止，chat 单协议）、responses 端点空 input 400 拒绝核验（对齐官方，responses 单协议）、reasoning_effort="none" 应被 400 拒绝核验（code 1210，message 对齐情况警告观察，chat 单协议）、responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议）、用户正文含聊天模版控制词转义核验（chat 单协议）、Kimi-K3 思考开关参数对齐官方核验（不传与 thinking enabled 应思考、disabled 与 effort+disabled 不思考、reasoning_effort 四档应思考，chat 单协议）、chunk_include_usage 中间帧累计 usage 核验（chat 单协议）），P0 为主持续追加 |
 
-> 总计：133 个测试点（P0: 59 / P1: 57 / P2: 17）
+> 总计：134 个测试点（P0: 60 / P1: 57 / P2: 17）
 
 ---
 

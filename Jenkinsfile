@@ -205,7 +205,8 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_reasoning_effort_none_rejected_agdc2_55',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_reasoning_tokens_counted',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_user_content_control_word_escape_agdc2_58',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_thinking_switch_contract'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_thinking_switch_contract',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stream_chunk_include_usage_agdc2_63'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')

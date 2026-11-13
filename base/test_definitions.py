@@ -1873,6 +1873,30 @@ TEST_CATEGORIES = {
                 "P0",
                 "思考开关五种参数形态（不传/thinking enabled/thinking disabled/reasoning_effort 各档位/effort+disabled）应与官方模型行为一致：不传与 enabled 应回思考内容，disabled 与 effort+disabled 不应思考，各 effort 档位应思考",
             ),
+            (
+                "K48",
+                "chunk_include_usage 中间帧累计 usage 核验（chat 单协议）",
+                "客户问题（工单 AGDC2-63，广西智算）：chat 接口流式请求设置 "
+                "stream_options.chunk_include_usage=true 后，SSE 中间数据帧没有累计 "
+                "usage——渠道未支持该智谱官方参数（官方语义：每一帧返回当前累计用量；"
+                "区别于 OpenAI include_usage 仅末帧 usage）。官方证据：同请求官方 SSE "
+                "每帧携带 usage（prompt_tokens 恒定、completion_tokens/reasoning_"
+                "tokens 逐帧累计）；渠道实测中间帧仅 choices/created/id/model/object "
+                "无 usage。预期按官方行为断言（当前渠道预期 FAIL——缺陷复现）：含 "
+                "delta 内容（role/content/reasoning_content/tool_calls）的每个数据帧"
+                "必带 usage 字典，usage.prompt_tokens/completion_tokens/total_tokens "
+                "均为非负整数且 completion_tokens 单调不减（累计语义），finish_reason "
+                "非空+[DONE] 收到。请求体工单原样（仅 model 环境注入）：messages="
+                "[user \"9.8和9.11，哪个更大？\"]、reasoning_effort=max、temperature=1、"
+                "top_p=0.95、thinking={\"type\": \"enabled\"}、stream=true、stream_"
+                "options={\"chunk_include_usage\": true}；max_tokens 未含——不注入；"
+                "采样参数工单原值原样保留（test_k 豁免全局覆盖）；单发流式；超时沿用全"
+                "局。chat 单协议（chunk_include_usage 为 chat SSE 语义）；仅 GLM-5.3"
+                "（工单模型 glm-5.3，缺陷为接口参数支持缺失）。无新增数据文件",
+                "stream_chunk_include_usage_agdc2_63",
+                "P0",
+                "流式请求设置 stream_options.chunk_include_usage=true 后，SSE 各数据帧应携带累计 usage（prompt/completion/total tokens），中间帧缺失 usage 即未支持该参数",
+            ),
         ],
     },
 }

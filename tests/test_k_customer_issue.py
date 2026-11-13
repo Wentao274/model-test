@@ -4,7 +4,7 @@ K. 反馈问题验证测试
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
 2026-11-11）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45-K47 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+K36-K40、K42、K45-K48 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -1091,6 +1091,18 @@ K36-K40、K42、K45-K47 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   术 prompt，思考场景 max_tokens=512、不思考场景 64，非流式 8 请求
   相邻 3s。仅 Kimi-K3（思考开关契约为模型方行为）。无新增数据文
   件。（不进 smoke 集：新用例首跑观察期；8 请求）
+- K48: chunk_include_usage 中间帧累计 usage 核验（chat 单协议） [P0]
+  客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_
+  options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——
+  渠道未支持该智谱官方参数（官方：每帧返回当前累计用量，区别于
+  OpenAI include_usage 仅末帧 usage）。预期按官方行为断言（当前
+  渠道预期 FAIL——缺陷复现）：含 delta 内容（role/content/
+  reasoning_content/tool_calls）的每个数据帧必带 usage，三项
+  tokens 非负整数且 completion_tokens 单调不减（累计语义），
+  finish_reason 非空+[DONE] 收到。请求体工单原样（仅 model 环境
+  注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注
+  入）；单发；chat 单协议。仅 GLM-5.3。无新增数据文件。（不进
+  smoke 集：新用例首跑观察期；1 请求）
 """
 
 import base64
@@ -14274,4 +14286,189 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "客户问题整改验证通过: Kimi-K3 思考开关 8 请求全部对齐官方"
             "行为（不传/enabled/effort 四档回思考，disabled/effort+"
             "disabled 不思考），思考开关参数行为差异缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.GLM53
+    @pytest.mark.p0
+    def test_stream_chunk_include_usage_agdc2_63(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K48 [P0]: 客户问题 - chunk_include_usage 中间帧累计 usage 核验
+        （chat 单协议）
+
+        客户问题（工单 AGDC2-63，广西智算）：chat 接口流式请求设置
+        stream_options.chunk_include_usage=true 后，SSE 中间数据帧
+        没有累计 usage——渠道未支持该智谱官方参数（官方语义：每一
+        帧返回当前累计用量；区别于 OpenAI include_usage 仅末帧
+        usage）。官方证据：同请求官方 SSE 每帧携带 usage
+        （prompt_tokens 恒定、completion_tokens/reasoning_tokens
+        逐帧累计）；渠道实测中间帧仅 choices/created/id/model/
+        object 无 usage。预期按官方行为断言（当前渠道预期 FAIL——
+        缺陷复现）。
+        请求体工单原样（仅 model 环境注入）：messages=[user
+        "9.8和9.11，哪个更大？"]、reasoning_effort=max、
+        temperature=1、top_p=0.95、thinking={"type": "enabled"}、
+        stream=true、stream_options={"chunk_include_usage": true}；
+        max_tokens 未含——不注入；采样参数工单原值原样保留
+        （test_k 豁免全局覆盖）。
+        判定：
+        1. 断言1 HTTP 200+SSE 数据帧非空+[DONE] 收到
+        2. 断言2（核心）含 delta 内容（role/content/reasoning_
+           content/tool_calls）的每个数据帧必带 usage 字典——缺
+           失即缺陷复现
+        3. 断言3 usage.prompt_tokens/completion_tokens/total_
+           tokens 均为非负整数，且 completion_tokens 单调不减
+           （累计语义）
+        4. 断言4 正常终止：finish_reason 非空
+        观察（不计判据）：finish 帧 usage 有无、usage-only 帧
+        （choices 空）有无、completion_tokens 序列首尾、帧数/
+        elapsed；超时沿用全局。chat 单协议（chunk_include_usage
+        为 chat SSE 语义）。仅 GLM53（工单模型 glm-5.3，缺陷为
+        接口参数支持缺失）。无新增数据文件。（不进 smoke 集：新
+        用例首跑观察期；1 请求）
+        """
+        # K48: 请求体工单原样（仅 model 环境注入）——8 字段全原值
+        payload = {
+            "messages": [
+                {"role": "user", "content": "9.8和9.11，哪个更大？"}
+            ],
+            "model": api_client.model_name,
+            "reasoning_effort": "max",
+            "temperature": 1,
+            "top_p": 0.95,
+            "thinking": {"type": "enabled"},
+            "stream": True,
+            "stream_options": {"chunk_include_usage": True},
+        }
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - chunk_include_usage 中间帧累计"
+            " usage 核验（工单 AGDC2-63：渠道中间帧无 usage——官方"
+            "每帧返回当前累计用量；请求体工单原样仅 model 环境注入"
+            "，单发流式）==="
+        )
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        start_time = time.time()
+        response = api_client._post_with_retry(
+            chat_url, payload, stream=True
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+
+        # 断言1（前半）：HTTP 200——chunk_include_usage 应为可接受参数
+        assert status == 200, (
+            f"HTTP {status}（预期 200 正常响应——参数应被接受），"
+            f"elapsed={elapsed:.1f}s, 响应体全文: {response.text}"
+        )
+
+        # K48: 解析 SSE 数据帧（[DONE] 单独计数）
+        frames = []
+        done_received = False
+        for raw_line in response.iter_lines():
+            if not raw_line:
+                continue
+            line = (
+                raw_line.decode("utf-8")
+                if isinstance(raw_line, bytes)
+                else raw_line
+            ).strip()
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].strip()
+            if data_str == "[DONE]":
+                done_received = True
+                continue
+            try:
+                frame = json.loads(data_str)
+            except ValueError as e:
+                raise AssertionError(
+                    f"SSE 数据帧非合法 JSON: {e}, 原始行: {data_str}"
+                )
+            frames.append((data_str, frame))
+
+        # 断言1（后半）：数据帧非空 + [DONE] 收到
+        assert frames, (
+            f"SSE 无数据帧（HTTP {status}，elapsed={elapsed:.1f}s）"
+        )
+        assert done_received, "未收到 [DONE] 结束标记"
+
+        # K48: 帧分类——含 delta 内容帧 / usage-only 帧 / finish 帧
+        delta_frames = []
+        usage_only_count = 0
+        finish_frames = []
+        for idx, (data_str, frame) in enumerate(frames, 1):
+            choices = frame.get("choices") or []
+            if not choices:
+                usage_only_count += 1
+                continue
+            choice0 = choices[0] or {}
+            delta = choice0.get("delta") or {}
+            if choice0.get("finish_reason"):
+                finish_frames.append((idx, data_str, frame))
+            if any(
+                delta.get(k)
+                for k in (
+                    "role", "content", "reasoning_content", "tool_calls"
+                )
+            ):
+                delta_frames.append((idx, data_str, frame))
+
+        assert delta_frames, (
+            f"无含 delta 内容的数据帧（总帧数 {len(frames)}）"
+        )
+
+        # 断言2（核心）：含 delta 内容的每个数据帧必带 usage 字典
+        missing = [
+            (idx, data_str)
+            for idx, data_str, frame in delta_frames
+            if not isinstance(frame.get("usage"), dict)
+        ]
+        assert not missing, (
+            f"缺陷复现: {len(missing)}/{len(delta_frames)} 个含 delta"
+            f" 内容的数据帧未携带 usage（官方 chunk_include_usage=true"
+            f" 语义：每一帧返回当前累计用量），首个缺失帧 "
+            f"#{missing[0][0]}: {missing[0][1]}"
+        )
+
+        # 断言3：usage 三项 tokens 非负整数 + completion_tokens 单调不减
+        seq = []
+        for idx, data_str, frame in delta_frames:
+            usage = frame["usage"]
+            for key in ("prompt_tokens", "completion_tokens",
+                        "total_tokens"):
+                value = usage.get(key)
+                assert isinstance(value, int) and value >= 0, (
+                    f"帧 #{idx} usage.{key} 非非负整数: {value!r}, "
+                    f"帧原文: {data_str}"
+                )
+            seq.append(usage["completion_tokens"])
+        assert all(b >= a for a, b in zip(seq, seq[1:])), (
+            f"completion_tokens 非单调不减（累计语义破坏）: {seq}"
+        )
+
+        # 断言4：正常终止——finish_reason 非空
+        finish_reasons = [
+            (f["choices"][0] or {}).get("finish_reason")
+            for _, _, f in finish_frames
+        ]
+        assert finish_reasons, (
+            f"未收到 finish_reason（总帧数 {len(frames)}，done="
+            f"{done_received}）"
+        )
+
+        test_logger.info(
+            f"K48 帧统计: 总数据帧 {len(frames)}（含 delta 内容帧 "
+            f"{len(delta_frames)}、usage-only 帧 {usage_only_count}、"
+            f"finish 帧 {len(finish_frames)}），completion_tokens 序"
+            f"列首尾 {seq[0]}→{seq[-1]}（共 {len(seq)} 帧），finish_"
+            f"reason={finish_reasons!r}，[DONE] 收到，elapsed="
+            f"{elapsed:.1f}s"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: chunk_include_usage=true 时含 delta"
+            " 内容的每个数据帧均携带累计 usage（三项 tokens 非负、"
+            "completion_tokens 单调不减），中间帧缺失 usage 缺陷未"
+            "复现"
         )
