@@ -9,6 +9,7 @@ def selectedMarkerList() {
         ['MARKER_G_QUALITY_CHAT_COMPLETIONS', 'g_quality_chat_completions'],
         ['MARKER_H_CLEAR_THINKING', 'h_clear_thinking'],
         ['MARKER_K_CUSTOMER_ISSUE', 'k_customer_issue'],
+        ['MARKER_LEXIN_AGDC2_65', 'lexin_agdc2_65'],
         ['MARKER_GLM52', 'GLM52'],
         ['MARKER_GLM53', 'GLM53'],
         ['MARKER_KIMIK3', 'KimiK3'],
@@ -31,7 +32,7 @@ def selectedMarkerList() {
 def markerDisplayText() {
     def selected = selectedMarkerList()
     if (params.MARKER_ALL || selected.isEmpty()) {
-        return 'all (全部测试)'
+        return 'all (全部测试，不含 L 类 lexin_agdc2_65)'
     }
     return selected.join(', ')
 }
@@ -51,8 +52,8 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K46，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
-        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略）')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K46，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65——L 类仅勾选 MARKER_LEXIN_AGDC2_65 或 SPECIFIC_TEST 点名时执行）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
         booleanParam(name: 'MARKER_C_MULTIMODAL', defaultValue: false, description: 'C类测试 - 多模态能力')
@@ -62,6 +63,7 @@ pipeline {
         booleanParam(name: 'MARKER_G_QUALITY_CHAT_COMPLETIONS', defaultValue: false, description: 'G类测试 - Chat Completions API质量评估')
         booleanParam(name: 'MARKER_H_CLEAR_THINKING', defaultValue: false, description: 'H类测试 - clear_thinking 参数行为')
         booleanParam(name: 'MARKER_K_CUSTOMER_ISSUE', defaultValue: false, description: 'K类测试 - 反馈问题验证')
+        booleanParam(name: 'MARKER_LEXIN_AGDC2_65', defaultValue: false, description: 'L类测试 - 河南乐信工单 AGDC2-62/65 glm-5.3 客户卷子 72 用例复现')
         booleanParam(name: 'MARKER_GLM52', defaultValue: false, description: 'GLM-5.2 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_GLM53', defaultValue: false, description: 'GLM-5.3 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_KIMIK3', defaultValue: false, description: 'Kimi K3 模型缺陷相关用例（K套件按模型分组标记）')
@@ -206,7 +208,79 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_responses_reasoning_tokens_counted',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_user_content_control_word_escape_agdc2_58',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_thinking_switch_contract',
-            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stream_chunk_include_usage_agdc2_63'
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_stream_chunk_include_usage_agdc2_63',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_01_chat_logic_basic',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_02_chat_logic_multi_turn',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_03_chat_retry_on_hit',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_04_chat_thinking_control',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_05_chat_json_format',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_06_chat_stop_param',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_07_chat_sampling_params',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_08_chat_tool_call',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_09_chat_output_token',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_10_cuoti_5',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_11_cuoti_13',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_12_cuoti_29',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_13_cuoti_30',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_14_cuoti_31',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_15_cuoti_32',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_18_cuoti_43',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_19_cuoti_44',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_20_cuoti_45',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_21_cuoti_46',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_22_cuoti_47',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_23_cuoti_48',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_24_cuoti_49',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_25_cuoti_50',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_26_cuoti_51',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_27_cuoti_52',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_28_cuoti_53',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_29_cuoti_54',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_30_cuoti_55',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_31_cuoti_56',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_32_cuoti_57',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_33_cuoti_58',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_34_cuoti_59',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_35_cuoti_60',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_36_cuoti_61',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_37_cuoti_62',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_38_cuoti_63',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_39_cuoti_64',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_40_cuoti_65',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_41_cuoti_66',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_42_cuoti_67',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_43_cuoti_68',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_44_cuoti_69',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_45_cuoti_70',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_46_cuoti_71',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_47_cuoti_72',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_48_cuoti_74',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_49_cuoti_75',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_50_cuoti_76',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_51_cuoti_77',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_52_cuoti_78',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_53_cuoti_79',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_54_cuoti_80',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_55_cuoti_81',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_56_cuoti_83',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_57_cuoti_84',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_58_cuoti_85',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_59_cuoti_86',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_60_cuoti_87',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_61_cuoti_88',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_62_cuoti_89',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_63_cuoti_90',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_64_cuoti_91',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_65_cuoti_92',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_66_cuoti_93',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_67_cuoti_10',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_68_cuoti_11',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_69_cuoti_49_1',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_70_cuoti_50_1',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_71_cuoti_51_1',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_72_cuoti_52_1',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_73_cuoti_53_1',
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_74_cuoti_54_1'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
@@ -291,7 +365,7 @@ ENDSSH"""
                     def samplingParamsValue = params.SAMPLING_PARAMS ? params.SAMPLING_PARAMS.toString().trim() : ''
                     def samplingParamsFlag = samplingParamsValue ? "--sampling-params '${samplingParamsValue}'" : ''
                     def selectedMarkers = selectedMarkerList()
-                    def markerFlag = (params.MARKER_ALL || selectedMarkers.isEmpty()) ? '' : "-m '${selectedMarkers.join(' or ')}'"
+                    def markerFlag = (params.MARKER_ALL || selectedMarkers.isEmpty()) ? "-m 'not lexin_agdc2_65'" : "-m '${selectedMarkers.join(' or ')}'"
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                             sh """

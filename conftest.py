@@ -76,7 +76,10 @@ RAW_SAMPLING_PARAM_TESTS = {
 # K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本
 # temperature=0、K24 temperature=0.0），其余未含参数的用例一律不注入
 # （无全局注入口）。新增 K 用例自动适用本规则，无需登记。
-RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py"}
+# 河南乐信 L 套件（test_lexin_agdc2_65.py）同样整模块豁免（用户口径
+# 2026-11-13）：run-432「测试结果报文详情」全量导出的请求体原样发送
+# （官方基准复现），不注入采样参数；新增 L 用例自动适用。
+RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py", "test_lexin_agdc2_65.py"}
 
 
 def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
@@ -645,6 +648,20 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.h_clear_thinking)
         elif "test_k_customer_" in item.nodeid:
             item.add_marker(pytest.mark.k_customer_issue)
+        elif "test_lexin_" in item.nodeid:
+            item.add_marker(pytest.mark.lexin_agdc2_65)
+
+    # L 套件（test_lexin_agdc2_65）默认排除口径（用户指定 2026-11-13，
+    # 与 Jenkinsfile MARKER_ALL 排除互为双保险）：无显式点名时不收集
+    # L 用例——仅当 -m 表达式含 lexin_agdc2_65 或命令行显式指定该
+    # 文件/节点时收集（Jenkins 勾选 MARKER_LEXIN_AGDC2_65、
+    # SPECIFIC_TEST 点名、本地 -m lexin_agdc2_65/指定路径均属显式）。
+    markexpr = getattr(config.option, "markexpr", "") or ""
+    lexin_explicit = "lexin_agdc2_65" in markexpr or any(
+        "test_lexin_agdc2_65" in str(a) for a in (config.args or [])
+    )
+    if not lexin_explicit:
+        items[:] = [i for i in items if "test_lexin_agdc2_65" not in i.nodeid]
 
 
 def pytest_configure(config):
@@ -669,6 +686,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "k_customer_issue: K类测试 - 反馈问题验证",
+    )
+    config.addinivalue_line(
+        "markers",
+        "lexin_agdc2_65: L类测试 - 河南乐信工单 AGDC2-62/65 glm-5.3 客户卷子 72 用例复现",
     )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
