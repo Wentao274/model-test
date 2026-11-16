@@ -735,12 +735,19 @@ K36-K40、K42、K45-K48 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   一生成 MP4——判定在类型层）；max_tokens=1024 工单原值（10
   发同值镜像，豁免注入）；请求体不含 stream 字段（工单原始格
   式，两协议默认非流式）；thinking/采样参数未含——不注入；
-  相邻间隔 3s。硬断言每发：HTTP 400（200=静默丢弃缺陷复现
-  ——A-01 形态（prompt_tokens 仅 17-43+正文自述未收到）留
-  证）+ 错误体含对应媒体类型关键词（中英任一命中：document/
-  文档/pdf、audio/音频/语音、video/视频——20261104 实测整改
-  错误体为中文，双语匹配（用户指定）；排除通用『模型服务调
-  用失败』缺陷形态）；'text' 痕迹留观察。GLM-5.3 专用。（不
+  相邻间隔 3s。官方实测基线（2026-11-16 双端 curl 比对，用
+  户确认）：官方 msg audio×base64 → 200（媒体块剥离纯文本
+  作答，input_tokens=21）、chat input_audio → 400（通用
+  1210 文案），渠道同形态——audio 轮基线由「必须 400」修正
+  为对齐官方实测。硬断言：document/video 8 发 HTTP 400（200=
+  静默丢弃缺陷复现——A-01 形态（prompt_tokens 仅 17-43+正
+  文自述未收到）留证）+ 错误体含对应媒体类型关键词（中英任
+  一命中：document/文档/pdf、video/视频——20261104 实测整
+  改错误体为中文，双语匹配（用户指定）；排除通用『模型服务
+  调用失败』缺陷形态）；audio 2 发——msg 200/400 均 PASS
+  （200=对齐官方实测、400=达客户整改要求）、chat 应 400，
+  响应 message 先不进行断言（用户指定 2026-11-16）body 留
+  观察日志；'text' 痕迹留观察。GLM-5.3 专用。（不
   进 smoke 集：新用例首跑观察期）
 - K35: 关闭思考应按原厂 400 拒绝（enable_thinking=false 与
   thinking.type=disabled 双路径，chat+msg 双协议） [P1]
@@ -10624,6 +10631,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
           URL 载体（http/https 媒体链接）同样必须返回 400，
           不得自行抓取、转文字或降级为纯文本；另外 chat 协议
           也应该相同的处理
+        - 官方实测基线（2026-11-16 双端 curl 比对，用户确认）：
+          智谱官方 open.bigmodel.cn msg 协议 audio×base64 →
+          HTTP 200（媒体块被剥离后纯文本作答，input_tokens=
+          21，正文自述未收到音频）；chat 协议 input_audio →
+          HTTP 400（error 1210「API 调用参数有误」——通用文
+          案不含媒体类型关键词）；渠道 staging 同形态（msg
+          200 / chat 400）——audio 轮基线由工单「必须 400」
+          修正为对齐官方实测 code
         本用例双协议各 5 发共 10 发（用户指定：message 协议和
         chat 协议都要 5 轮请求）：msg 侧 5 发请求参数与类型依
         客户原始请求依序（工单证据 A-01 全 msg——缺陷复现
@@ -10655,20 +10670,32 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         式，两协议默认均非流式）；模型名由环境注入；thinking/
         采样参数工单未含——不传（不注入）；相邻间隔 3s。
         硬断言（每发，任一失败即 FAIL 并报告轮标签）：
-        1. HTTP 400（200=媒体被静默丢弃后纯文本作答——工单
-           A-01 缺陷形态（prompt_tokens 仅 17-43+正文自述未
-           收到），留 body 全文证；2xx 同判；500 等=非合规拒
-           绝）
-        2. 错误体指明该发媒体类型——对应关键词中英任一命中
-           （document/文档/pdf、audio/音频/语音、video/视频；
-           大小写不敏感——20261104 Jenkins 实测整改错误体为
-           中文「该模型不支持图片输入」，原纯英文关键词口径
-           误判，扩展中英双语匹配（用户指定）；排除通用「模
-           型服务调用失败」upstream_error 不含任何媒体类型的
-           缺陷形态）
-        观察记录（不计判据，留日志）：错误体是否含 "text"（官
-        方行为口径——取值范围 ['text'] 痕迹）、完整错误体留
-        痕。GLM-5.3 专用。（不进 smoke 集：新用例首跑观察期）
+        1. document/video 轮（8 发）：HTTP 400（200=媒体被静
+           默丢弃后纯文本作答——工单 A-01 缺陷形态（prompt_
+           tokens 仅 17-43+正文自述未收到），留 body 全文证；
+           2xx 同判；500 等=非合规拒绝）
+        2. document/video 轮（8 发）：错误体指明该发媒体类型
+           ——对应关键词中英任一命中（document/文档/pdf、
+           video/视频；大小写不敏感——20261104 Jenkins 实测
+           整改错误体为中文「该模型不支持图片输入」，原纯英
+           文关键词口径误判，扩展中英双语匹配（用户指定）；
+           排除通用「模型服务调用失败」upstream_error 不含任
+           何媒体类型的缺陷形态）
+        3. audio 轮（2 发，2026-11-16 官方实测基线，用户确认
+           200/400 均 PASS）：msg/audio HTTP 200 或 400 均
+           PASS（200=对齐官方实测——媒体块剥离后纯文本作答
+           形态；400=达客户工单整改要求——超额合规；500 等=
+           非合规）；chat/audio 应 HTTP 400（官方/渠道一致
+           ——官方 error 1210 通用文案）；audio 轮响应
+           message/错误体先不进行断言（用户指定 2026-11-16
+           ——官方 msg 侧无错误体、chat 侧为通用 1210 文案），
+           body 全文留观察日志（msg 侧另留正文自述形态与
+           usage.input_tokens 媒体剥离证据）
+        观察记录（不计判据，留日志）：document/video 轮错误体是
+        否含 "text"（官方行为口径——取值范围 ['text'] 痕迹）、
+        完整错误体留痕；audio 轮响应体/错误体全文留痕（msg 侧
+        正文自述+usage、chat 侧错误体全文）。GLM-5.3 专用。
+        （不进 smoke 集：新用例首跑观察期）
         """
         K34_ANTHROPIC_VERSION = "2023-06-01"
         # K34: max_tokens=1024——工单原始 5 发同值（msg 协议必
@@ -10681,12 +10708,14 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "https://interactive-examples.mdn.mozilla.net"
             "/media/cc0-videos/flower.mp4"
         )
-        # K34: 媒体类型中英关键词组（断言2 判定口径）——任一命
-        # 中即视为指明类型；20261104 Jenkins 实测贵方整改错误体
-        # 为中文（「该模型不支持图片输入」），原纯英文关键词口
-        # 径误判，扩展中英双语匹配（用户指定）；工单 A-01 5 发
-        # 覆盖 document/audio/video——无图片轮，image 关键词组
-        # 移除
+        # K34: 媒体类型中英关键词组（document/video 轮断言2 判
+        # 定口径）——任一命中即视为指明类型；20261104 Jenkins
+        # 实测贵方整改错误体为中文（「该模型不支持图片输入」），
+        # 原纯英文关键词口径误判，扩展中英双语匹配（用户指定）；
+        # audio 轮自 2026-11-16 起按官方实测基线判定、message 先
+        # 不进行断言（用户指定）——audio 关键词组保留仅参考，
+        # 不再用于断言；工单 A-01 5 发覆盖 document/audio/
+        # video——无图片轮，image 关键词组移除
         K34_MEDIA_KEYWORDS = {
             "audio": ("audio", "音频", "语音"),
             "video": ("video", "视频"),
@@ -10694,14 +10723,15 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         }
 
         test_logger.info(
-            "=== 测试开始: 客户问题 - 多模态媒体块该拒未拒应 400 "
-            "明确拒绝（chat+msg 双协议各 5 发——用户指定；工单 "
-            "P2 R-04 补充证据 A-01：官方要求图/音/视/文档 × "
-            "base64/URL 载体必须 400，返回 2xx 即不合格；贵方 5 "
-            "发全 msg 均 200——prompt_tokens 仅 17-43、正文自述"
-            "未收到媒体；整改要求 chat 协议也应相同处理；msg 5 "
-            "发按工单原始记录依序复现 + chat 5 发同素材同序镜像"
-            "核验，媒体数据代码生成（内存生成、不落临时文件））"
+            "=== 测试开始: 客户问题 - 多模态媒体块拒绝核验"
+            "（chat+msg 双协议各 5 发——用户指定；工单 P2 R-04 "
+            "补充证据 A-01：msg 侧静默丢弃 200——document/video "
+            "轮应 400 明确拒绝并指明类型（200=缺陷复现）；audio "
+            "轮按 2026-11-16 官方实测基线对齐（用户确认）——官方 "
+            "msg 200/chat 400、渠道同形态，msg 200/400 均 PASS、"
+            "message 先不进行断言；msg 5 发按工单原始记录依序复"
+            "现 + chat 5 发同素材同序镜像核验，媒体数据代码生成"
+            "（内存生成、不落临时文件））"
             "==="
         )
 
@@ -10775,15 +10805,70 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             elapsed: float,
         ) -> None:
             """K34 拒绝合规性与错误体质量断言（chat+msg 双协议
-            各发共用——media_keyword 为该发媒体类型，经
-            K34_MEDIA_KEYWORDS 展开中英关键词组，任一命中即视
-            为指明类型）"""
+            各发共用——document/video 轮 400+关键词；audio 轮
+            按 2026-11-16 官方实测基线判定、message 先不进行
+            断言（用户指定））"""
             body = response.text
             test_logger.info(
                 f"[{proto_tag}] 真实响应: HTTP "
                 f"{response.status_code}, elapsed={elapsed:.1f}s, "
                 f"body={body[:800]!r}"
             )
+            # audio 轮：2026-11-16 双端实测基线（用户确认）——
+            # 官方 msg audio×base64 → HTTP 200（媒体块剥离后
+            # 纯文本作答，input_tokens=21）、chat input_audio →
+            # HTTP 400（通用 1210 文案）；渠道 staging 同形态。
+            # msg 侧 200（对齐官方）/400（达客户整改要求）均
+            # PASS；chat 侧应 400；响应 message/错误体先不进行
+            # 断言（用户指定），body 全文留观察日志
+            if media_keyword == "audio":
+                if proto_tag.startswith("msg"):
+                    assert response.status_code in (200, 400), (
+                        f"[{proto_tag}] audio 轮基线（2026-11-16 官"
+                        f"方实测，用户确认）：HTTP 200（对齐官方——"
+                        f"媒体块剥离后纯文本作答形态）或 400（达客户"
+                        f"工单整改要求——超额合规）均 PASS，实际 "
+                        f"HTTP {response.status_code}: {body[:400]}"
+                        f"（500 等=非合规；官方实测 200 时媒体未进"
+                        f"分词器、正文自述未收到音频——留证如上）"
+                    )
+                else:
+                    assert response.status_code == 400, (
+                        f"[{proto_tag}] audio 轮基线（2026-11-16 官"
+                        f"方实测，用户确认）：chat 协议官方/渠道均 "
+                        f"HTTP 400（官方 error 1210 通用文案），实际 "
+                        f"HTTP {response.status_code}: {body[:400]}"
+                    )
+                if response.status_code == 200:
+                    # 观察留证：媒体剥离形态——正文自述 +
+                    # usage 输入 token 数（官方实测 input_tokens=
+                    # 21——媒体未进入分词器证据）
+                    try:
+                        data = response.json()
+                        usage = (data or {}).get("usage") or {}
+                        texts = [
+                            b.get("text", "")
+                            for b in (data or {}).get("content", [])
+                            if isinstance(b, dict)
+                            and b.get("type") == "text"
+                        ]
+                        test_logger.info(
+                            f"[{proto_tag}] audio 轮 200 响应留证: "
+                            f"input_tokens="
+                            f"{usage.get('input_tokens')}, "
+                            f"正文摘要={(' '.join(texts))[:120]!r}"
+                            f"（媒体块剥离后纯文本作答形态——对齐"
+                            f"官方实测基线）"
+                        )
+                    except Exception:
+                        pass
+                test_logger.info(
+                    f"[{proto_tag}] audio 轮 message/错误体先不进行"
+                    f"断言（用户指定 2026-11-16——官方 msg 侧无错误"
+                    f"体、chat 侧为通用 1210 文案），body 全文留观察"
+                    f"日志"
+                )
+                return
             # 断言1：拒绝合规——HTTP 400（官方要求：非多模态模型
             # 收到媒体块（base64/URL 两种载体）必须 400，返回
             # 2xx 即不合格；200=媒体被静默丢弃后纯文本作答——工

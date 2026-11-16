@@ -74,7 +74,7 @@
 | K31 | json_object 嵌套结构完整输出与预算回退核验（256→512，chat+msg 双协议） | 客户问题（工单 P1 R-01+A-07a/A-07b，结构化输出）：官方行为 HTTP 200、content 为合法 JSON（嵌套对象/数组均可解析）；贵方实测 finish_reason=length、content 为空字符串、思考内容占满 max_tokens=256——A-07a（嵌套对象 user.name/user.age/address.city）与 A-07b（数组 3 个 id+title 对象）两种请求各 3 发全部该形态（3 采样 0 过，2026-11-03）；用户确认：思考消耗配额致空正文/截断在官方与被测均有一定概率发生——验收口径调整为预算回退链（用户指定）：核心需求为在 max_tokens 内能返回完整合法 JSON；适用 GLM-5.3 | chat+msg 双协议（msg 无 json_object 参数语义——同一 prompt 引导、max_tokens 协议必需字段）× 工单两形态（A-07a/A-07b 提示词与请求体工单原样——chat 字段序 model/messages/max_tokens/response_format、无 stream 字段）× 预算回退链：轮一 max_tokens=256（工单原值）→ HTTP 200+正文非空+json.loads 成功+嵌套结构齐备（递归宽容：含 name+age 的 user 对象与含 city 的 address 对象 / 对象数组每元素含 id+title，裸数组或对象包裹均认可，数量=3 与类型留观察）→ 直接达标；不满足（空正文/json 截断或非法/结构不齐）→ 回退 max_tokens=512 同请求重验——满足 → 测试通过+警告留痕（警告显示 256 输出空正文或 json 截断及 finish 状态）；两轮均不满足 → FAIL（输出两轮各自形态）；HTTP 非 200 直接 FAIL（回退链仅针对正文形态）；模型名由环境注入，采样参数原始未指定——保持不注入；历史记录：初版三接口 chat/responses/msg × 各 2 次，A-07 证据后重构聚焦双协议（用户指定"覆盖两种协议"），/v1/responses 轮移除 | P1 |
 | K32 | temperature 原厂区间 [0, 2] 放行与越界校验（chat+msg 双协议） | 客户问题（工单 P1 R-02+A-03，参数校验）：官方行为 HTTP 200（原厂取值区间 [0, 2]，1.5 合法）；贵方最新实测（A-03，2026-11-03）chat 三发 temperature=1.5 全部 HTTP 400、错误体「temperature 超出范围 [0, 1]」——本地收紧到 [0, 1]（历史 R-02：6 发通用「模型服务调用失败」upstream_error）；整改建议（即预期结果，用户指定）：放开 temperature 到原厂 [0, 2] 区间（原 [0, 2) 调整为 [0, 2]——上界端点 2.0 移入放行），或原样透传不做本地收紧；保留非法参数校验（越界 400 指明参数名与区间）；适用 GLM-5.3 | 双协议覆盖：chat 协议（原厂区间 [0, 2] 含端点）——工单 A-03 三发复现 temperature=1.5（content="只回复:好"、max_tokens=32，请求体工单原样无 stream 字段）→ 200+choices 非空（正文/finish_reason 留观察——小配额+默认思考计入易 length，K31 域形态非判据），边界轮 2.0（上界端点移入放行；请求对齐 A-03 短形态——content="只回复:好"+max_tokens=32+无 stream 字段，用户指定 2026-11-09）→ 200+choices 非空（正文/finish_reason 留观察，K31 域形态非判据——主判据=2.0 被接受 200），左边界轮 0.0（下界端点——[0, 2] 含 0.0，用户指定 2026-11-09 新增验证，此前下界仅由 -0.5 越界轮间接验证；长形态 content="请用一句话介绍你自己。"+max_tokens=1024）→ 200+choices 非空（正文/finish_reason 留观察——主判据=0.0 被接受 200），越界轮 2.5 与 -0.5（max_tokens=1024——所有轮均须 max_tokens 限制，用户指定 2026-11-09）→ 400+错误体指明参数名 temperature（大小写不敏感）+含上界数字 2（区间痕迹辅助下限口径）；msg 协议（/anthropic/v1/messages，Anthropic 官方区间 [0, 1] 分别校验——A-03 未涉及 msg 维持原口径）——放行轮 temperature=0.5（工单原值 1.5 在该协议官方语义下越界，不可作放行点）与 0.0（下界端点——用户指定 2026-11-09 新增验证，双协议口径一致）→ 200+正文非空+stop_reason 自然结束，越界轮 1.5（工单原值，与 chat 侧同值不同判——验证网关按协议语义分别校验而非一刀切）、2.0 与 -0.5 → 400+错误体指明参数名+含上界数字 1；chat 放行点按 A-03 三发依序复现，其余组合每组合 1 次（K6 先例）；工单原始值原样保留并豁免全局采样覆盖，top_p/seed 未指定不注入，A-03 轮与 chat 2.0 边界轮同形态（max_tokens=32——边界轮用户指定 2026-11-09 对齐，原不传致 2.0 无界生成长尾超时，curl 复核服务端正常），chat 0.0 左边界轮/越界轮长形态 max_tokens=1024（所有轮均须 max_tokens 限制——用户指定 2026-11-09，当前无限制的取 1024），thinking 不传，msg max_tokens 为协议必需字段；每发 60s 硬超时（K32_HARD_TIMEOUT 用例内自定覆盖全局 timeout——小请求正常返回毫秒级-秒级，挂起/严重延迟快速失败：超时即 FAIL 留痕，仅本用例生效不影响他例） | P1 |
 | K33 | top_logprobs=5 放行核验（未开 logprobs 也接受，chat+msg 双协议） | 客户问题（工单 P2 A-04，参数校验）：官方行为不变——top_logprobs=5 官方 HTTP 200 接受（未开 logprobs 时也接受）；贵方最新实测（A-04，2026-11-03）chat 三发 top_logprobs=5 单独出现（无 logprobs）全部 400、错误体「top_logprobs is only allowed when logprobs is enabled」（对未开 logprobs 的 top_logprobs 额外拒绝）；整改建议（即预期结果）：按官方行为处理 top_logprobs（未开 logprobs 时也接受）不额外拒绝，若上游确实不支持，错误体应说明能力缺失而非参数非法；用户判定口径（2026-11-06）：top_logprobs=5 不拒绝、按官方 HTTP 200 即可、正文为空不判定失败（R-03 轮移除，仅保留 A-04 请求——用户指定）；适用 GLM-5.3 | 双协议覆盖：chat 协议——A-04 三发复现（top_logprobs=5 单独出现、content="只回复:好"、max_tokens=32，请求体工单原样无 stream 字段）→ 200+choices 非空（正文/finish_reason/logprobs 结构留观察——小配额+默认思考计入易 length，K31 域形态非判据）；msg 协议（/anthropic/v1/messages）无 logprobs 参数语义——A-04 镜像 3 发（top_logprobs 单独出现、content 工单原样、max_tokens=512 套件必需字段值）硬断言统一行为：全部 400 且错误体指明字段（含 'logprobs'，top_logprobs 子串覆盖，能力缺失说明口径——整改建议两分支之一）或全部 200（正文为空不判定失败——用户口径：top_logprobs=5 不拒绝、官方 200 即可，空正文留观察，用户指定 2026-11-06），混现即 FAIL——额外拒绝与行为不统一在两协议均不得复现；A-04 工单三发采集间隔 1s（节奏非判据），复现按套件相邻间隔 3s；max_tokens/thinking/采样参数未指定不传不注入（A-04 复现轮 max_tokens=32 工单原值；msg max_tokens 协议必需） | P2 |
-| K34 | 多模态媒体块该拒未拒（msg 侧静默丢弃返回 200）应 400 明确拒绝（chat+msg 双协议） | 客户问题（工单 P2 R-04 补充证据 A-01，多模态）：官方行为 glm-5.3 为非多模态模型——请求携带图片/音频/视频/文档（base64 与 URL 两种载体）必须返回 400，返回 2xx 即不合格；原始问题：msg 协议下返回 200 该拒未拒，媒体块被静默丢弃——prompt_tokens 仅 17-43（媒体未进入分词器）、正文自述『没有收到视频/音频/文档』；同一素材在 chat 协议下渠道返回 400（同一渠道、同一文件、两种协议两种结果）；整改建议（客户给出）：在 /v1/messages → OpenAI 转换层对 media block（video/audio/document）做前置校验，返回 400 并给出明确文案；不得剥离媒体块后继续转发；URL 载体（http/https 媒体链接）同样必须返回 400，不得自行抓取、转文字或降级为纯文本；另外 chat 协议也应该相同的处理；适用 GLM-5.3 | 双协议各 5 发共 10 发（用户指定：message 协议和 chat 协议都要 5 轮请求）：msg 5 发按客户原始记录依序复现（缺陷复现轮）——document×base64（application/pdf）+『文档中的文字是什么?简答。』（媒体块在前——工单原序）、text+audio×base64（audio/wav）『这段音频是什么类型的声音?简答。』（文本块在前——工单原序）、video×base64（video/mp4）+『简要描述视频内容。』、video×url +『简要描述视频内容。』（沿用本仓现有 MDN flower.mp4 地址——工单原 test-videos.co.uk 不复用，用户指定保留现有 URL）、video×base64 +『这段视频前半段的底色和中间显示的数字是什么？后半段的底色和中间显示的数字是什么？按先后顺序一句话回答。』（工单第 5 采集提问原样）；chat 5 发为同素材/同提示词/同块序镜像（整改『chat 协议也应相同处理』一致性核验轮；part 映射：document→file part（file_data data URL）、audio→input_audio、video→video_url（base64 发用 data URL））；媒体数据工单未提供完整 data——代码生成有效 base64（最小 PDF/WAV/MP4 容器，内存生成、不落临时文件；拒绝校验在媒体块类型层不依赖可解码内容；双协议第 3/5 发共用同一生成 MP4）；max_tokens=1024 工单原值（10 发同值镜像豁免注入）；请求体不含 stream 字段（工单原始格式，两协议默认非流式）；硬断言每发：①HTTP 400（200=静默丢弃缺陷复现——A-01 形态留证；2xx 同判；500 等=非合规拒绝）②错误体含对应媒体类型关键词（中英任一命中：document/文档/pdf、audio/音频/语音、video/视频，大小写不敏感——20261104 实测整改错误体为中文，双语匹配（用户指定）；排除通用『模型服务调用失败』缺陷形态）；'text' 痕迹留观察日志；thinking/采样参数未含不注入；相邻间隔 3s | P2 |
+| K34 | 多模态媒体块该拒未拒（msg 侧静默丢弃返回 200）应 400 明确拒绝（chat+msg 双协议） | 客户问题（工单 P2 R-04 补充证据 A-01，多模态）：官方行为 glm-5.3 为非多模态模型——请求携带图片/音频/视频/文档（base64 与 URL 两种载体）必须返回 400，返回 2xx 即不合格；原始问题：msg 协议下返回 200 该拒未拒，媒体块被静默丢弃——prompt_tokens 仅 17-43（媒体未进入分词器）、正文自述『没有收到视频/音频/文档』；同一素材在 chat 协议下渠道返回 400（同一渠道、同一文件、两种协议两种结果）；整改建议（客户给出）：在 /v1/messages → OpenAI 转换层对 media block（video/audio/document）做前置校验，返回 400 并给出明确文案；不得剥离媒体块后继续转发；URL 载体（http/https 媒体链接）同样必须返回 400，不得自行抓取、转文字或降级为纯文本；另外 chat 协议也应该相同的处理；适用 GLM-5.3 | 双协议各 5 发共 10 发（用户指定：message 协议和 chat 协议都要 5 轮请求）：msg 5 发按客户原始记录依序复现（缺陷复现轮）——document×base64（application/pdf）+『文档中的文字是什么?简答。』（媒体块在前——工单原序）、text+audio×base64（audio/wav）『这段音频是什么类型的声音?简答。』（文本块在前——工单原序）、video×base64（video/mp4）+『简要描述视频内容。』、video×url +『简要描述视频内容。』（沿用本仓现有 MDN flower.mp4 地址——工单原 test-videos.co.uk 不复用，用户指定保留现有 URL）、video×base64 +『这段视频前半段的底色和中间显示的数字是什么？后半段的底色和中间显示的数字是什么？按先后顺序一句话回答。』（工单第 5 采集提问原样）；chat 5 发为同素材/同提示词/同块序镜像（整改『chat 协议也应相同处理』一致性核验轮；part 映射：document→file part（file_data data URL）、audio→input_audio、video→video_url（base64 发用 data URL））；媒体数据工单未提供完整 data——代码生成有效 base64（最小 PDF/WAV/MP4 容器，内存生成、不落临时文件；拒绝校验在媒体块类型层不依赖可解码内容；双协议第 3/5 发共用同一生成 MP4）；max_tokens=1024 工单原值（10 发同值镜像豁免注入）；请求体不含 stream 字段（工单原始格式，两协议默认非流式）；官方实测基线（2026-11-16 双端 curl 比对，用户确认）：官方 msg audio → 200（媒体块剥离纯文本作答，input_tokens=21）、chat input_audio → 400（通用 1210 文案），渠道同形态——audio 轮基线修正为对齐官方实测；硬断言：document/video 8 发①HTTP 400（200=静默丢弃缺陷复现——A-01 形态留证；2xx 同判；500 等=非合规拒绝）②错误体含对应媒体类型关键词（中英任一命中：document/文档/pdf、video/视频，大小写不敏感——20261104 实测整改错误体为中文，双语匹配（用户指定）；排除通用『模型服务调用失败』缺陷形态）；audio 2 发——msg 200/400 均 PASS（200=对齐官方实测、400=达客户整改要求）、chat 应 400，响应 message 先不进行断言（用户指定 2026-11-16）body 留观察日志；'text' 痕迹留观察日志；thinking/采样参数未含不注入；相邻间隔 3s | P2 |
 | K35 | 关闭思考应按原厂 400 拒绝（enable_thinking=false 与 thinking.type=disabled 双路径，chat+msg 双协议） | 客户问题（工单 P1 R-07 补充证据 A-02 · chat/msg 协议关闭思考的请求被放行，接口协议）：官方行为原厂对关闭思考返回 400（原厂 HTTP 400）；贵方实测（A-02，2026-11-03 采集，2 发均 HTTP 200）：渠道返回 200 并正常出文——chat 发 enable_thinking=false 放行且响应带 reasoning_content（思考仍开启，reasoning_tokens=91）、msg 发 thinking.type=disabled 放行且 content 带 thinking 块（思考仍开启），对照记为 http_status 400→200（HTTP 状态语义）；预期行为（整改）：统一关闭思考的拒绝口径——enable_thinking=false 与 thinking.type=disabled 两条路径均按原厂返回 400，不得一条拒一条放；适用 GLM-5.3 | 按工单 A-02 原始请求 2 发依序复现（双协议两路径——用户指定：两条路径都要按官方行为返回 400，覆盖两种协议）：路径1 chat（/v1/chat/completions 非流式）enable_thinking=false（工单原样：content="23+19 等于多少？" 字符串、max_tokens=512、请求体不含 stream 字段）；路径2 msg（/anthropic/v1/messages，x-api-key + anthropic-version 头——K3 先例）thinking={"type": "disabled"}（工单原样：content="23+19=?" 字符串、max_tokens=512、stream=false 显式携带）；硬断言每路径：HTTP 400（200=放行缺陷复现——A-02 形态：200 且正常出文（思考仍开启）；500 等=非合规拒绝）；错误体参数名痕迹（路径1 enable_thinking/路径2 thinking）留观察不计判据；max_tokens=512 工单 2 发同值（豁免注入）；采样参数未含不注入；相邻间隔 3s | P1 |
 | K36 | finish_reason 判定对齐官方（stop 语义——流式/多段/结构化 × 双协议） | 客户问题（工单 P1 R-06，接口协议）：官方行为 finish_reason=stop（20_chat_stream_002 / 20_chat_ms_001 / 20_chat_structured_002 三例）；贵方实测同一请求渠道返回 finish_reason=length，官方返回 stop（三例一致复现）；整改建议：对齐 finish_reason 判定——思考 token 不应把正常结束的请求判成 length 截断；按官方行为进行预期断言（用户指定）；适用 GLM-5.3 | 流式（SSE 收集终止字段与正文增量）、多段（单条 user 消息 content 数组多段文本）、结构化（chat response_format=json_object / msg 无该参数按 K31 先例 prompt 引导）三种请求形态 × chat+msg 双协议各 1 发（共 6 发）；硬断言每形态 × 每协议：终止语义对齐官方——chat finish_reason=='stop' / msg stop_reason=='end_turn'（Anthropic 协议自然结束语义——msg 侧的 stop 等价；length/max_tokens=缺陷复现：思考 token 计入判定把正常结束的请求误判截断）+ 正文非空（正常结束的佐证；正文空+length 为 K31 思考耗光形态，非本例口径）；max_tokens=512（工单未附原始 payload——适中值：正文远低于配额而计入思考的实现易触顶误判，对判定语义敏感且不致正文真实截断）；thinking/采样参数未指定不传不注入；相邻间隔 3s | P0 |
 | K37 | n=2 请求应 400 拒绝且不挂死（返回提示信息） | 客户问题（工单 P0，n=2 请求挂死）：贵方实测无响应直至超时——参数电池 3/3 轮 TimeoutError（已重试 1 次仍超时）、协议电池 2 例 ReadTimeout、直连 300s 超时，挂死同时导致模块 4 的 n=2 探针被记为『无效』而未计失败；官方行为原厂 n=2 HTTP 200（返回 1 个 choice）；客户明确需求（2026-11-06，契约口径）：当 n=2 时 400 拒绝，并返回相应的提示信息，但不能卡死（示例响应：HTTP 400 {"code":1210,"message":"参数有误：glm-5.3 仅支持 n=1，收到 n=2 (request id: ...)"}）——客户明确需求优先于官方对齐（用户指定按新契约断言，替代原官方 200+单 choice 口径）；适用 GLM-5.3 | chat 单协议 2 发对齐工单口径（055/056 两次独立采集，非重试；n 为 OpenAI 协议参数、msg 无 n 语义——工单证据仅 chat，msg 未知参数行为由 K33/K35 覆盖）；单发直发不重试（重试掩盖挂死证据且超时等待翻倍），requests timeout=30s 硬超时；硬断言每发：①30s 内返回（超时即 FAIL 挂死复现——纠正『无效不计失败』漏报形态）②HTTP 400（200 放行=未按客户契约拒绝；500 等=非合规拒绝）③提示信息指明 n 参数限制（响应体合法 JSON、message 非空且含 "n=1"/"n=2" 子串，大小写不敏感——客户示例：参数有误：glm-5.3 仅支持 n=1，收到 n=2）；工单原值原样保留（"说一句话。"/max_tokens=16/n=2——豁免注入）；错误码 code（如 1210——平台错误码口径不硬绑）/request id/elapsed 留观察（字节缓流形态人工分派）；thinking/采样参数未含不注入；相邻间隔 3s | P0 |
@@ -2756,6 +2756,13 @@ A-04 镜像 200 分支正文为空的发逐发 warning 留痕
   给出明确文案；不得剥离媒体块后继续转发；URL 载体（http/
   https 媒体链接）同样必须返回 400，不得自行抓取、转文字或降
   级为纯文本；另外 chat 协议也应该相同的处理
+- **官方实测基线（2026-11-16 双端 curl 比对，用户确认）**：智
+  谱官方 open.bigmodel.cn msg 协议 audio×base64 → HTTP 200
+  （媒体块被剥离后纯文本作答，input_tokens=21，正文自述未收
+  到音频）；chat 协议 input_audio → HTTP 400（error 1210
+  「API 调用参数有误」——通用文案不含媒体类型关键词）；渠道
+  staging 同形态（msg 200 / chat 400）——audio 轮基线由工单
+  「必须 400」修正为对齐官方实测 code
 - **历史记录**：工单初版口径为 chat 与 msg 双协议 8 发均通用
   「模型服务调用失败」(upstream_error)（20261104 Jenkins 首跑
   chat 侧实测整改错误体为中文「该模型不支持图片输入」code
@@ -2766,11 +2773,17 @@ A-04 镜像 200 分支正文为空的发逐发 warning 留痕
   轮，共 10 发）
 
 **测试断言点（每发任一失败即 FAIL 并报告轮标签）**：
-1. HTTP 400（官方要求：非多模态模型收到媒体块——base64 与
-   URL 两种载体——必须 400，返回 2xx 即不合格）
-2. 错误体指明该发媒体类型——含对应关键词，中英任一命中
-   （`document`/文档/pdf、`audio`/音频/语音、`video`/视频；
-   大小写不敏感）
+1. document/video 轮（8 发）：HTTP 400（官方要求：非多模态
+   模型收到媒体块——base64 与 URL 两种载体——必须 400，返
+   回 2xx 即不合格）
+2. document/video 轮（8 发）：错误体指明该发媒体类型——含
+   对应关键词，中英任一命中（`document`/文档/pdf、`video`/
+   视频；大小写不敏感）
+3. audio 轮（2 发，2026-11-16 官方实测基线，用户确认 200/
+   400 均 PASS）：msg/audio HTTP 200 或 400 均 PASS（200=对
+   齐官方实测、400=达客户整改要求）；chat/audio 应 400；响
+   应 message/错误体先不进行断言（用户指定），body 留观察
+   日志
 
 **请求构造**（双协议各 5 发共 10 发；用户指定：message 协议
 和 chat 协议都要 5 轮请求——msg 侧按工单 A-01 原始记录依序
@@ -2821,28 +2834,42 @@ A-04 镜像 200 分支正文为空的发逐发 warning 留痕
   名由环境注入；相邻间隔 3s
 
 **断言**（硬，每发）：
-1. HTTP 400（200=媒体被静默丢弃后纯文本作答——工单 A-01 缺
-   陷形态，留 body 全文证；2xx 同判；500 等=非合规拒绝）
-2. 错误体含该发媒体类型关键词，中英任一命中（经
-   `K34_MEDIA_KEYWORDS` 展开：document=（document/文档/
-   pdf）、audio=（audio/音频/语音）、video=（video/视频）；
-   大小写不敏感——英文 lower 匹配、中文原样匹配不受 lower
-   影响；URL 载体与 base64 载体判据相同——整改明令"URL 载
-   体同样必须返回 400"）
+1. document/video 轮：HTTP 400（200=媒体被静默丢弃后纯文本
+   作答——工单 A-01 缺陷形态，留 body 全文证；2xx 同判；
+   500 等=非合规拒绝）
+2. document/video 轮：错误体含该发媒体类型关键词，中英任一
+   命中（经 `K34_MEDIA_KEYWORDS` 展开：document=（document/
+   文档/pdf）、video=（video/视频）；大小写不敏感——英文
+   lower 匹配、中文原样匹配不受 lower 影响；URL 载体与
+   base64 载体判据相同——整改明令"URL 载体同样必须返回
+   400"）
+3. audio 轮（2026-11-16 官方实测基线）：msg/audio 200 或
+   400 均 PASS（200=对齐官方实测——媒体块剥离后纯文本作答
+   形态；400=达客户工单整改要求——超额合规；500 等=非合
+   规）；chat/audio 应 400（官方/渠道一致——官方 error 1210
+   通用文案）；响应 message/错误体先不进行断言（用户指定
+   2026-11-16），body 全文留观察日志（msg 侧另留正文自述形
+   态与 usage.input_tokens 媒体剥离证据）
 
 **判定矩阵**：
-- 任一发非 400 → FAIL（200=媒体块被静默丢弃后纯文本作答——
-  工单 A-01 缺陷形态：prompt_tokens 仅 17-43、正文自述未收
-  到媒体，留 body 全文证；500 等=非合规拒绝）
-- 400 但错误体不含该发关键词（中英均未命中）→ FAIL（缺陷复
-  现——通用「模型服务调用失败」upstream_error 未指明媒体类
-  型与字段，客户端无法定位）
-- 10 发（双协议各 5 发）全部 400 且错误体含对应关键词（中英
-  任一命中）→ PASS（拒绝合规 + 媒体类型可定位 + 覆盖工单
-  A-01 全部 5 发（msg 侧）与 chat 侧镜像：文档/音频/视频
-  base64 + 视频 URL 载体 × 双协议）
+- document/video 轮任一发非 400 → FAIL（200=媒体块被静默丢
+  弃后纯文本作答——工单 A-01 缺陷形态：prompt_tokens 仅
+  17-43、正文自述未收到媒体，留 body 全文证；500 等=非合规
+  拒绝）
+- document/video 轮 400 但错误体不含该发关键词（中英均未命
+  中）→ FAIL（缺陷复现——通用「模型服务调用失败」
+  upstream_error 未指明媒体类型与字段，客户端无法定位）
+- audio 轮 msg/audio 非 200/400（500 等）→ FAIL（非合规）；
+  chat/audio 非 400 → FAIL（偏离官方/渠道一致基线）
+- audio 轮响应 message 不判（先不进行断言——用户指定
+  2026-11-16），body 留观察日志
+- document/video 8 发全部 400 且错误体含对应关键词（中英任
+  一命中）+ audio 2 发按基线（msg 200/400、chat 400）→
+  PASS（document/video 拒绝合规 + 媒体类型可定位 + audio
+  对齐官方实测 + 覆盖工单 A-01 全部 5 发（msg 侧）与 chat
+  侧镜像：文档/音频/视频 base64 + 视频 URL 载体 × 双协议）
 - 错误体是否含 `text`（取值范围 `['text']` 痕迹）→ 观察日
-  志，不计判据
+  志，不计判据（仅 document/video 轮错误体）
 
 **设计决策记录**：
 - **P2**（按客户工单 P2 R-04）
@@ -2889,6 +2916,19 @@ A-04 镜像 200 分支正文为空的发逐发 warning 留痕
   FAIL；断言 2 扩展为 `K34_MEDIA_KEYWORDS` 中英关键词组任一
   命中，下限设计原则不变；工单 A-01 5 发覆盖 document/
   audio/video——image 关键词组移除（无图片轮）
+- **audio 轮基线对齐官方实测（2026-11-16 双端 curl 比对后修
+  正，用户确认）**：工单口径「图/音/视/文档必须 400」为客户
+  整改要求，但智谱官方实测 msg audio×base64 → 200（媒体块
+  剥离纯文本作答，input_tokens=21）、chat input_audio → 400
+  （通用 1210 文案），渠道 staging 同形态——audio 两轮渠道
+  行为与官方完全一致。基线修正：msg/audio 200/400 均 PASS
+  （200=对齐官方实测、400=达客户整改要求——两种形态均不算
+  缺陷）、chat/audio 应 400；响应 message 先不进行断言（用
+  户指定 2026-11-16——官方 msg 侧无错误体、chat 侧为通用
+  1210 文案，无稳定可断言口径），body 留观察日志（msg 侧另
+  留 usage.input_tokens 媒体剥离证据）；`K34_MEDIA_
+  KEYWORDS` audio 组保留仅参考不再用于断言。document/video
+  轮无官方实测证据——维持 400+关键词口径不变
 - **取值范围痕迹（'text'）留观察不计判据**：官方行为含取值
   范围 `['text']`，但整改核心要求是"给出明确文案"（指明媒
   体类型）——允许值列表为增强信息，不作硬断言避免对文案形
@@ -2909,6 +2949,10 @@ A-04 镜像 200 分支正文为空的发逐发 warning 留痕
   展中英双语；若后续文案改用其他表达使中英均未命中，FAIL 后
   须人工确认是否为"已指明类型"的等价表达（如纯格式名形态
   document 轮已含 pdf）
+- audio 轮 message 暂不断言（用户指定 2026-11-16「先不进行
+  断言」）：官方 msg 侧无错误体（200 纯文本作答）、chat 侧
+  为通用 1210 文案——无稳定可断言口径；若后续渠道整改出明
+  确文案（或客户要求恢复断言），再按新口径收紧
 - 工单初版 8 发双协议口径（chat 4 + msg 4 矩阵）已按 A-01
   补充证据重构为双协议各 5 发（msg 按工单原始记录依序复现
   + chat 同素材同序镜像——用户指定）
