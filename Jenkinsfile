@@ -52,7 +52,7 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K46，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K48，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
         booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65——L 类仅勾选 MARKER_LEXIN_AGDC2_65 或 SPECIFIC_TEST 点名时执行）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
@@ -445,11 +445,15 @@ ENDSSH"""
                         sh """
 mkdir -p reports/${BUILD_NUMBER}
 
-# 拉取 Markdown 汇总报告
+# 拉取 Markdown 汇总报告与乐信 HTML 报告
 ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "find ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-report -name '*.md' -exec cp {} ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/ \\; 2>/dev/null || true"
 scp -o StrictHostKeyChecking=no \\
     ${REMOTE_USER}@${REMOTE_HOST}:${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/*.md \\
     ./reports/${BUILD_NUMBER}/ 2>/dev/null || echo "未找到汇总报告"
+ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "find ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-report -name '*.html' -exec cp {} ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/ \\; 2>/dev/null || true"
+scp -o StrictHostKeyChecking=no \\
+    ${REMOTE_USER}@${REMOTE_HOST}:${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/*.html \\
+    ./reports/${BUILD_NUMBER}/ 2>/dev/null || echo "未找到 HTML 报告"
 
 # 拉取 allure-results（用于 Jenkins Allure 插件）
 if ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "[ -d ${params.WORK_DIR}/${BUILD_OUTPUT_DIR}/allure-results ]"; then
@@ -531,7 +535,13 @@ fi
                         }
 
                         // 读取 Markdown 报告，提取统计信息
-                        def reportFile = sh(script: "ls reports/${BUILD_NUMBER}/*.md 2>/dev/null | head -1", returnStdout: true).trim()
+                        // 优先取通用报告 test_report_*.md（混合运行时 lexin 汇总
+                        // 不得顶替通用报告正文）；纯 lexin 运行无通用报告，回落
+                        // 首个 .md（即 lexin 汇总——章节结构与通用报告一致）
+                        def reportFile = sh(script: "ls reports/${BUILD_NUMBER}/test_report_*.md 2>/dev/null | head -1", returnStdout: true).trim()
+                        if (!reportFile) {
+                            reportFile = sh(script: "ls reports/${BUILD_NUMBER}/*.md 2>/dev/null | head -1", returnStdout: true).trim()
+                        }
                         def summaryHtml = ""
                         def categoryHtml = ""
                         def conclusionHtml = ""
@@ -606,6 +616,21 @@ fi
     </div>"""
                         }
 
+                        // 检测本次是否生成 HTML 报告（乐信 L 套件）——有则
+                        // 追加为邮件附件并调整措辞；纯 generic 运行无 HTML，
+                        // 附件 pattern 与正文措辞均与原逻辑完全一致
+                        def htmlAttach = ''
+                        try {
+                            def htmlCount = sh(script: "ls reports/${BUILD_NUMBER}/*.html 2>/dev/null | wc -l", returnStdout: true).trim()
+                            if (htmlCount && htmlCount != '0') {
+                                htmlAttach = ", reports/${BUILD_NUMBER}/*.html"
+                                echo "检测到 HTML 报告 ${htmlCount} 个，将追加为邮件附件"
+                            }
+                        } catch (Exception e) {
+                            echo "检测 HTML 报告失败: ${e.message}"
+                        }
+                        def attachText = htmlAttach ? 'Markdown / HTML' : 'Markdown'
+
                         def emailBody = """
 <html>
 <head>
@@ -656,7 +681,7 @@ fi
             ${skipSummaryHtml ?: ""}
             ${conclusionHtml ? "<h3>测试结论</h3><div class=\"conclusion\">" + conclusionHtml + "</div>" : ""}
 
-            <p style="margin-top: 20px;">详细测试报告请查看附件中的 Markdown 文件。</p>
+            <p style="margin-top: 20px;">详细测试报告请查看附件中的 ${attachText} 文件。</p>
             <p>Jenkins 构建地址: <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
         </div>
         <div class="footer">
@@ -670,7 +695,7 @@ fi
                             subject: "[模型推理 - 功能测试报告] ${params.CHIP} - ${modelDisplayName} - 构建 #${BUILD_NUMBER} - ${currentBuild.currentResult}",
                             body: emailBody,
                             to: "${params.RECIPIENTS}",
-                            attachmentsPattern: "reports/${BUILD_NUMBER}/*.md",
+                            attachmentsPattern: "reports/${BUILD_NUMBER}/*.md${htmlAttach}",
                             mimeType: 'text/html'
                         )
                     }

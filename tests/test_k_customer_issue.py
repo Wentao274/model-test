@@ -1060,22 +1060,22 @@ K36-K40、K42、K45-K48 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   （工单模型 glm-5.3，缺陷为 usage 计数口径——响应组装层，无模
   型分支）。无新增数据文件。（不进 smoke 集：新用例首跑观察
   期；×3 请求）
-- K46: 用户正文含聊天模版控制词转义核验（<think> 字面量截断缺
+- K46: 用户正文含聊天模版控制词转义核验（＜think＞ 字面量截断缺
   陷，chat 单协议，AGDC2-58） [P0]
   客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10）：POST
   /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user
-  消息 "Reply with exactly this line and nothing else: A<think>B
-  </think>C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A
-  <think>B</think>C。开发分析确证根因（输入侧编码链路，非推理解
-  析器）：用户提示词正文含聊天模版控制词 <think>/</think> 字面
+  消息 "Reply with exactly this line and nothing else: A＜think＞B
+  ＜/think＞C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A
+  ＜think＞B＜/think＞C。开发分析确证根因（输入侧编码链路，非推理解
+  析器）：用户提示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面
   量，模版渲染未做转义被编码成控制 token 与模版自身思考标签碰
-  撞——<think>B... 部分被提前截断；修复=transformers≥5.20.2
+  撞——＜think＞B... 部分被提前截断；修复=transformers≥5.20.2
   sanitize_control_tokens（vLLM main-1106+transformers v5.21.0
   支持部署默认开启）或改造 Dynamo 编码器。本用例原样回放单发
   （编码链路确定性——K41 先例）：断言1 HTTP 200+合法 JSON+
   choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4
-  （核心）正文（strip 后）包含完整控制词字面量 <think>B
-  </think>（缺陷形态仅 "A"——B/C 被吞即截断）。观察（不计判
+  （核心）正文（strip 后）包含完整控制词字面量 ＜think＞B
+  ＜/think＞（缺陷形态仅 "A"——B/C 被吞即截断）。观察（不计判
   据）：与期望行严格相等对照、reasoning_content 存在性与长度
   （输出侧是否二次吞标签留证）、finish 值。请求体工单原样
   （max_tokens=2000+消息原文——控制词字面量精确复现），model
@@ -14037,19 +14037,19 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         self, api_client: ModelAPIClient, test_logger
     ):
         """K46 [P0]: 客户问题 - 用户正文含聊天模版控制词转义核验
-        （<think> 字面量截断缺陷，chat 单协议，工单 AGDC2-58）
+        （＜think＞ 字面量截断缺陷，chat 单协议，工单 AGDC2-58）
 
         客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10）：
         POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、
         单 user 消息 "Reply with exactly this line and nothing else:
-        A<think>B</think>C"）——模型仅输出 "A"，加大推理程度无效；期
-        望输出 A<think>B</think>C。客户初判「推理内容解析器未正常
+        A＜think＞B＜/think＞C"）——模型仅输出 "A"，加大推理程度无效；期
+        望输出 A＜think＞B＜/think＞C。客户初判「推理内容解析器未正常
         工作」。
         开发分析确证根因（输入侧编码链路，非推理解析器）：用户提
-        示词正文含聊天模版控制词 <think>/</think> 字面量，
+        示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面量，
         transformers 应用聊天模版时未对用户输入关键字做转义——渲
         染时被编码成模版控制 token 与模版自身思考标签碰撞，令牌
-        器无法区分用户正文与模版控制词——<think>B... 部分被提前截
+        器无法区分用户正文与模版控制词——＜think＞B... 部分被提前截
         断。修复=transformers≥5.20.2 chat_template_kwargs
         {"sanitize_control_tokens": true}（vLLM main-1106 +
         transformers v5.21.0 支持，部署默认开启 --default-chat-
@@ -14061,9 +14061,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         2. 断言2：finish_reason 非空（正常结束）
         3. 断言3：正文非空
         4. 断言4（核心）：正文（strip 后）包含完整控制词字面量
-           <think>B</think>（缺陷形态仅 "A"——B/C 被吞即截断；
+           ＜think＞B＜/think＞（缺陷形态仅 "A"——B/C 被吞即截断；
            修复后正文应含完整标签字面量）
-        观察（不计判据）：正文与期望行 "A<think>B</think>C" 严格相
+        观察（不计判据）：正文与期望行 "A＜think＞B＜/think＞C" 严格相
         等对照（生成层空白/换行差异不判）、reasoning_content 存在
         性与长度（输出侧解析器是否二次吞标签留证）、finish 值、非
         200 时错误全文留证。请求体工单原样（max_tokens=2000+消息

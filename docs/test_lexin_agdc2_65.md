@@ -107,6 +107,21 @@ pytest tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_01_chat_logic_basic
 
 不进 smoke 集；套件首跑观察期，无 P0/P1/P2 标记。**默认收集不含 L 用例**（conftest 收集排除与 Jenkinsfile `MARKER_ALL` 排除双层口径，2026-11-13 用户指定）：裸 `pytest` / `pytest -m p0` 等不会执行 L 用例；仅以下方式执行——`pytest -m lexin_agdc2_65`、命令行显式指定 `tests/test_lexin_agdc2_65.py`（或节点）、Jenkins 勾选 `MARKER_LEXIN_AGDC2_65`、或 `SPECIFIC_TEST` 点名（Jenkins「全部测试」`MARKER_ALL` 不含 L）。
 
+## 测试报告（用户确认 2026-11-15）
+
+L 套件运行自动生成专用报告（区别于 a-h/K 套件的通用 Markdown 汇总）：
+
+- **请求录制**（`_lexin_send` 内 `_LEXIN_RECORDER`）：每请求一条内存记录——所属用例（栈回溯取 `test_*` 帧名）、URL/协议 kind/请求头（鉴权值打码：前4+****+后4）/请求体/状态码/耗时/响应头/响应体全文（SSE 为事件行 join）、发送异常；
+- **会话末导出与生成**（conftest `pytest_terminal_summary` 接线）：
+  - 录制记录写 `lexin_records.json`（allure-results 同级，可离线重生成）；
+  - **纯 lexin 运行**（`-m lexin_agdc2_65` / 点名单用例）：**顶替**通用 Markdown 汇总与 `test_reports/` 报告，仅生成乐信 HTML + 乐信汇总 MD（输出至 `--summary-report-dir`）；
+  - **混合运行**：通用报告照旧，乐信 HTML/MD 额外生成；
+- **HTML 报告**（`base/lexin_html_report.py`，与官方平台「测试任务报告」导出同构）：任务概要 / 测试结果统计 / 用例结果总览（全部 72 用例 + 每请求子行）/ 用例明细（用例说明 + 断言结果 + 每请求请求头/请求体/响应头/响应体折叠，全部 HTML 转义、报文全量不截断）；
+- **汇总 MD**：章节名与通用报告一致（`## 统计汇总` / `## 分类统计` / `## 测试结论` / `## 跳过用例说明`），供 Jenkins 邮件正文提取；
+- **请求级 通过/失败 推导**：用例 PASS → 全部请求通过；FAIL/BROKEN → 失败消息「请求 N」定位失败请求（之前的通过、之后的未执行）；无编号命中（发送异常形态）→ 首请求失败、其余未执行；
+- **Jenkins**：HTML 报告随 `*.html` 拉取到 `reports/<构建号>/`，检测到即追加为邮件附件（`*.md` 附件始终存在）；
+- **CLI 离线重生成**：`python -m base.lexin_html_report --alluredir <目录> [--records <json>] [--out-dir <目录>] --model <模型名> --base-url <接入点>`。
+
 ## 断言口径
 
 断言基准 = 平台 run-432 记录的官方基准，逐请求断言 Code 语义：

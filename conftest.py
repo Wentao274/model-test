@@ -953,6 +953,50 @@ def pytest_runtest_setup(item):
 _last_test_file = None
 
 
+def _generate_lexin_reports(terminalreporter, config, cfg, chip_name,
+                            model_name):
+    """乐信 L 套件报告：导出请求录制记录 JSON 并生成 HTML + 汇总 MD。
+
+    隔离口径（用户确认 2026-11-15）：本次运行无任何 test_lexin 节点时
+    直接返回 None——不导入 lexin 模块、不产生任何输出，通用报告流程
+    与未改动前完全一致；仅 lexin 实际运行时才生成。
+    返回 (html_path, md_path)。
+    """
+    stats = getattr(terminalreporter, "stats", None) or {}
+    ran = []
+    for key in ("passed", "failed", "skipped", "error"):
+        ran.extend(stats.get(key) or [])
+    if not any(
+        getattr(r, "nodeid", "").startswith("tests/test_lexin_agdc2_65")
+        for r in ran
+    ):
+        return None
+    from tests.test_lexin_agdc2_65 import _LEXIN_RECORDER
+    summary_report_dir = (
+        config.getoption("--summary-report-dir", default=None)
+        or "allure-report"
+    )
+    alluredir = (
+        getattr(config.option, "alluredir", None) or "allure-results"
+    )
+    # 导出录制记录（供离线重生成与追溯）
+    os.makedirs(alluredir, exist_ok=True)
+    records_path = os.path.join(
+        os.path.dirname(os.path.abspath(alluredir)), "lexin_records.json"
+    )
+    with open(records_path, "w", encoding="utf-8") as f:
+        json.dump(_LEXIN_RECORDER, f, ensure_ascii=False, indent=1)
+    from base.lexin_html_report import generate_reports
+    base_url = config.getoption("--base-url", default=None) or ""
+    html_path, md_path = generate_reports(
+        alluredir, records_path, summary_report_dir,
+        model_name=model_name, base_url=base_url,
+        chip_name=chip_name,
+        engine=config.getoption("--engine", default=None) or "",
+    )
+    return html_path, md_path
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """测试结束后自动生成报告"""
     global _test_results
@@ -1009,6 +1053,26 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     if not model:
         return
+
+    # 乐信 L 套件报告（HTML + 汇总 MD + 录制记录 JSON）：
+    # - 纯 lexin 运行（_test_results 为空——lexin 不注册进
+    #   TEST_CATEGORIES、结果不采集）-> 顶替两份通用 MD 报告；
+    # - 混合运行 -> 通用 MD 照旧生成，lexin HTML/MD 额外追加。
+    lexin_report = None
+    try:
+        lexin_report = _generate_lexin_reports(
+            terminalreporter, config, cfg, chip_name, model.get("name"))
+    except Exception as e:
+        terminalreporter.write_line(f"乐信 L 套件报告生成失败: {e}")
+
+    if not _test_results:
+        if lexin_report:
+            html_path, md_path = lexin_report
+            terminalreporter.write_sep("=", "乐信 L 套件测试报告已生成")
+            terminalreporter.write_line(f"HTML 报告路径: {html_path}")
+            terminalreporter.write_line(f"Markdown 汇总路径: {md_path}")
+            return
+        # 非 lexin 且无采集结果（如空跑）——落到通用流程兜底
 
     # 使用公共报告生成器 (保留原有的 Markdown 报告)
     test_date = datetime.now().strftime("%Y-%m-%d")

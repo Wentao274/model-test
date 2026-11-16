@@ -91,7 +91,7 @@
 
   | K44 | reasoning_effort="none" 应被 400 拒绝核验（code 1210 硬断言；message 按官方文案对齐为警告观察，chat 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10，2026-11-11 复测修正）：相同请求 POST /v1/chat/completions（确认参数 max_completion_tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，校验为参数校验层与消息内容无关），实测两侧均 400（工单原记录「官方 200 接受」有误）：alayanew 返回 400 {"code": 1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）"}（顶层 code/message 形态），智谱官方返回 400 {"error": {"code": "1210", "message": "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"}}（嵌套 error 形态）——两侧同拒，仅文案与结构不同 | 单发非流式：请求体 = 工单确认参数 max_completion_tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息（工单消息不可得且不影响校验路径）；模型名由环境注入；两侧实测响应均非流式形态——stream 不传（不注入）；断言1 HTTP 400（200=none 被接受——与两侧实测预期不符，留证 FAIL；500 等其他状态同样 FAIL）；断言2 错误体合法 JSON 且 code==1210（顶层 code 与嵌套 error.code 兼容解析，int/字符串兼容——两侧实测均为 1210）；观察（警告不计判据）：message 对齐官方文案「该模型始终思考，不支持关闭思考；请使用 low、high 或 max。」——一致时 info 留痕，不一致（alayanew「reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）」形态即不一致）时 warning 留证不致失败；超时沿用全局；chat 单协议（校验为 chat 参数校验层）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件 | P1 |
 | K45 | responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议） | 客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求（glm-5.3、instructions="Answer concisely."、input 单 user 消息「Compute 47*89 step by step, then reply with just the number.」、max_output_tokens=1024、stream=false）响应 200 completed——思考已下发（output 含 type=="reasoning" 块，summary 为完整思考过程 ~3000 字符）、思考已计入 output_tokens（545 vs 可见正文 "4183" 仅 ~2 token——差值全为思考消耗），但 usage.output_tokens_details.reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客户最初另报「content 无思考块」，报文实证块在——缺陷收敛到计数口径） | 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言，相邻 3s）：请求体五字段工单原样，仅 model 环境注入（K43 先例）；断言1 HTTP 200+合法 JSON+output 数组存在；断言2 有思考内容（type=="reasoning" 块 summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type=="message" 块 output_text 非空——数值正误不定留证）；断言4 reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤output_tokens（K30 断言4 下界口径）；观察（不计判据）：正文全文、output_tokens 与可见正文差值（思考量旁证）、summary 长度、顶层 reasoning 回显、id 形态、error 字段；工单密钥不入库（鉴权走环境配置）；thinking/采样参数未带——不注入；非流式（stream=false 原样）；超时沿用全局；GLM-5.3 专用（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分支）；无新增数据文件 | P0 |
-| K46 | 用户正文含聊天模版控制词转义核验（  | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A  | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量  | P0 |
+| K46 | 用户正文含聊天模版控制词转义核验（＜think＞ 字面量截断缺陷，chat 单协议，AGDC2-58） | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A＜think＞B＜/think＞C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A＜think＞B＜/think＞C。开发分析确证根因（输入侧编码链路，非推理解析器）：用户提示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面量，transformers 应用聊天模版时未对用户输入关键字做转义——渲染时被编码成模版控制 token 与模版自身思考标签碰撞，令牌器无法区分用户正文与模版控制词——＜think＞B... 部分被提前截断。修复=transformers≥5.20.2 chat_template_kwargs {"sanitize_control_tokens": true}（vLLM main-1106+transformers v5.21.0 支持，部署默认开启 --default-chat-template-kwargs）或改造 Dynamo 自制编码器（dynamo-renderer==6.0.0/dynamo-tokenizers==2.0.0） | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量 ＜think＞B＜/think＞（缺陷形态仅 "A"——B/C 被吞即截断；修复后正文应含完整标签字面量） | P0 |
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_effort+disabled 双方不思考；reasoning_effort（low/medium/high/max）双方思考（渠道唯一开思考通路）——预期全按官方行为断言 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景）reasoning 空+reasoning_tokens==0+content 非空+finish_reason 非空；相邻 3s；超时沿用全局；model 环境注入；仅 Kimi-K3；无新增数据文件 | P0 |
 | K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——渠道未支持智谱官方参数（官方：每帧返回当前累计用量，prompt_tokens 恒定、completion/reasoning 逐帧累计；区别于 OpenAI include_usage 仅末帧 usage）——预期按官方行为断言 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage（缺失即缺陷复现）；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用；无新增数据文件 | P0 |
 
@@ -3634,7 +3634,7 @@ token 问题另行排查）；事件数；最大事件间隔及位置；工具�
 - **数据文件入库**：231KB 原样入库 tests/data/（用户确认）——回
   放保真最高；sha256 与报告一致可校验；客户业务内容不进日志/
   Allure（log_request 摘要占位）
-- **model 环境注入**：用户确认——与既有 K 用例一致（K1-K46 均
+- **model 环境注入**：用户确认——与既有 K 用例一致（K1-K48 均
   环境注入）；运行时环境（Jenkins MODEL/BASE_URL）指向 Kimi-K3
   测试实例，marker KimiK3 既有选择机制（K5-K10/K13/K21/K39 同
   口径）
@@ -3883,18 +3883,18 @@ thinking/reasoning 参数工单未带——不注入；采样参数未含——�
 **背景**（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：
 客户测试用例 POST /v1/chat/completions（glm-5.3-flash、
 max_tokens=2000、单 user 消息 "Reply with exactly this line and
-nothing else: A<!--T2-->B<!--T3-->C"）——模型仅输出 "A"，加大推理
-程度无效；期望输出 A<!--T2-->B<!--T3-->C。客户初判「推理内容解析
-器未正常工作，模型强制生成的 <!--T2-->...<!--T3--> 标签内容没有
+nothing else: A＜think＞B＜/think＞C"）——模型仅输出 "A"，加大推理
+程度无效；期望输出 A＜think＞B＜/think＞C。客户初判「推理内容解析
+器未正常工作，模型强制生成的 ＜think＞...＜/think＞ 标签内容没有
 被正确分离」。
 
 **开发分析确证根因**（输入侧编码链路，非推理解析器）：
-- 用户提示词正文含聊天模版控制词 <!--T2-->/<!--T3--> 字面量，
+- 用户提示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面量，
   transformers 应用聊天模版时不对用户输入关键字做转义——渲染时
   被编码成模版控制 token 与模版自身思考标签碰撞
 - Dynamo 自制链路（dynamo-renderer==6.0.0 / dynamo-
   tokenizers==2.0.0）渲染后丢失用户上下文信息，令牌器无法区分
-  用户正文与模版控制词——<!--T2-->B... 部分被提前截断
+  用户正文与模版控制词——＜think＞B... 部分被提前截断
 - 修复：transformers ≥5.20.2 引入 chat_template_kwargs
   {"sanitize_control_tokens": true}（把用户输入的关键字 token 拆
   分处理；vLLM main-1106 + transformers v5.21.0 已支持，部署默
@@ -3914,11 +3914,11 @@ completions`。
 2. finish_reason 非空（正常结束）
 3. 正文非空
 4. **核心**：正文（strip 后）包含完整控制词字面量
-   <!--T2-->B<!--T3-->（缺陷形态仅 "A"——B/C 被吞即模版渲染未转
+   ＜think＞B＜/think＞（缺陷形态仅 "A"——B/C 被吞即模版渲染未转
    义控制词致正文被提前截断；修复后正文应含完整标签字面量——客
-   户期望 A<!--T2-->B<!--T3-->C 的必要内容）
+   户期望 A＜think＞B＜/think＞C 的必要内容）
 
-**观察记录**（不计判据，留日志）：正文与期望行 A<!--T2-->B<!--T3-->
+**观察记录**（不计判据，留日志）：正文与期望行 A＜think＞B＜/think＞
 C 严格相等对照（生成层空白/换行差异不判）、reasoning_content 存
 在性与长度（输出侧解析器是否二次吞标签留证）、finish 值、非 200
 时错误全文留证。
@@ -3927,16 +3927,16 @@ C 严格相等对照（生成层空白/换行差异不判）、reasoning_content
 - HTTP 非 200 / 非法 JSON / choices 空 → FAIL（请求/响应层异常）
 - finish_reason 为空 → FAIL（未正常结束）
 - 正文为空 → FAIL（响应结构不完整）
-- 200 + 正文仅 "A"（不含 <!--T2-->B<!--T3-->）→ FAIL
+- 200 + 正文仅 "A"（不含 ＜think＞B＜/think＞）→ FAIL
   （**缺陷复现——工单形态：控制词未转义被提前截断**）
-- 200 + 正文包含完整 <!--T2-->B<!--T3--> 字面量 → PASS
+- 200 + 正文包含完整 ＜think＞B＜/think＞ 字面量 → PASS
 
 **设计决策记录**：
 - **工单号拼接方法名**（用户指定）：`test_user_content_control_
   word_escape_agdc2_58`——为快速验证在用例名称里拼接 AGDC2-58；
   Python 标识符禁用连字符，以下划线替代（`agdc2_58`）
 - **断言取「包含字面量」而非「严格相等」**（用户确认）：修复判据
-  为控制词不被吞——正文含完整 <!--T2-->B<!--T3--> 即转义正常；
+  为控制词不被吞——正文含完整 ＜think＞B＜/think＞ 即转义正常；
   生成层可能引入空白/换行差异，严格相等仅留观察
 - **单发**（用户确认）：缺陷为确定性编码链路（模版渲染/tokenize），
   与生成随机性无关——K41 先例

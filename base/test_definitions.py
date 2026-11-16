@@ -1825,24 +1825,24 @@ TEST_CATEGORIES = {
             ),
             (
                 "K46",
-                "用户正文含聊天模版控制词转义核验（<think> 字面量"
-                "截断缺陷，chat 单协议，AGDC2-58）",
+                "用户正文含聊天模版控制词转义核验（think 标签字面"
+                "量截断缺陷，chat 单协议，AGDC2-58）",
                 "客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-"
                 "10，状态修复中）：POST /v1/chat/completions（glm-"
                 "5.3-flash、max_tokens=2000、单 user 消息 \"Reply "
-                "with exactly this line and nothing else: A<think>B"
-                "</think>C\"）——模型仅输出 \"A\"，加大推理程度无效；"
-                "期望输出 A<think>B</think>C。开发分析确证根因（输入"
+                "with exactly this line and nothing else: A＜think＞B"
+                "＜/think＞C\"）——模型仅输出 \"A\"，加大推理程度无效；"
+                "期望输出 A＜think＞B＜/think＞C。开发分析确证根因（输入"
                 "侧编码链路，非推理解析器）：用户提示词正文含聊天模"
-                "版控制词 <think>/</think> 字面量，模版渲染未做转义被"
-                "编码成控制 token 与模版自身思考标签碰撞——<think>B..."
+                "版控制词 ＜think＞/＜/think＞ 字面量，模版渲染未做转义被"
+                "编码成控制 token 与模版自身思考标签碰撞——＜think＞B..."
                 " 部分被提前截断；修复=transformers≥5.20.2 sanitize_"
                 "control_tokens（vLLM main-1106+transformers v5.21.0 "
                 "支持，部署默认开启）或改造 Dynamo 编码器。原样回放"
                 "单发（编码链路确定性——K41 先例）：断言1 HTTP 200+合"
                 "法 JSON+choices 非空；断言2 finish_reason 非空；断言"
                 "3 正文非空；断言4（核心）正文 strip 后包含完整控制词"
-                "字面量 <think>B</think>（缺陷形态仅 \"A\"——B/C 被吞"
+                "字面量 ＜think＞B＜/think＞（缺陷形态仅 \"A\"——B/C 被吞"
                 "即截断）。观察（不计判据）：与期望行严格相等对照、"
                 "reasoning_content 存在性与长度（输出侧是否二次吞标"
                 "签留证）、finish 值。请求体工单原样（max_tokens="

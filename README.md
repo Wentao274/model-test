@@ -281,7 +281,7 @@ pytest -m slow -v                           # 慢速测试
 
 豁免机制（用户口径）：以下用例全局覆盖对其**不生效**，始终按用例自身参数执行——
 
-- **test_k 全部用例（K1-K46，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
+- **test_k 全部用例（K1-K48，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
 - 测试点即采样参数行为的 a-h 用例：A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`（见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
 其余 a-h 用例测试点未指定 temperature/top_p/seed——无全局覆盖时请求一律不带采样参数；设值后走全局参数值（受限模型场景即全量统一携带允许值）。
@@ -305,6 +305,8 @@ pytest -m slow -v                           # 慢速测试
 
 1. **Markdown 汇总报告**：含统计汇总、分类统计、跳过用例说明、测试结论，输出到 `--summary-report-dir`（默认 `allure-report/`）及 `test_reports/`
 2. **Allure 原始数据**：输出到 `--alluredir`（未指定时按 `allure-results/{chip}/{model}/{timestamp}` 自动生成）
+
+乐信 L 套件（`test_lexin_agdc2_65`）另有**专用 HTML 报告**（`base/lexin_html_report.py`）：每请求报文全量折叠呈现，纯 lexin 运行时顶替通用 Markdown 汇总（详见 `docs/test_lexin_agdc2_65.md`「测试报告」）。
 
 ### 目录结构
 
@@ -372,7 +374,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K46，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
+| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K48，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
 | `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_h 与 test_k 下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |

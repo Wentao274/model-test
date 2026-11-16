@@ -50,12 +50,62 @@
 不进 smoke 集；无 P0/P1/P2 标记（套件首跑观察期）。
 """
 
+import inspect
 import json
+import time
 
 import pytest
 import requests
 
 from typing import Any, Dict, Optional
+
+
+def _lexin_current_test() -> str:
+    """栈回溯取当前所属用例方法名（test_* 帧）；无则返回 'unknown'。"""
+    for fr in inspect.stack():
+        fn = fr.function
+        if fn.startswith("test_"):
+            return fn
+    return "unknown"
+
+
+def _lexin_mask_key(headers: Optional[dict]) -> Dict[str, Any]:
+    """请求头脱敏副本：鉴权值打码（前4+****+后4），其余原样。"""
+    masked = {}
+    for k, v in (headers or {}).items():
+        lk = str(k).lower()
+        if lk in ("authorization", "x-api-key") and v:
+            s = str(v)
+            if len(s) <= 12:
+                masked[k] = "****"
+            else:
+                masked[k] = s[:4] + "****" + s[-4:]
+        else:
+            masked[k] = v
+    return masked
+
+
+def _lexin_record(test: str, url: str, kind: str, headers: Optional[dict],
+                  payload: Optional[dict], status=None, elapsed=None,
+                  resp_headers=None, resp_body=None, error=None):
+    """录制一条请求记录（内存态，会话末由 conftest 导出）。"""
+    _LEXIN_RECORDER.append({
+        "test": test,
+        "url": url,
+        "kind": kind,
+        "req_headers": _lexin_mask_key(headers),
+        "req_body": payload,
+        "status": status,
+        "elapsed": elapsed,
+        "resp_headers": dict(resp_headers) if resp_headers else {},
+        "resp_body": resp_body,
+        "error": str(error) if error else None,
+    })
+
+
+# 全量请求录制（报告数据源）：每请求一条，内存态；conftest 在会话末
+# 导出 JSON 并生成 HTML/MD 报告（base/lexin_html_report.py）。
+_LEXIN_RECORDER: list = []
 
 
 def _lexin_url(kind: str, api_client) -> str:
@@ -215,11 +265,13 @@ def _lexin_sse_summary(kind: str, lines) -> Dict[str, Any]:
 
 def _lexin_send(api_client, kind: str, payload: dict,
                 auth: str = "session", extra_headers: Optional[dict] = None) -> Dict[str, Any]:
+    test = _lexin_current_test()
     url = _lexin_url(kind, api_client)
     headers = _lexin_headers(kind, api_client, auth)
     if extra_headers:
         headers.update(extra_headers)
     streaming = _lexin_stream_flag(payload)
+    t0 = __import__("time").time()
     try:
         if auth == "omit":
             resp = requests.post(
@@ -232,10 +284,17 @@ def _lexin_send(api_client, kind: str, payload: dict,
                 timeout=api_client.timeout, stream=streaming,
             )
     except Exception as e:
+        _lexin_record(test, url, kind, headers, payload,
+                      error=e, elapsed=__import__("time").time() - t0)
         pytest.fail(f"请求发送异常（{url}）: {e}")
     status = resp.status_code
     if streaming:
         lines = [ln for ln in resp.iter_lines(decode_unicode=True) if ln]
+        elapsed = __import__("time").time() - t0
+        _lexin_record(test, url, kind, headers, payload,
+                     status=status, elapsed=elapsed,
+                     resp_headers=resp.headers,
+                     resp_body="\n".join(lines))
         if lines and any(ln.startswith("data:") for ln in lines):
             s = _lexin_sse_summary(kind, lines)
             return {"status": status, "raw": f"<SSE 共 {len(lines)} 行>",
@@ -245,6 +304,11 @@ def _lexin_send(api_client, kind: str, payload: dict,
         raw = "\n".join(lines)
     else:
         raw = resp.text
+        elapsed = __import__("time").time() - t0
+        _lexin_record(test, url, kind, headers, payload,
+                      status=status, elapsed=elapsed,
+                      resp_headers=resp.headers,
+                      resp_body=raw)
     try:
         parsed = json.loads(raw)
     except Exception:
