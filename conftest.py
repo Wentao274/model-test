@@ -79,7 +79,10 @@ RAW_SAMPLING_PARAM_TESTS = {
 # 河南乐信 L 套件（test_lexin_agdc2_65.py）同样整模块豁免（用户口径
 # 2026-11-13）：run-432「测试结果报文详情」全量导出的请求体原样发送
 # （官方基准复现），不注入采样参数；新增 L 用例自动适用。
-RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py", "test_lexin_agdc2_65.py"}
+# 浙江讯盟 Z 套件（test_zjxm_agdc2_61.py）同样整模块豁免（用户口径
+# 2026-11-16）：九章功能对比报告 20261110「实际传参」原始报文原样
+# 发送（官方行为复现），不注入采样参数；新增 Z 用例自动适用。
+RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py", "test_lexin_agdc2_65.py", "test_zjxm_agdc2_61.py"}
 
 
 def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
@@ -650,6 +653,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.k_customer_issue)
         elif "test_lexin_" in item.nodeid:
             item.add_marker(pytest.mark.lexin_agdc2_65)
+        elif "test_zjxm_" in item.nodeid:
+            item.add_marker(pytest.mark.zjxm_agdc2_61)
 
     # L 套件（test_lexin_agdc2_65）默认排除口径（用户指定 2026-11-13，
     # 与 Jenkinsfile MARKER_ALL 排除互为双保险）：无显式点名时不收集
@@ -662,6 +667,17 @@ def pytest_collection_modifyitems(config, items):
     )
     if not lexin_explicit:
         items[:] = [i for i in items if "test_lexin_agdc2_65" not in i.nodeid]
+
+    # Z 套件（test_zjxm_agdc2_61）默认排除口径（用户指定 2026-11-16，
+    # 同 L 套件双保险）：无显式点名时不收集 Z 用例——仅当 -m 表达式
+    # 含 zjxm_agdc2_61 或命令行显式指定该文件/节点时收集（Jenkins
+    # 勾选 MARKER_ZJXM_AGDC2_61、本地 -m zjxm_agdc2_61/指定路径均属
+    # 显式；Z 用例不进 SPECIFIC_TEST，用户指定）。
+    zjxm_explicit = "zjxm_agdc2_61" in markexpr or any(
+        "test_zjxm_agdc2_61" in str(a) for a in (config.args or [])
+    )
+    if not zjxm_explicit:
+        items[:] = [i for i in items if "test_zjxm_agdc2_61" not in i.nodeid]
 
 
 def pytest_configure(config):
@@ -690,6 +706,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "lexin_agdc2_65: L类测试 - 河南乐信工单 AGDC2-62/65 glm-5.3 客户卷子 72 用例复现",
+    )
+    config.addinivalue_line(
+        "markers",
+        "zjxm_agdc2_61: Z类测试 - 浙江讯盟工单 AGDC2-61 glm-5.3 功能对比报告失败场景 45 用例复现（42 失败场景 + 3 条官方基线异常守护）",
     )
     config.addinivalue_line("markers", "slow: 慢速测试")
     config.addinivalue_line("markers", "integration: 集成测试")
@@ -997,6 +1017,50 @@ def _generate_lexin_reports(terminalreporter, config, cfg, chip_name,
     return html_path, md_path
 
 
+def _generate_zjxm_reports(terminalreporter, config, cfg, chip_name,
+                           model_name):
+    """浙江讯盟 Z 套件报告：导出请求录制记录 JSON 并生成 HTML + 汇总 MD。
+
+    隔离口径（同 L 套件，用户确认 2026-11-16）：本次运行无任何
+    test_zjxm 节点时直接返回 None——不导入 zjxm 模块、不产生任何输出，
+    通用报告流程与未改动前完全一致；仅 zjxm 实际运行时才生成。
+    返回 (html_path, md_path)。
+    """
+    stats = getattr(terminalreporter, "stats", None) or {}
+    ran = []
+    for key in ("passed", "failed", "skipped", "error"):
+        ran.extend(stats.get(key) or [])
+    if not any(
+        getattr(r, "nodeid", "").startswith("tests/test_zjxm_agdc2_61")
+        for r in ran
+    ):
+        return None
+    from tests.test_zjxm_agdc2_61 import _ZJXM_RECORDER
+    summary_report_dir = (
+        config.getoption("--summary-report-dir", default=None)
+        or "allure-report"
+    )
+    alluredir = (
+        getattr(config.option, "alluredir", None) or "allure-results"
+    )
+    # 导出录制记录（供离线重生成与追溯）
+    os.makedirs(alluredir, exist_ok=True)
+    records_path = os.path.join(
+        os.path.dirname(os.path.abspath(alluredir)), "zjxm_records.json"
+    )
+    with open(records_path, "w", encoding="utf-8") as f:
+        json.dump(_ZJXM_RECORDER, f, ensure_ascii=False, indent=1)
+    from base.zjxm_html_report import generate_reports
+    base_url = config.getoption("--base-url", default=None) or ""
+    html_path, md_path = generate_reports(
+        alluredir, records_path, summary_report_dir,
+        model_name=model_name, base_url=base_url,
+        chip_name=chip_name,
+        engine=config.getoption("--engine", default=None) or "",
+    )
+    return html_path, md_path
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """测试结束后自动生成报告"""
     global _test_results
@@ -1058,6 +1122,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # - 纯 lexin 运行（_test_results 为空——lexin 不注册进
     #   TEST_CATEGORIES、结果不采集）-> 顶替两份通用 MD 报告；
     # - 混合运行 -> 通用 MD 照旧生成，lexin HTML/MD 额外追加。
+    # 浙江讯盟 Z 套件报告（2026-11-16）：同 L 套件口径——纯 zjxm 运行
+    # 顶替通用报告；混合运行（zjxm+lexin 或 zjxm+通用用例）时通用报告
+    # 照旧生成，zjxm HTML/MD 额外追加。
     lexin_report = None
     try:
         lexin_report = _generate_lexin_reports(
@@ -1065,14 +1132,27 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     except Exception as e:
         terminalreporter.write_line(f"乐信 L 套件报告生成失败: {e}")
 
+    zjxm_report = None
+    try:
+        zjxm_report = _generate_zjxm_reports(
+            terminalreporter, config, cfg, chip_name, model.get("name"))
+    except Exception as e:
+        terminalreporter.write_line(f"浙江讯盟 Z 套件报告生成失败: {e}")
+
     if not _test_results:
         if lexin_report:
             html_path, md_path = lexin_report
             terminalreporter.write_sep("=", "乐信 L 套件测试报告已生成")
             terminalreporter.write_line(f"HTML 报告路径: {html_path}")
             terminalreporter.write_line(f"Markdown 汇总路径: {md_path}")
+        if zjxm_report:
+            html_path, md_path = zjxm_report
+            terminalreporter.write_sep("=", "浙江讯盟 Z 套件测试报告已生成")
+            terminalreporter.write_line(f"HTML 报告路径: {html_path}")
+            terminalreporter.write_line(f"Markdown 汇总路径: {md_path}")
+        if lexin_report or zjxm_report:
             return
-        # 非 lexin 且无采集结果（如空跑）——落到通用流程兜底
+        # 非 lexin/zjxm 且无采集结果（如空跑）——落到通用流程兜底
 
     # 使用公共报告生成器 (保留原有的 Markdown 报告)
     test_date = datetime.now().strftime("%Y-%m-%d")

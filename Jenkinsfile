@@ -10,6 +10,7 @@ def selectedMarkerList() {
         ['MARKER_H_CLEAR_THINKING', 'h_clear_thinking'],
         ['MARKER_K_CUSTOMER_ISSUE', 'k_customer_issue'],
         ['MARKER_LEXIN_AGDC2_65', 'lexin_agdc2_65'],
+        ['MARKER_ZJXM_AGDC2_61', 'zjxm_agdc2_61'],
         ['MARKER_GLM52', 'GLM52'],
         ['MARKER_GLM53', 'GLM53'],
         ['MARKER_KIMIK3', 'KimiK3'],
@@ -32,7 +33,7 @@ def selectedMarkerList() {
 def markerDisplayText() {
     def selected = selectedMarkerList()
     if (params.MARKER_ALL || selected.isEmpty()) {
-        return 'all (全部测试，不含 L 类 lexin_agdc2_65)'
+        return 'all (全部测试，不含 L 类 lexin_agdc2_65 与 Z 类 zjxm_agdc2_61)'
     }
     return selected.join(', ')
 }
@@ -52,8 +53,8 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K48，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
-        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65——L 类仅勾选 MARKER_LEXIN_AGDC2_65 或 SPECIFIC_TEST 点名时执行）')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K48，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）、test_zjxm_agdc2_61 全部 45 用例（九章功能对比报告 20261110「实际传参」原始报文 + 20261116 复测报告补入 3 条，原样发送，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65 与 Z 类 test_zjxm_agdc2_61——L/Z 类仅勾选对应 MARKER 或 SPECIFIC_TEST 点名（Z 类暂不进 SPECIFIC_TEST）时执行）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
         booleanParam(name: 'MARKER_C_MULTIMODAL', defaultValue: false, description: 'C类测试 - 多模态能力')
@@ -64,6 +65,7 @@ pipeline {
         booleanParam(name: 'MARKER_H_CLEAR_THINKING', defaultValue: false, description: 'H类测试 - clear_thinking 参数行为')
         booleanParam(name: 'MARKER_K_CUSTOMER_ISSUE', defaultValue: false, description: 'K类测试 - 反馈问题验证')
         booleanParam(name: 'MARKER_LEXIN_AGDC2_65', defaultValue: false, description: 'L类测试 - 河南乐信工单 AGDC2-62/65 glm-5.3 客户卷子 72 用例复现')
+        booleanParam(name: 'MARKER_ZJXM_AGDC2_61', defaultValue: false, description: 'Z类测试 - 浙江讯盟工单 AGDC2-61 glm-5.3 功能对比报告失败场景 45 用例复现（42 失败场景预期遵循智谱官方行为；3 条官方基线异常守护预期遵循九章复测基线，20261116 复测报告补入；不进 SPECIFIC_TEST，用户指定）')
         booleanParam(name: 'MARKER_GLM52', defaultValue: false, description: 'GLM-5.2 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_GLM53', defaultValue: false, description: 'GLM-5.3 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_KIMIK3', defaultValue: false, description: 'Kimi K3 模型缺陷相关用例（K套件按模型分组标记）')

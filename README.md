@@ -282,6 +282,7 @@ pytest -m slow -v                           # 慢速测试
 豁免机制（用户口径）：以下用例全局覆盖对其**不生效**，始终按用例自身参数执行——
 
 - **test_k 全部用例（K1-K48，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
+- **test_lexin_agdc2_65 全部 72 用例 / test_zjxm_agdc2_61 全部 45 用例（同模块级规则）**：客户卷子/功能对比报告原始报文原样重放（含采样参数的保留原值，未含参数的不注入）；
 - 测试点即采样参数行为的 a-h 用例：A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`（见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
 其余 a-h 用例测试点未指定 temperature/top_p/seed——无全局覆盖时请求一律不带采样参数；设值后走全局参数值（受限模型场景即全量统一携带允许值）。
@@ -307,6 +308,8 @@ pytest -m slow -v                           # 慢速测试
 2. **Allure 原始数据**：输出到 `--alluredir`（未指定时按 `allure-results/{chip}/{model}/{timestamp}` 自动生成）
 
 乐信 L 套件（`test_lexin_agdc2_65`）另有**专用 HTML 报告**（`base/lexin_html_report.py`）：每请求报文全量折叠呈现，纯 lexin 运行时顶替通用 Markdown 汇总（详见 `docs/test_lexin_agdc2_65.md`「测试报告」）。
+
+浙江讯盟 Z 套件（`test_zjxm_agdc2_61`）另有**专用 HTML 对比报告**（`base/zjxm_html_report.py`）：九章对比报告风格——每用例「智谱官方预期 vs 实测」两侧对比，纯 zjxm 运行时顶替通用 Markdown 汇总（详见 `docs/test_zjxm_agdc2_61.md`「测试报告」）。
 
 ### 目录结构
 
