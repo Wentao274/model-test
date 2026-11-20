@@ -94,6 +94,7 @@
 | K46 | 用户正文含聊天模版控制词转义核验（＜think＞ 字面量截断缺陷，chat 单协议，AGDC2-58） | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A＜think＞B＜/think＞C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A＜think＞B＜/think＞C。开发分析确证根因（输入侧编码链路，非推理解析器）：用户提示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面量，transformers 应用聊天模版时未对用户输入关键字做转义——渲染时被编码成模版控制 token 与模版自身思考标签碰撞，令牌器无法区分用户正文与模版控制词——＜think＞B... 部分被提前截断。修复=transformers≥5.20.2 chat_template_kwargs {"sanitize_control_tokens": true}（vLLM main-1106+transformers v5.21.0 支持，部署默认开启 --default-chat-template-kwargs）或改造 Dynamo 自制编码器（dynamo-renderer==6.0.0/dynamo-tokenizers==2.0.0） | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量 ＜think＞B＜/think＞（缺陷形态仅 "A"——B/C 被吞即截断；修复后正文应含完整标签字面量） | P0 |
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_effort+disabled 双方不思考；reasoning_effort（low/medium/high/max）双方思考（渠道唯一开思考通路）——预期全按官方行为断言 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景）reasoning 空+reasoning_tokens==0+content 非空+finish_reason 非空；相邻 3s；超时沿用全局；model 环境注入；仅 Kimi-K3；无新增数据文件 | P0 |
 | K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——渠道未支持智谱官方参数（官方：每帧返回当前累计用量，prompt_tokens 恒定、completion/reasoning 逐帧累计；区别于 OpenAI include_usage 仅末帧 usage）——预期按官方行为断言 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage（缺失即缺陷复现）；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用；无新增数据文件 | P0 |
+| K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，在消息解析层抛出内部异常），客户端按瞬时故障多次重试无果——预期不支持的输入类型前置 4xx 拒绝（400 明确错误），调用方可区分调用方式问题与服务故障 | 单发 chat 流式（自拟请求体：text 询问+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入）：断言1（核心）HTTP 400（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）；断言2 400 错误体含明确错误信息（error.code 记录观察，整改目标 code 落地前不硬断）；直接 session.post 直发观察首响；超时沿用全局；KimiK3+KimiK31；无新增数据文件 | P0 |
 
 
 ## 运行方式
@@ -4092,4 +4093,69 @@ temperature/top_p 工单原值原样保留（套件豁免全局采样覆盖）�
 - chunk_include_usage（智谱，每帧累计）≠ include_usage（OpenAI，末帧
   usage）——本用例仅覆盖前者
 - 本用例为缺陷复现用例：修复部署前预期 FAIL，支持后转 PASS
+- 不进 smoke 集：新用例首跑观察期
+
+## test_kimi_video_base64_stream_agdc2_70 (K49)
+
+- **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_kimi_video_base64_stream_agdc2_70`
+- **优先级**：P0（2026-11-20 追加）
+- **marker**：`k_customer_issue` / `KimiK3` / `KimiK31` / `p0`
+- **协议**：chat 单协议（流式）
+- **来源**：客户反馈（2026-11-20，kimi-k3.1 视频 base64 流式提交返回 500）
+
+**背景**：客户以 base64 方式向 kimi 模型提交视频并走流式（stream=true），
+渠道返回 HTTP 500，客户端按瞬时故障多次重试后中止。原因：接入点当前
+仅开放文本与图像两条通路，视频通路未启用；请求未被前置拒绝，传入消
+息解析层后找不到对应的视频处理分支，抛出内部异常，对外统一返回 500。
+该 500 不表示服务故障——正确的行为是接入层对不支持的输入类型前置校
+验，直接返回 400 明确错误（整改目标 error.code=unsupported_content_type，
+错误信息写明当前支持的输入类型），调用方据此即可区分「调用方式问题」
+与「服务故障」，不再无效重试。
+
+**请求构造**：单发流式（客户场景 stream=true），请求体自拟：messages=
+[{"role": "user", "content": [{"type": "text", "text": "请描述这段视频的
+内容。"}, {"type": "video_url", "video_url": {"url": "data:video/mp4;
+base64,<内置最小合法 MP4 头>"}}]}]；model 环境注入；max_tokens/thinking
+等未指定——不注入（test_k 独立性规则）。视频字节为内置最小合法 MP4
+（ftyp+mdat 空数据共 40 字节）——模态校验/解析按 content 块 type 路由，
+与视频内容字节无关；形态参考 test_c_multimodal 公网样例 flower.mp4，
+内置字节避免外网依赖。发送方式为直接 `session.post` 直发（观察首响状
+态码——`_post_with_retry` 的 5xx 重试会掩盖客户反馈的「500 触发多次
+重试」形态）。
+
+**断言**：
+1. 断言1（核心）：HTTP 400——不支持的模态应前置 4xx 拒绝
+2. 断言2：400 错误体可解析 JSON 且含明确错误信息（error 外层或
+   message 非空；error.code 记录观察——整改目标 code 落地前不硬断）
+
+**观察记录**（不计判据，留日志）：响应耗时、错误体全文、error.code
+取值。
+
+**判定矩阵**：
+- HTTP 5xx → FAIL（**缺陷复现——内部异常对外，应前置模态校验返回
+  400**）
+- HTTP 200 → FAIL（未按预期拒绝——视频通路未启用但请求被放行）
+- HTTP 400 但错误体无明确错误信息 → FAIL（调用方无法识别不支持的
+  输入类型）
+- HTTP 400 + 错误信息明确 → PASS
+
+**设计决策记录**：
+- **断 400 精确值**（用户指定 2026-11-20）：我方整改承诺为 400 +
+  unsupported_content_type；5xx 属缺陷复现、200/其他 4xx 属未按预
+  期——首版按 400 硬断，落地后若出现其他 4xx 合法形态再放宽
+- **错误信息不硬断 code**：整改目标 unsupported_content_type 未落地
+  前仅记录观察（error 外层或 message 非空即满足「可区分」诉求）
+- **内置最小 MP4 头**：模态路由按 content 块 type 而非内容字节，最
+  小合法头即可触发视频通路判定；避免外网下载依赖与 fixture 新增
+- **直发不重试**：观察首响状态码，对齐客户反馈的「首响即 500」事实
+- **双 marker KimiK3+KimiK31**：视频通路模态校验为 kimi 系接入层行
+  为，两个模型分组均适用（KimiK31 为本用例新增的分组标记）
+- **P0**：客户报障接入层校验缺失（500 误导客户端无效重试）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 本用例为缺陷复现用例：整改部署前预期 FAIL（当前渠道返回 500），
+  前置模态校验落地后转 PASS
+- 视频 URL 为 data:video/mp4;base64 形态（Kimi/OpenAI 兼容惯例的
+  base64 提交方式）；公网 URL 形态的视频输入不在本用例范围
 - 不进 smoke 集：新用例首跑观察期

@@ -1906,6 +1906,28 @@ TEST_CATEGORIES = {
                 "P0",
                 "流式请求设置 stream_options.chunk_include_usage=true 后，SSE 各数据帧应携带累计 usage（prompt/completion/total tokens），中间帧缺失 usage 即未支持该参数",
             ),
+            (
+                "K49",
+                "kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议）",
+                "客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频并走流式，"
+                "渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，在消息解析层抛出"
+                "内部异常），客户端按瞬时故障多次重试无果。预期不支持的输入类型前置 4xx "
+                "拒绝（400 明确错误）——调用方可区分调用方式问题与服务故障、不再无效重试。"
+                "断言（当前渠道预期 FAIL——缺陷复现）：HTTP 400（5xx=缺陷复现、200/其他="
+                "未按预期拒绝，均 FAIL）+ 400 错误体可解析 JSON 且含明确错误信息（error "
+                "外层或 message 非空；error.code 记录观察，整改目标 unsupported_content_type "
+                "落地前不硬断）。请求体自拟：messages=[user：text 询问+video_url 块"
+                "（data:video/mp4;base64 内置最小合法 MP4 头 ftyp+mdat 40 字节——模态校验"
+                "按 content 块 type 路由与内容字节无关，形态参考 test_c_multimodal 公网样例 "
+                "flower.mp4，内置避免外网依赖）]、stream=true（客户场景流式）；model 环境"
+                "注入；max_tokens/thinking 等未指定不注入。直接 session.post 直发（观察首"
+                "响状态码，5xx 重试会掩盖客户反馈形态）；单发流式；超时沿用全局。chat 单"
+                "协议；KimiK3+KimiK31（视频通路模态校验为 kimi 系接入层行为）。无新增数据"
+                "文件",
+                "kimi_video_base64_stream_agdc2_70",
+                "P0",
+                "以 base64 方式提交视频并走流式，不支持的输入类型应前置返回 400 明确错误（而非 5xx 内部异常），错误体应含明确错误信息",
+            ),
         ],
     },
 }

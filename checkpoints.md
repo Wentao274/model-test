@@ -235,13 +235,14 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K46 | 用户正文含聊天模版控制词转义核验（  | 用户正文含聊天模板特殊标记时应被正确转义/处理，不得被解析为模板指令而影响生成 | 原样回放单发（编码链路确定性——K41 先例）：请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量  | P0  |
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 思考开关五种参数形态应与 Kimi-K3 官方行为一致：不传与 thinking={"type": "enabled"} 应回思考，thinking={"type": "disabled"} 与 effort+disabled 不应思考，reasoning_effort（low/medium/high/max）应思考 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考场景 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景 S1/S2/S4×4）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景 S3/S5）reasoning 空+reasoning_tokens==0+content 非空+finish 非空；相邻 3s；超时沿用全局；model 环境注入；仅 KimiK3 | P0  |
 | K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 流式请求设置 stream_options.chunk_include_usage=true 后，SSE 各数据帧应携带累计 usage（prompt/completion/total tokens 及 details），中间帧缺失 usage 即未支持该智谱官方参数 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage——缺失即缺陷复现；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减（累计语义）；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用 | P0  |
+| K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 以 base64 方式提交视频并走流式，不支持的输入类型应前置返回 400 明确错误（而非 5xx 内部异常——接入层模态校验缺失致客户端无效重试） | 单发 chat 流式（自拟请求体：text+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入；直接 session.post 直发观察首响）：断言1（核心）HTTP 400——5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL；断言2 400 错误体含明确错误信息（error.code 记录观察不硬断）；超时沿用全局；KimiK3+KimiK31 | P0  |
 
 
 ---
 
 ## 三、测试执行优先级建议
 
-### P0（上线必测，60 项）
+### P0（上线必测，61 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -253,10 +254,10 @@ E1, E4           稳定性 2 项（E1 空输入、E4 特殊字符注入；E2/E3/
 F1, F3, F4, F6, F7   API 兼容 5 项（F3 模型列表升至 P0，F7 Responses API 新增）
 G1, G4, G5, G6, G7, G8, G9, G12  Chat Completions API 质量评估 8 项（G2 降为 P1，G8 升至 P0）
                      clear_thinking 参数行为 0 项（H 类全部降为 P1/P2，仅做选测）
-K1-K3, K5-K7, K10-K14, K16, K18, K20, K22-K25, K27-K29, K36-K40, K42, K45-K48  反馈问题验证 31 项（均 P0，客户报障必测；经使用重要性重划，2026-11-11 用户确认）
+K1-K3, K5-K7, K10-K14, K16, K18, K20, K22-K25, K27-K29, K36-K40, K42, K45-K49  反馈问题验证 32 项（均 P0，客户报障必测；经使用重要性重划，2026-11-11 用户确认；K49 于 2026-11-20 追加）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 31 = 60 项。
+总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 32 = 61 项。
 
 K46（AGDC2-58 · 杭州永沐科技，P0，仅 GLM53FLASH）用户正文含聊天
 模版控制词转义核验——消息正文含 ＜think＞B＜/think＞ 字面量（期望输出 A＜think＞B＜/think＞C）仅输出 "A"：模版渲染未转义控制词被编码

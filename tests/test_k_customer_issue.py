@@ -3,8 +3,8 @@ K. 反馈问题验证测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
-2026-11-11）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45-K48 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+2026-11-11；K49 于 2026-11-20 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
+K36-K40、K42、K45-K49 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -1109,6 +1109,19 @@ K36-K40、K42、K45-K48 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   finish_reason 非空+[DONE] 收到。请求体工单原样（仅 model 环境
   注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注
   入）；单发；chat 单协议。仅 GLM-5.3。无新增数据文件。（不进
+  smoke 集：新用例首跑观察期；1 请求）
+- K49: kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） [P0]
+  客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频
+  并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，
+  在消息解析层抛出内部异常），客户端按瞬时故障多次重试无果。预期
+  不支持的输入类型前置 4xx 拒绝（400 明确错误），调用方可区分调用
+  方式问题与服务故障、不再无效重试。断言：HTTP 400（5xx=缺陷复现、
+  200/其他=未按预期拒绝，均 FAIL）+ 400 错误体含明确错误信息
+  （error.code 记录观察，整改目标 code 落地前不硬断）。请求体：
+  messages=[user：text+video_url 块（data:video/mp4;base64 内置最小
+  合法 MP4 头，形态参考 test_c_multimodal 公网样例 flower.mp4）]、
+  stream=true；model 环境注入；max_tokens/thinking 未指定不注入。
+  单发流式；chat 单协议。KimiK3+KimiK31。无新增数据文件。（不进
   smoke 集：新用例首跑观察期；1 请求）
 """
 
@@ -14556,4 +14569,124 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             " 内容的每个数据帧均携带累计 usage（三项 tokens 非负、"
             "completion_tokens 单调不减），中间帧缺失 usage 缺陷未"
             "复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
+    @pytest.mark.KimiK31
+    @pytest.mark.p0
+    def test_kimi_video_base64_stream_agdc2_70(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K49 [P0]: 客户问题 - kimi 视频 base64 流式提交应 400 而非 5xx
+        （chat 单协议）
+
+        客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视
+        频并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置
+        拒绝，在消息解析层抛出内部异常），客户端按瞬时故障多次重试无
+        果。预期：接入层对不支持的输入类型前置校验，直接返回 400 明
+        确错误（而非 5xx）——调用方据此即可区分「调用方式问题」与
+        「服务故障」，不再无效重试。
+        请求体：messages=[user：text 询问 + video_url 块（data:video/
+        mp4;base64 内置最小合法 MP4 头——视频形态参考
+        test_c_multimodal 公网样例 flower.mp4，内置字节避免外网依
+        赖）]、stream=true（客户场景流式）；model 环境注入；
+        max_tokens/thinking 等未指定——不注入。
+        判定：
+        1. 断言1（核心）：HTTP 400——不支持的模态应前置 4xx 拒绝；
+           5xx 为缺陷复现（内部异常对外），200/其他为未按预期拒绝，
+           均 FAIL
+        2. 断言2：400 错误体可解析 JSON 且含明确错误信息（error 外层
+           或 message 非空；error.code 记录观察——整改目标 code 落地
+           前不硬断）
+        观察（不计判据）：响应耗时、错误体全文、error.code 取值。超
+        时沿用全局。chat 单协议。KimiK3+KimiK31（视频通路模态校验为
+        kimi 系接入层行为）。无新增数据文件。（不进 smoke 集：新用例
+        首跑观察期；1 请求）
+        """
+        # K49: 内置最小合法 MP4（ftyp+mdat 空数据，40 字节——模态校验/
+        # 解析按 content 块 type 路由，与视频内容字节无关；形态参考
+        # test_c_multimodal 公网样例 flower.mp4，避免外网依赖）
+        ftyp = ((32).to_bytes(4, "big") + b"ftyp" + b"isom"
+                + (512).to_bytes(4, "big") + b"isomiso2avc1mp41")
+        mdat = (8).to_bytes(4, "big") + b"mdat"
+        video_b64 = base64.b64encode(ftyp + mdat).decode("ascii")
+
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请描述这段视频的内容。"},
+                    {"type": "video_url",
+                     "video_url": {"url": f"data:video/mp4;base64,{video_b64}"}},
+                ],
+            }],
+            "stream": True,
+        }
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - kimi 视频 base64 流式提交应 400 "
+            "而非 5xx（video_url data:video/mp4;base64 内置最小 MP4 头，"
+            "stream=true，model 环境注入）==="
+        )
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        headers: Dict[str, Any] = {"Content-Type": "application/json"}
+        if api_client.api_key:
+            headers["Authorization"] = f"Bearer {api_client.api_key}"
+        start_time = time.time()
+        # K49: 直接 session.post 直发——观察首响状态码（5xx 重试会掩盖
+        # 客户反馈的「500 触发多次重试」形态，不走 _post_with_retry）
+        response = api_client.session.post(
+            chat_url, json=payload, headers=headers,
+            timeout=api_client.timeout, stream=True,
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+        test_logger.info(
+            f"K49 请求 1 实测: HTTP {status}, elapsed={elapsed:.1f}s, "
+            f"响应: {body_text[:300]}"
+        )
+
+        # 断言1（核心）：HTTP 400——不支持的模态应前置 4xx 拒绝
+        assert status == 400, (
+            f"K49: 视频 base64 流式提交应返回 400（不支持的输入类型前置"
+            f"拒绝），实测 HTTP {status}"
+            + ("——缺陷复现：内部异常对外 5xx（应前置模态校验返回 400 "
+               "明确错误，调用方无法区分调用问题与服务故障）"
+               if status >= 500 else "")
+            + ("——未按预期拒绝（视频通路未启用但请求被放行）"
+               if status == 200 else "")
+            + f"，elapsed={elapsed:.1f}s，响应: {body_text[:500]}"
+        )
+
+        # 断言2：400 错误体可解析 JSON 且含明确错误信息
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        err = data.get("error") if isinstance(data, dict) else None
+        has_err_msg = (
+            isinstance(err, dict)
+            and (str(err.get("message") or "").strip()
+                 or str(err.get("code") or "").strip())
+        ) or (
+            isinstance(data, dict)
+            and bool(str(data.get("message") or "").strip())
+        )
+        assert has_err_msg, (
+            f"K49: 400 错误体应含明确错误信息（error 外层或 message 非"
+            f"空——调用方需据此识别不支持的输入类型），"
+            f"实测: {body_text[:500]}"
+        )
+        err_code = err.get("code") if isinstance(err, dict) else None
+        test_logger.info(
+            f"K49 400 错误体: error.code={err_code!r}（整改目标 "
+            f"unsupported_content_type 落地前不硬断，记录观察），"
+            f"error={err!r}"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: 视频 base64 流式提交返回 400 且错误"
+            "信息明确（模态前置校验已生效，内部异常对外 500 缺陷未复现）"
         )
