@@ -3,8 +3,8 @@ K. 反馈问题验证测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
-2026-11-11；K49 于 2026-11-20 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45-K49 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+2026-11-11；K49/K50 于 2026-11-20 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
+K36-K40、K42、K45-K50 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -1123,6 +1123,22 @@ K36-K40、K42、K45-K49 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   stream=true；model 环境注入；max_tokens/thinking 未指定不注入。
   单发流式；chat 单协议。KimiK3+KimiK31。无新增数据文件。（不进
   smoke 集：新用例首跑观察期；1 请求）
+- K50: Kimi-K3 消息级动态工具声明核验（chat 单协议） [P0]
+  客户问题（工单 AGDC2-71，2026-11-20）：同一提示词同一工具定义
+  （read_probe_code），仅 messages[].tools 声明时返回 stop 无 tool_
+  calls（疑似消息级声明被静默忽略），顶层 tools 则正常调用。客户
+  诉求：确认是否支持消息级动态工具声明。按 Kimi 官方行为断言：
+  messages[].tools 应与顶层 tools 等价可调用——被忽略属缺陷复现
+  （静默吞掉工具定义）。4 组对照（同提示词同工具定义仅声明位置/
+  形态不同）：S1 消息级非流式（核心）、S2 顶层非流式（对照前置，
+  对照失败则判定不可归因）、S3 消息级流式、S4 长输入变体（4096
+  英文词还原客户缓存测试上下文）；断言各组 200+finish_reason=
+  tool_calls+tool_calls 含 read_probe_code（arguments 合法 JSON）；
+  usage.prompt_tokens 记录观察（客户口径 4096 词 ≈ 4196-4198
+  token，留观不硬断）。请求体自拟（工单仅含参数形态）：短指令
+  prompt+最小工具 schema；model 环境注入；max_tokens 小预算；未
+  指定参数不注入。chat 单协议。仅 KimiK3。无新增数据文件。（不
+  进 smoke 集：新用例首跑观察期；4 请求）
 """
 
 import base64
@@ -14689,4 +14705,251 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             "客户问题整改验证通过: 视频 base64 流式提交返回 400 且错误"
             "信息明确（模态前置校验已生效，内部异常对外 500 缺陷未复现）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
+    @pytest.mark.p0
+    def test_kimik3_message_level_tools_agdc2_71(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K50 [P0]: 客户问题 - Kimi-K3 消息级动态工具声明核验
+        （messages[].tools 应与顶层 tools 等价可调用，chat 单协议）
+
+        客户问题（工单 AGDC2-71，2026-11-20）：同一提示词、同一工具
+        定义（read_probe_code），仅在 messages[].tools 声明时返回
+        finish_reason="stop"、无 tool_calls（疑似消息级声明被静默忽
+        略）；改为顶层 tools 后 finish_reason="tool_calls"、成功调用。
+        客户诉求：确认是否支持消息级动态工具声明，支持则提供请求示
+        例。全部请求 HTTP 200 无错误状态。按 Kimi 官方行为断言：
+        messages[].tools 应与顶层 tools 等价（tool_calls 可调用）——
+        消息级声明被忽略属缺陷复现（静默吞掉工具定义，调用方无任
+        何信号）。
+        请求体自拟（工单仅含参数形态不含报文/schema）：短指令提示词
+        + 最小 read_probe_code 函数 schema；4 组对照（同一提示词、同
+        一工具定义，仅声明位置/形态不同）：S1 消息级 tools 非流式
+        （核心）、S2 顶层 tools 非流式（对照组）、S3 消息级 tools
+        流式、S4 长输入变体（4096 英文词还原客户缓存测试上下文，
+        消息级 tools 非流式）；model 环境注入；max_tokens 小预算；
+        temperature/thinking 等未指定不注入。
+        判定：
+        1. 断言1（对照前置）：S2 顶层组 200 + finish_reason=tool_calls
+           + tool_calls 含 read_probe_code——对照组失败则环境/工具定
+           义异常，S1 判定不可归因
+        2. 断言2（核心）：S1 消息级组 200 + finish_reason=tool_calls
+           + tool_calls 含 read_probe_code——stop 或无 tool_calls 为
+           缺陷复现（消息级声明被静默忽略）
+        3. 断言3：S3 流式组 200 + SSE tool_calls 增量帧 + finish_
+           reason=tool_calls——流式形态同等要求
+        4. 断言4：S4 长输入组同 S1 断言（长上下文下消息级声明同
+           样应生效）；usage.prompt_tokens 记录观察（客户口径 4096
+           词 ≈ 4196-4198 token，实测留观不硬断）
+        观察（不计判据）：各组 content/finish_reason/usage 全文、
+        耗时；S1 被忽略时 content 是否提及工具（工具定义被当普通
+        文本处理的旁证）。超时沿用全局。chat 单协议。仅 KimiK3
+        （消息级动态工具声明为 kimi 系特性）。无新增数据文件。
+        （不进 smoke 集：新用例首跑观察期；4 请求）
+        """
+        # K50: 工具定义自拟（工单仅含工具名 read_probe_code，未含
+        # schema）——按「读取探针代码」语义构造最小参数集
+        K50_TOOL = {
+            "type": "function",
+            "function": {
+                "name": "read_probe_code",
+                "description": "读取指定探针的源代码",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "probe_name": {
+                            "type": "string",
+                            "description": "探针名称",
+                        },
+                    },
+                    "required": ["probe_name"],
+                },
+            },
+        }
+        K50_PROMPT = ("请调用 read_probe_code 工具读取名为 video_probe "
+                      "的探针代码，必须使用工具，不要自己回答。")
+
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        headers: Dict[str, Any] = {"Content-Type": "application/json"}
+        if api_client.api_key:
+            headers["Authorization"] = f"Bearer {api_client.api_key}"
+
+        def _k50_send(payload, streaming=False):  # noqa: E501
+            start = time.time()
+            resp = api_client.session.post(
+                chat_url, json=payload, headers=headers,
+                timeout=api_client.timeout, stream=streaming,
+            )
+            return resp, time.time() - start
+
+        def _k50_check_tool_call(scenario, resp, elapsed, from_sse=False):
+            """200 + finish_reason=tool_calls + tool_calls 含
+            read_probe_code（非流式 JSON / SSE 双形态）。"""
+            status = resp.status_code
+            if from_sse:
+                lines = [ln for ln in resp.iter_lines(decode_unicode=True) if ln]
+                body_text = "\n".join(lines)
+                assert status == 200, (
+                    f"K50 {scenario}: HTTP {status}（预期 200），"
+                    f"elapsed={elapsed:.1f}s，响应: {body_text[:300]}"
+                )
+                tool_chunks = []
+                finish_reason = None
+                done = False
+                for ln in lines:
+                    if ln.strip() == "data: [DONE]":
+                        done = True
+                        continue
+                    if not ln.startswith("data:"):
+                        continue
+                    try:
+                        ev = json.loads(ln[5:].strip())
+                    except ValueError:
+                        continue
+                    chs = ev.get("choices") or []
+                    if not chs:
+                        continue
+                    delta = (chs[0] or {}).get("delta") or {}
+                    if delta.get("tool_calls"):
+                        tool_chunks.extend(delta["tool_calls"])
+                    if (chs[0] or {}).get("finish_reason"):
+                        finish_reason = chs[0]["finish_reason"]
+                names = [(tc.get("function") or {}).get("name")
+                         for tc in tool_chunks if isinstance(tc, dict)]
+                assert finish_reason == "tool_calls", (
+                    f"K50 {scenario}: 流式 finish_reason 应为 tool_calls"
+                    f"（消息级声明应可调用），实测 {finish_reason!r}"
+                    f"（done={done}，tool_calls 帧 {len(tool_chunks)}）"
+                    f"——stop/无 tool_calls 为消息级声明被静默忽略（缺陷"
+                    f"复现）；SSE 截 300: {body_text[:300]}"
+                )
+                assert "read_probe_code" in names, (
+                    f"K50 {scenario}: 流式 tool_calls 应含 "
+                    f"read_probe_code，实测工具名序列 {names!r}"
+                )
+                test_logger.info(
+                    f"K50 {scenario}: 流式 finish_reason=tool_calls，"
+                    f"tool_calls 帧 {len(tool_chunks)}（{names!r}），"
+                    f"[DONE]={done}，elapsed={elapsed:.1f}s"
+                )
+                return
+            body_text = resp.text
+            assert resp.status_code == 200, (
+                f"K50 {scenario}: HTTP {resp.status_code}（预期 200），"
+                f"elapsed={elapsed:.1f}s，响应: {body_text[:300]}"
+            )
+            try:
+                data = resp.json()
+            except ValueError:
+                data = None
+            choices = (data or {}).get("choices") or []
+            assert choices, (
+                f"K50 {scenario}: 响应体异常（非法 JSON/choices 空）: "
+                f"{body_text[:300]}"
+            )
+            ch0 = choices[0] or {}
+            finish_reason = ch0.get("finish_reason")
+            message = ch0.get("message") or {}
+            tool_calls = message.get("tool_calls") or []
+            assert finish_reason == "tool_calls", (
+                f"K50 {scenario}: finish_reason 应为 tool_calls（工具声"
+                f"明应可调用），实测 {finish_reason!r}，content="
+                f"{str(message.get('content'))[:120]!r}"
+                f"——stop/无 tool_calls 为声明被静默忽略（缺陷复现）；"
+                f"响应: {body_text[:300]}"
+            )
+            names = [(tc.get("function") or {}).get("name")
+                     for tc in tool_calls if isinstance(tc, dict)]
+            assert "read_probe_code" in names, (
+                f"K50 {scenario}: tool_calls 应含 read_probe_code，"
+                f"实测工具名序列 {names!r}"
+            )
+            args = [(tc.get("function") or {}).get("arguments")
+                    for tc in tool_calls
+                    if isinstance(tc, dict)
+                    and (tc.get("function") or {}).get("name") == "read_probe_code"]
+            for a in args:
+                json.loads(a)  # arguments 应为合法 JSON 字符串
+            usage = (data or {}).get("usage") or {}
+            test_logger.info(
+                f"K50 {scenario}: finish_reason=tool_calls，工具 "
+                f"{names!r}，usage.prompt_tokens="
+                f"{usage.get('prompt_tokens')!r}，elapsed={elapsed:.1f}s"
+            )
+            return usage
+
+        # ---- S2 顶层 tools（对照组，先发——对照失败则判定不可归因）----
+        payload_s2: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{"role": "user", "content": K50_PROMPT}],
+            "tools": [K50_TOOL],
+            "max_tokens": 256,
+        }
+        resp, elapsed = _k50_send(payload_s2)
+        try:
+            _k50_check_tool_call("S2 顶层 tools（对照组）", resp, elapsed)
+        except AssertionError as e:
+            pytest.fail(
+                f"K50 对照组异常（顶层 tools 未正常调用，消息级判定不"
+                f"可归因——工具定义/环境问题）: {e}"
+            )
+
+        # ---- S1 消息级 tools（核心，客户形态）----
+        payload_s1: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": K50_PROMPT,
+                "tools": [K50_TOOL],
+            }],
+            "max_tokens": 256,
+        }
+        resp, elapsed = _k50_send(payload_s1)
+        _k50_check_tool_call("S1 消息级 tools（核心）", resp, elapsed)
+
+        # ---- S3 消息级 tools + 流式 ----
+        payload_s3: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": K50_PROMPT,
+                "tools": [K50_TOOL],
+            }],
+            "max_tokens": 256,
+            "stream": True,
+        }
+        resp, elapsed = _k50_send(payload_s3, streaming=True)
+        _k50_check_tool_call("S3 消息级 tools 流式", resp, elapsed,
+                             from_sse=True)
+
+        # ---- S4 长输入变体（4096 英文词还原客户缓存测试上下文）----
+        # 自然英文重复句凑精确 4096 词（10 词/句 × 409 + 6 词）
+        base_words = ("lorem ipsum dolor sit amet consectetur "
+                      "adipiscing elit sed").split()
+        words = (base_words * 410)[:4096]
+        long_text = " ".join(words)
+        payload_s4: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": long_text + "\n\n" + K50_PROMPT,
+                "tools": [K50_TOOL],
+            }],
+            "max_tokens": 256,
+        }
+        resp, elapsed = _k50_send(payload_s4)
+        usage_s4 = _k50_check_tool_call("S4 长输入消息级 tools", resp,
+                                        elapsed)
+        test_logger.info(
+            f"K50 S4 长输入观察: 输入 {len(words)} 词，实测 "
+            f"prompt_tokens={usage_s4.get('prompt_tokens')!r}"
+            f"（客户口径 4096 词 ≈ 4196-4198 token，留观不硬断）"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: 消息级动态工具声明与顶层 tools 等价"
+            "（S1/S3/S4 均 finish_reason=tool_calls 并成功调用 "
+            "read_probe_code）——消息级声明被静默忽略缺陷未复现"
         )

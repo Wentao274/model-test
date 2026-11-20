@@ -1928,6 +1928,29 @@ TEST_CATEGORIES = {
                 "P0",
                 "以 base64 方式提交视频并走流式，不支持的输入类型应前置返回 400 明确错误（而非 5xx 内部异常），错误体应含明确错误信息",
             ),
+            (
+                "K50",
+                "Kimi-K3 消息级动态工具声明核验（chat 单协议）",
+                "客户问题（工单 AGDC2-71，2026-11-20）：同一提示词、同一工具定义"
+                "（read_probe_code），仅在 messages[].tools 声明时返回 finish_reason="
+                "\"stop\"、无 tool_calls（疑似消息级声明被静默忽略）；改为顶层 tools 后"
+                " finish_reason=\"tool_calls\"、成功调用。客户诉求：确认是否支持消息级"
+                "动态工具声明，支持则提供请求示例。按 Kimi 官方行为断言：messages[].tools "
+                "应与顶层 tools 等价可调用——被静默忽略属缺陷复现（静默吞掉工具定义，调用"
+                "方无任何信号）。4 组对照（同一提示词、同一工具定义，仅声明位置/形态不"
+                "同）：S1 消息级 tools 非流式（核心）、S2 顶层 tools 非流式（对照前置—"
+                "—对照失败则判定不可归因）、S3 消息级 tools 流式、S4 长输入变体（4096 英"
+                "文词还原客户缓存测试上下文，消息级非流式）；断言各组 HTTP 200+finish_"
+                "reason=\"tool_calls\"+tool_calls 含 read_probe_code（arguments 合法 JSON）；"
+                "usage.prompt_tokens 记录观察（客户口径 4096 词 ≈ 4196-4198 token，留观不"
+                "硬断）。请求体自拟（工单仅含参数形态不含报文/schema）：短指令 prompt+最"
+                "小工具 schema；model 环境注入；max_tokens 小预算；temperature/thinking 等"
+                "未指定不注入。chat 单协议；仅 KimiK3（消息级动态工具声明为 kimi 系特"
+                "性）。无新增数据文件",
+                "kimik3_message_level_tools_agdc2_71",
+                "P0",
+                "同一工具定义仅在 messages[].tools 声明（消息级动态工具）时应与顶层 tools 等价可调用（finish_reason=tool_calls 并成功调用），被静默忽略即缺陷",
+            ),
         ],
     },
 }
