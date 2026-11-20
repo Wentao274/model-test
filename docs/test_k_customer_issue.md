@@ -96,6 +96,7 @@
 | K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——渠道未支持智谱官方参数（官方：每帧返回当前累计用量，prompt_tokens 恒定、completion/reasoning 逐帧累计；区别于 OpenAI include_usage 仅末帧 usage）——预期按官方行为断言 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage（缺失即缺陷复现）；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用；无新增数据文件 | P0 |
 | K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，在消息解析层抛出内部异常），客户端按瞬时故障多次重试无果——预期不支持的输入类型前置 4xx 拒绝（400 明确错误），调用方可区分调用方式问题与服务故障 | 单发 chat 流式（自拟请求体：text 询问+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入）：断言1（核心）HTTP 400（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）；断言2 400 错误体含明确错误信息（error.code 记录观察，整改目标 code 落地前不硬断）；直接 session.post 直发观察首响；超时沿用全局；KimiK3+KimiK31；无新增数据文件 | P0 |
 | K50 | Kimi-K3 消息级动态工具声明核验（chat 单协议） | 客户问题（工单 AGDC2-71，2026-11-20）：同一提示词同一工具定义（read_probe_code），仅 messages[].tools 声明时返回 stop 无 tool_calls（疑似消息级声明被静默忽略），顶层 tools 则正常调用——按 Kimi 官方行为断言：消息级应与顶层等价可调用，被静默忽略属缺陷复现 | 4 组对照（同提示词同工具定义仅声明位置/形态不同）：S1 消息级非流式（核心）、S2 顶层非流式（对照前置）、S3 消息级流式、S4 长输入变体（4096 英文词还原客户缓存测试上下文）；断言各组 200+finish_reason=tool_calls+tool_calls 含 read_probe_code（arguments 合法 JSON）；usage.prompt_tokens 留观（4096 词 ≈ 4196-4198 token 不硬断）；model 环境注入；仅 KimiK3；无新增数据文件 | P0 |
+| K51 | PDF base64 与文本混合 content 应支持（chat 单协议） | 客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带 text 块与 file 块（PDF base64 Data URL），渠道返回 400——消息被 schema 校验错配到 generic 分支（role 枚举不含 'user'、content 必须字符串），报 decode_worker_failed_to_start——预期接口应支持 PDF base64 与文本混合输入 | 单发 chat 非流式（自拟请求体：text 块文档提问+file 块 data:application/pdf;base64 内置最小合法 PDF 含 xref 表；model 环境注入；max_tokens/stream 未指定不注入）：断言1（核心）HTTP 200（400 校验错误=缺陷复现——接口不支持 text+file 混合输入）；断言2 choices 非空+content 非空；无模型分组标记（模型无关接口 schema 能力，K3 先例）；无新增数据文件 | P0 |
 
 
 ## 运行方式
@@ -4238,4 +4239,67 @@ base64,<内置最小合法 MP4 头>"}}]}]；model 环境注入；max_tokens/thin
   S2 tool_calls 对照）
 - `messages[].tools` 为 Kimi 系扩展字段，OpenAI 标准无此字段——不断
   言「必须报错拒绝」口径，按 Kimi 官方「等价可调用」行为断言
+- 不进 smoke 集：新用例首跑观察期
+
+## test_pdf_base64_text_mixed_content_support_agdc2_76 (K51)
+
+- **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_pdf_base64_text_mixed_content_support_agdc2_76`
+- **优先级**：P0（2026-11-20 追加）
+- **marker**：`k_customer_issue` / `p0`（无模型分组标记——模型无关接口 schema 能力，K3 先例）
+- **协议**：chat 单协议（非流式）
+- **来源**：工单 AGDC2-76（2026-11-20，PDF base64 与文本混合 content 返回 400）
+
+**背景**：客户请求的 user 消息 content 为混合数组——同时携带 text 块
+（「这份文档讲了什么？请用一句话回答。」）与 file 块（`file_data:
+data:application/pdf;base64,...` PDF base64 Data URL）。渠道返回 400
+（`invalid_request_error` / `decode_worker_failed_to_start`）：服务端
+schema 校验把该消息**错配到 generic 分支**——该分支的 role 枚举不含
+'user'（仅 system/assistant/tool/function/developer/latest_reminder）、
+content 必须为字符串，于是批量校验错误（29 validation errors）。即：
+接口对「text + file 混合 content」没有匹配的 schema 分支，当前不支持。
+客户预期：应支持 PDF base64 与文本混合输入（模型读取 PDF 并作答）。
+
+**请求构造**：单发非流式（反馈未含 stream——不注入），请求体自拟
+（反馈仅含参数形态与错误回执）：messages=[{"role": "user", "content":
+[{"type": "text", "text": "这份文档讲了什么？请用一句话回答。"},
+{"type": "file", "file": {"file_data": "data:application/pdf;base64,
+<内置最小合法 PDF>"}}]}]；model 环境注入；max_tokens 等未指定——不注入
+（test_k 独立性规则）。PDF 为内置程序构造的最小合法文件（%PDF-1.4
+头 + Catalog/Pages/Page/Contents/Font 五对象 + xref 表 + trailer，约
+700 字节）——结构完整合法，模态/文件解析按 file_data 的 data URL
+MIME 与 PDF 结构路由，避免外网依赖与 fixture 新增。
+
+**断言**：
+1. 断言1（核心）：HTTP 200——混合 content 应被接受并正常应答
+2. 断言2：choices 非空 + content 非空字符串（模型对文档问题给出应答）
+
+**观察记录**（不计判据，留日志）：400 时错误体全文与 validation
+errors 细节、错误码、耗时。
+
+**判定矩阵**：
+- HTTP 400（schema 校验失败/validation errors）→ FAIL（**缺陷复现——
+  接口不支持 text+file 混合输入**）
+- 其他非 200 → FAIL（请求/服务层异常）
+- HTTP 200 但 choices 空 / content 空 → FAIL（接受但未正常应答）
+- HTTP 200 + content 非空 → PASS
+
+**设计决策记录**：
+- **支持预期断言**（客户预期「应该支持」）：200+正文应答为 PASS；
+  400 校验错误为缺陷复现——与 K49（应 400 拒绝）语义相反，本用例
+  是「应支持」的功能缺陷复现
+- **断 200 + content 非空**（不断答内容正确性）：PDF 理解质量属模
+  型能力评估（C 类范畴），本用例只验证接口 schema 层接受混合输入
+  并给出应答
+- **内置最小合法 PDF**：含 xref 表的完整结构，任何严格 PDF 解析器
+  均可解析；程序构造避免外网依赖与新增数据文件
+- **无模型分组标记**（K3 先例）：PDF file 块混合输入为模型无关的
+  接口 schema 能力，工单未指定模型；model 环境注入，部署什么测什么
+- **P0**：客户报障接口不支持（400 阻断调用）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 本用例为「应支持」缺陷复现：接口支持前预期 FAIL（当前渠道 400），
+  支持后转 PASS
+- `file` 块（`file_data` Data URL）为 OpenAI file 输入形态；公网 URL
+  形态与 files API（file_id 引用）形态不在本用例范围
 - 不进 smoke 集：新用例首跑观察期

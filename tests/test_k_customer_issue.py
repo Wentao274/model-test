@@ -3,8 +3,8 @@ K. 反馈问题验证测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
-2026-11-11；K49/K50 于 2026-11-20 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45-K50 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+2026-11-11；K49/K50/K51 于 2026-11-20 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
+K36-K40、K42、K45-K51 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -1139,6 +1139,19 @@ K36-K40、K42、K45-K50 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   prompt+最小工具 schema；model 环境注入；max_tokens 小预算；未
   指定参数不注入。chat 单协议。仅 KimiK3。无新增数据文件。（不
   进 smoke 集：新用例首跑观察期；4 请求）
+- K51: PDF base64 与文本混合 content 应支持（chat 单协议） [P0]
+  客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带 text
+  块与 file 块（PDF base64 Data URL），渠道返回 400——消息被 schema
+  校验错配到 generic 分支（该分支 role 枚举不含 'user'、content 必
+  须字符串），报 decode_worker_failed_to_start。客户预期接口应支
+  持 PDF base64 与文本混合输入。断言（支持预期）：HTTP 200 +
+  choices 非空 + content 非空——400 校验错误为缺陷复现（接口不支
+  持 text+file 混合输入）。请求体自拟：text 块文档提问 + file 块
+  data:application/pdf;base64 内置最小合法 PDF（含 xref 表，程序构
+  造）；model 环境注入；max_tokens/stream 未指定不注入。单发非流
+  式；chat 单协议。无模型分组标记（模型无关接口 schema 能力，K3
+  先例）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；1
+  请求）
 """
 
 import base64
@@ -14952,4 +14965,138 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "客户问题整改验证通过: 消息级动态工具声明与顶层 tools 等价"
             "（S1/S3/S4 均 finish_reason=tool_calls 并成功调用 "
             "read_probe_code）——消息级声明被静默忽略缺陷未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.p0
+    def test_pdf_base64_text_mixed_content_support_agdc2_76(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K51 [P0]: 客户问题 - PDF base64 与文本混合 content 应支持
+        （chat 单协议）
+
+        客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带
+        text 块（文档提问）与 file 块（PDF base64 Data URL），渠道返
+        回 400——消息被 schema 校验错配到 generic 分支（该分支 role
+        枚举不含 'user'、content 必须为字符串），批量校验错误后报
+        decode_worker_failed_to_start。客户预期接口应支持 PDF
+        base64 与文本混合输入（模型读取 PDF 并作答）。断言按支持
+        预期：HTTP 200 + 正文应答——400 schema 校验失败为缺陷复
+        现（混合 content 无匹配分支，接口不支持）。
+        请求体自拟（反馈仅含参数形态与错误回执）：messages=[user：
+        text 块「这份文档讲了什么？请用一句话回答。」+ file 块
+        file_data=data:application/pdf;base64 内置最小合法 PDF
+        （含 xref 表，程序构造避免外网依赖）]；model 环境注入；
+        max_tokens/stream 等未指定——不注入。
+        判定：
+        1. 断言1（核心）：HTTP 200——混合 content 应被接受并正常
+           应答；400 校验错误为缺陷复现（接口不支持 text+file 混
+           合输入）
+        2. 断言2：choices 非空 + content 非空字符串（模型对文档问
+           题给出应答）
+        观察（不计判据）：400 时错误体全文与 validation errors 细
+        节、错误码、耗时。超时沿用全局。chat 单协议。无模型分组标
+        记（PDF file 块混合输入为模型无关的接口 schema 能力——工
+        单未指定模型，K3 先例）。无新增数据文件。（不进 smoke 集：
+        新用例首跑观察期；1 请求）
+        """
+        # K51: 内置最小合法 PDF（含 xref 表——模态/文件解析按
+        # file_data 的 data URL MIME 与 PDF 结构路由，程序构造保证
+        # 结构合法且避免外网依赖）
+        def _k51_minimal_pdf() -> bytes:
+            objs = [
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]"
+                b" /Contents 4 0 R /Resources << /Font << /F1 5 0 R >>"
+                b" >> >>",
+                None,  # 占位：流对象（长度需后算）
+                b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            ]
+            stream = (b"BT /F1 18 Tf 72 720 Td "
+                      b"(MaaS PDF base64 input probe) Tj ET")
+            objs[3] = (b"<< /Length %d >>\nstream\n%s\nendstream"
+                       % (len(stream), stream))
+            out = bytearray(b"%PDF-1.4\n")
+            offsets = []
+            for i, body in enumerate(objs, 1):
+                offsets.append(len(out))
+                out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+            xref_pos = len(out)
+            n = len(objs) + 1
+            out += b"xref\n0 %d\n" % n
+            out += b"0000000000 65535 f \n"
+            for off in offsets:
+                out += b"%010d 00000 n \n" % off
+            out += (b"trailer\n<< /Size %d /Root 1 0 R >>\n"
+                    b"startxref\n%d\n%%%%EOF\n" % (n, xref_pos))
+            return bytes(out)
+
+        pdf_b64 = base64.b64encode(_k51_minimal_pdf()).decode("ascii")
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text",
+                     "text": "这份文档讲了什么？请用一句话回答。"},
+                    {"type": "file",
+                     "file": {"file_data":
+                              f"data:application/pdf;base64,{pdf_b64}"}},
+                ],
+            }],
+        }
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - PDF base64 与文本混合 content 应"
+            "支持（text 块 + file 块 data:application/pdf;base64 内置"
+            "最小合法 PDF，非流式，model 环境注入）==="
+        )
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        headers: Dict[str, Any] = {"Content-Type": "application/json"}
+        if api_client.api_key:
+            headers["Authorization"] = f"Bearer {api_client.api_key}"
+        start_time = time.time()
+        response = api_client.session.post(
+            chat_url, json=payload, headers=headers,
+            timeout=api_client.timeout,
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+        test_logger.info(
+            f"K51 请求 1 实测: HTTP {status}, elapsed={elapsed:.1f}s, "
+            f"响应: {body_text[:300]}"
+        )
+
+        # 断言1（核心）：HTTP 200——混合 content 应被接受
+        assert status == 200, (
+            f"K51: PDF base64 与文本混合 content 应被接口支持（HTTP "
+            f"200 正常应答），实测 HTTP {status}"
+            + ("——缺陷复现：混合 content 无匹配 schema 分支（接口不支"
+               "持 text+file 混合输入，批量校验错误）"
+               if status == 400 else "")
+            + f"，elapsed={elapsed:.1f}s，响应: {body_text[:500]}"
+        )
+
+        # 断言2：choices 非空 + content 非空字符串
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        choices = (data or {}).get("choices") or []
+        assert choices, (
+            f"K51: 响应体异常（非法 JSON/choices 空）: {body_text[:300]}"
+        )
+        content = ((choices[0] or {}).get("message") or {}).get("content")
+        assert isinstance(content, str) and content.strip(), (
+            f"K51: 模型应对文档问题给出正文应答，实测 content="
+            f"{str(content)[:120]!r}；响应: {body_text[:300]}"
+        )
+        test_logger.info(
+            f"K51 应答正文（截 120）: {content[:120]!r}"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: PDF base64 与文本混合 content 被接"
+            "受并正常应答（接口不支持缺陷未复现）"
         )

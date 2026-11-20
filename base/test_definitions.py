@@ -1951,6 +1951,26 @@ TEST_CATEGORIES = {
                 "P0",
                 "同一工具定义仅在 messages[].tools 声明（消息级动态工具）时应与顶层 tools 等价可调用（finish_reason=tool_calls 并成功调用），被静默忽略即缺陷",
             ),
+            (
+                "K51",
+                "PDF base64 与文本混合 content 应支持（chat 单协议）",
+                "客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带 text 块"
+                "（文档提问）与 file 块（PDF base64 Data URL），渠道返回 400——消息被"
+                " schema 校验错配到 generic 分支（该分支 role 枚举不含 'user'、content"
+                "必须为字符串），批量校验错误后报 decode_worker_failed_to_start。客户"
+                "预期接口应支持 PDF base64 与文本混合输入（模型读取 PDF 并作答）。断言"
+                "（支持预期，当前渠道预期 FAIL——缺陷复现）：HTTP 200 + choices 非空 + "
+                "content 非空字符串——400 校验错误为缺陷复现（混合 content 无匹配分支，"
+                "接口不支持 text+file 混合输入）。请求体自拟（反馈仅含参数形态与错误回"
+                "执）：text 块「这份文档讲了什么？请用一句话回答。」+ file 块 file_data="
+                "data:application/pdf;base64 内置最小合法 PDF（含 xref 表，程序构造避免"
+                "外网依赖）；model 环境注入；max_tokens/stream 等未指定不注入。单发非流"
+                "式；chat 单协议；无模型分组标记（PDF file 块混合输入为模型无关的接口 "
+                "schema 能力——工单未指定模型，K3 先例）。无新增数据文件",
+                "pdf_base64_text_mixed_content_support_agdc2_76",
+                "P0",
+                "user 消息 content 数组同时携带 text 块与 file 块（PDF base64）应被接口支持（200 正常应答），400 schema 校验失败即接口不支持缺陷",
+            ),
         ],
     },
 }
