@@ -2091,10 +2091,12 @@ class TestZjxmAGDC2_61:
         报告移除）；九章新 url 功能测试报告 20261116 复测补入。
         官方基准: HTTP 400 error.code=1210「API 调用参数有误」——官方基线
         对含 \\p{L} 的 schema 过度校验拒绝，不作断言基准。
-        断言口径: 九章复测基线——HTTP 200 + 正文非空 + 思考非空
-        （工具 schema 含 Unicode 正则 pattern 应通过校验正常响应；
-        tool_calls 调用与否属模型决策不硬断，九章实测调用了
-        skillhub_install {"action":"check_env"}）。
+        断言口径: 九章复测基线——HTTP 200 +（正文非空或 tool_calls 非空，
+        两者居一即可）+ 思考非空（工具 schema 含 Unicode 正则 pattern
+        应通过校验正常响应；tool_calls 调用形态属模型决策——2026-11-20
+        复测实证模型直接工具调用 finish_reason=tool_calls、content=null
+        属协议正常形态，按用户确认将「正文非空」放宽为「正文/工具调用
+        居一」；九章 20261116 复测实测调用了 skillhub_install）。
         """
         payload = json.loads(
             r"""
@@ -2146,15 +2148,27 @@ class TestZjxmAGDC2_61:
             f"#45 请求 1 九章复测基线 HTTP 200（官方基线 400 过度拒绝），"
             f"实测 HTTP {result['status']}；响应: {result['raw'][:300]}"
         )
-        assert isinstance(result.get("content"), str) and result["content"].strip(), (
-            f"#45 请求 1 九章复测返回 200 且正文非空，实测正文为空；"
+        body = result["json"] if isinstance(result["json"], dict) else {}
+        ch = (body.get("choices") or [{}])[0]
+        msg = ch.get("message") if isinstance(ch, dict) else {}
+        msg = msg if isinstance(msg, dict) else {}
+        tool_calls = msg.get("tool_calls")
+        has_content = isinstance(result.get("content"), str) and bool(
+            result["content"].strip())
+        has_tools = isinstance(tool_calls, list) and bool(tool_calls)
+        assert has_content or has_tools, (
+            f"#45 请求 1 九章复测返回 200 且正文或工具调用非空（两者居一即可——"
+            f"模型直接工具调用时 content=null 属协议正常形态，2026-11-20 复测"
+            f"实证），实测 content 与 tool_calls 均为空；"
             f"响应: {result['raw'][:300]}"
         )
         assert isinstance(result.get("reasoning"), str) and result["reasoning"].strip(), (
             f"#45 请求 1 九章复测返回 200 且思考非空，实测思考为空；"
             f"响应: {result['raw'][:300]}"
         )
-        test_logger.info("#45 请求 1 实测: HTTP %s（正文 %d 字，思考 %d 字；"
-                         "九章复测: 200 放行并调用工具；官方: 400 过度拒绝）",
-                         result["status"], len(result["content"]),
+        test_logger.info("#45 请求 1 实测: HTTP %s（正文 %d 字，tool_calls %d 个，"
+                         "思考 %d 字；九章复测: 200 放行并调用工具；"
+                         "官方: 400 过度拒绝）",
+                         result["status"], len(result["content"] or ""),
+                         len(tool_calls) if has_tools else 0,
                          len(result["reasoning"]))

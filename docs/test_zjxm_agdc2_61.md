@@ -65,7 +65,7 @@
 | Z42 | RESP-019 · 压缩缺 model 被拒绝 | responses | 建议整改 | 400/422（缺失必填 model 拒绝） | FAIL（缺陷复现：404 端点未实现） |
 | Z43 | KS-MSG-001 · messages 数组含 null 元素 | chat | 官方异常 | HTTP 400 error.code=1214（九章复测基线；官方 500 异常不作基准） | PASS（守护：400 + error 外层 + code 1214） |
 | Z44 | KS-N-001 · n=0 流式放行 | chat | 官方异常 | HTTP 200 流式收束（双方一致放行，报告判跳过） | PASS（守护：200 + [DONE] + 正文/思考非空） |
-| Z45 | KS-TOOL-009 · 工具 schema 含 \p{L} Unicode 正则 pattern | chat | 官方异常 | HTTP 200 放行（九章复测基线；官方 400 过度拒绝不作基准） | PASS（守护：200 + 正文/思考非空） |
+| Z45 | KS-TOOL-009 · 工具 schema 含 \p{L} Unicode 正则 pattern | chat | 官方异常 | HTTP 200 放行（九章复测基线；官方 400 过度拒绝不作基准） | PASS（守护：200 + 正文或 tool_calls 非空 + 思考非空） |
 
 统计：45 用例 45 个请求（每用例单请求）。重放预期口径（分两段）——Z1-Z42（42 失败场景）：20261110 渠道原状下除 Z40（4xx 判通过）外全部 FAIL（缺陷复现/差异暴露），渠道修复对齐官方后 42/42 全部 PASS；Z43-Z45（官方异常守护）：预期始终 PASS（守护九章复测基线，平台行为偏离基线即 FAIL）。
 
@@ -112,7 +112,7 @@ Z 套件运行自动生成专用报告（同 L 套件接线模式，样式为九
 | Responses 图片输入（Z40） | 4xx + 错误体含 `error` 外层与明确错误信息（用户确认判通过口径） |
 | compact 端点（Z41/Z42） | Z41：HTTP 200 + object=response.compaction + output 含 type=compaction 条目；Z42：HTTP 400/422（缺 model 拒绝） |
 | THK-005（Z13） | 400 即通过（含结构断言）；若放行 200，失败信息附加诊断——content 是否泄漏思考原文（原始 ASCII 字面量检查，展示面全角） |
-| 官方异常守护（Z43-Z45） | 断言基准 = 九章新 url 复测报告 20261116 实测行为（官方 500/400 不作基准）：Z43 HTTP 400 + error 外层 + code=1214；Z44 HTTP 200 + SSE [DONE] 收束 + 正文非空 + 思考非空；Z45 HTTP 200 + 正文非空 + 思考非空（tool_calls 属模型决策不硬断，九章实测调用了 skillhub_install） |
+| 官方异常守护（Z43-Z45） | 断言基准 = 九章新 url 复测报告 20261116 实测行为（官方 500/400 不作基准）：Z43 HTTP 400 + error 外层 + code=1214；Z44 HTTP 200 + SSE [DONE] 收束 + 正文非空 + 思考非空；Z45 HTTP 200 +（正文非空 **或** tool_calls 非空，两者居一即可）+ 思考非空（tool_calls 调用形态属模型决策——2026-11-20 复测实证模型直接工具调用 content=null 属协议正常形态，按用户确认放宽） |
 
 ## 预期结果
 
@@ -127,6 +127,7 @@ Z 套件运行自动生成专用报告（同 L 套件接线模式，样式为九
 - Z 用例不进 Jenkinsfile `SPECIFIC_TEST` 用例选择参数（用户指定 2026-11-16，含 Z43-Z45）；
 - 官方基线 run 20261028_191525 未覆盖 OpenAI Responses 协议（19 条），Z34-Z42 按报告判定依据（openresponses 规范口径）断言——官方侧可自行复跑补齐对比（报告左侧地址与请求体可复跑）；
 - Z43-Z45 断言基准 = 九章复测行为而非官方行为（官方 500 内部错误/400 过度校验属基线异常），docstring 严重级统一为「官方异常」——失败语义为「守护基线偏离」，与 Z1-Z42 的「缺陷复现」区分（HTML/MD 报告结论分类已区分）；
+- Z45 断言于 2026-11-20 放宽（用户确认）：原「正文非空」改为「正文非空 **或** tool_calls 非空（两者居一）」——当日复测实证模型直接发起工具调用（finish_reason=tool_calls、content=null、tool_calls 精确调用 skillhub_install），属 OpenAI 协议正常形态，非平台缺陷；
 - CONV-RID-065（Z24）/CONV-UID-129（Z26）越界字符串按 20261116 复测报告精确长度重放（65/129 字符，运行时程序化构造）；
 - RESP-018 请求报文按用户确认修正报告原文的疑似截断（畸形键还原为完整 assistant content 句子）；
 - 测试类内方法按功能分组定义（空输入/thinking/边界/结构与 role/ID 长度/工具与多模态/差异确认/字段校验/Responses 协议/官方异常守护），报告展示按 docstring `#N` 数字升序（与九章报告用例顺序一致）。
