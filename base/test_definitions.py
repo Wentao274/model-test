@@ -1933,23 +1933,27 @@ TEST_CATEGORIES = {
                 "Kimi-K3 消息级动态工具声明核验（chat 单协议）",
                 "客户问题（工单 AGDC2-71，2026-11-20）：同一提示词、同一工具定义"
                 "（read_probe_code），仅在 messages[].tools 声明时返回 finish_reason="
-                "\"stop\"、无 tool_calls（疑似消息级声明被静默忽略）；改为顶层 tools 后"
-                " finish_reason=\"tool_calls\"、成功调用。客户诉求：确认是否支持消息级"
-                "动态工具声明，支持则提供请求示例。按 Kimi 官方行为断言：messages[].tools "
-                "应与顶层 tools 等价可调用——被静默忽略属缺陷复现（静默吞掉工具定义，调用"
-                "方无任何信号）。4 组对照（同一提示词、同一工具定义，仅声明位置/形态不"
-                "同）：S1 消息级 tools 非流式（核心）、S2 顶层 tools 非流式（对照前置—"
-                "—对照失败则判定不可归因）、S3 消息级 tools 流式、S4 长输入变体（4096 英"
-                "文词还原客户缓存测试上下文，消息级非流式）；断言各组 HTTP 200+finish_"
-                "reason=\"tool_calls\"+tool_calls 含 read_probe_code（arguments 合法 JSON）；"
-                "usage.prompt_tokens 记录观察（客户口径 4096 词 ≈ 4196-4198 token，留观不"
-                "硬断）。请求体自拟（工单仅含参数形态不含报文/schema）：短指令 prompt+最"
-                "小工具 schema；model 环境注入；max_tokens 小预算；temperature/thinking 等"
-                "未指定不注入。chat 单协议；仅 KimiK3（消息级动态工具声明为 kimi 系特"
-                "性）。无新增数据文件",
+                "\"stop\"、无 tool_calls；改为顶层 tools 后正常调用。客户诉求：确认是否"
+                "支持消息级动态工具声明，支持则提供请求示例。官方口径（Kimi《动态加载"
+                "工具》文档，2026-11-23 查阅）：支持消息级动态工具声明——在 messages 中"
+                "插入 role=system 的消息并通过该消息的 tools 字段声明（与顶层 tools 并存；"
+                "仅 kimi-k3.1-pro、kimi-k3 支持）；携带 tools 的 system 消息不能再携带 "
+                "content 字段（否则 400 cannot be used with content）；官方文档未支持 user "
+                "消息挂 tools。渠道 Router 实测（开发 20261122）：合法挂点（空 content 的 "
+                "system/developer）可调用；user 挂点显式 400；公网入口对 user 挂点 200 静默"
+                "忽略（入口一致性差异）。6 组对照（同一提示词、同一工具定义；客户挂点未"
+                "知，请求体自拟）：S1 官方合法挂点（system 无 content 挂 tools，核心——"
+                "200+finish_reason=\"tool_calls\"+tool_calls 含 read_probe_code，静默忽略=缺陷"
+                "复现）、S2 顶层（对照前置）、S3 合法挂点流式、S4 4096 英文词+合法挂点"
+                "（还原客户缓存场景，usage.prompt_tokens 留观不硬断）、S5 user 挂点（非官"
+                "方形态探测——应显式 400 且错误信息明确，200 静默忽略=入口一致性缺陷，"
+                "200+tool_calls=提升支持记录观察）、S6 system 带非空 content 挂 tools（官方"
+                " 400 守护）。model 环境注入；max_tokens 小预算；temperature/thinking 等未"
+                "指定不注入。chat 单协议；仅 KimiK3（kimi-k3 官方在动态工具支持列表）。无"
+                "新增数据文件",
                 "kimik3_message_level_tools_agdc2_71",
                 "P0",
-                "同一工具定义仅在 messages[].tools 声明（消息级动态工具）时应与顶层 tools 等价可调用（finish_reason=tool_calls 并成功调用），被静默忽略即缺陷",
+                "消息级动态工具声明的官方合法挂点（system 消息不携带 content 挂 tools）应可正常调用（finish_reason=tool_calls）；user 挂点等非官方形态应显式 400 拒绝而非静默忽略",
             ),
             (
                 "K51",

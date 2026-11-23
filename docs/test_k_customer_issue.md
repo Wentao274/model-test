@@ -95,7 +95,7 @@
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_effort+disabled 双方不思考；reasoning_effort（low/medium/high/max）双方思考（渠道唯一开思考通路）——预期全按官方行为断言 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景）reasoning 空+reasoning_tokens==0+content 非空+finish_reason 非空；相邻 3s；超时沿用全局；model 环境注入；仅 Kimi-K3；无新增数据文件 | P0 |
 | K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——渠道未支持智谱官方参数（官方：每帧返回当前累计用量，prompt_tokens 恒定、completion/reasoning 逐帧累计；区别于 OpenAI include_usage 仅末帧 usage）——预期按官方行为断言 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage（缺失即缺陷复现）；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用；无新增数据文件 | P0 |
 | K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，在消息解析层抛出内部异常），客户端按瞬时故障多次重试无果——预期不支持的输入类型前置 4xx 拒绝（400 明确错误），调用方可区分调用方式问题与服务故障 | 单发 chat 流式（自拟请求体：text 询问+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入）：断言1（核心）HTTP 400（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）；断言2 400 错误体含明确错误信息（error.code 记录观察，整改目标 code 落地前不硬断）；直接 session.post 直发观察首响；超时沿用全局；KimiK3+KimiK31；无新增数据文件 | P0 |
-| K50 | Kimi-K3 消息级动态工具声明核验（chat 单协议） | 客户问题（工单 AGDC2-71，2026-11-20）：同一提示词同一工具定义（read_probe_code），仅 messages[].tools 声明时返回 stop 无 tool_calls（疑似消息级声明被静默忽略），顶层 tools 则正常调用——按 Kimi 官方行为断言：消息级应与顶层等价可调用，被静默忽略属缺陷复现 | 4 组对照（同提示词同工具定义仅声明位置/形态不同）：S1 消息级非流式（核心）、S2 顶层非流式（对照前置）、S3 消息级流式、S4 长输入变体（4096 英文词还原客户缓存测试上下文）；断言各组 200+finish_reason=tool_calls+tool_calls 含 read_probe_code（arguments 合法 JSON）；usage.prompt_tokens 留观（4096 词 ≈ 4196-4198 token 不硬断）；model 环境注入；仅 KimiK3；无新增数据文件 | P0 |
+| K50 | Kimi-K3 消息级动态工具声明核验（chat 单协议） | 客户问题（工单 AGDC2-71，2026-11-20）：同一提示词同一工具定义（read_probe_code），仅 messages[].tools 声明时返回 stop 无 tool_calls，顶层 tools 则正常调用——官方口径（Kimi《动态加载工具》文档）：system 消息（不携带 content）挂 tools 为合法形态，kimi-k3 在支持列表；user 挂点官方未支持（Router 显式 400，公网入口 200 静默忽略=入口一致性差异） | 6 组对照（同提示词同工具定义；客户挂点未知，请求体自拟）：S1 官方合法挂点（system 无 content 挂 tools，核心——200+tool_calls，静默忽略=缺陷复现）、S2 顶层（对照前置）、S3 合法挂点流式、S4 4096 英文词+合法挂点（还原客户缓存场景，prompt_tokens 留观）、S5 user 挂点（应显式 400 且错误信息明确，200 静默忽略=入口一致性缺陷）、S6 system 带非空 content 挂 tools（官方 400 守护）；model 环境注入；仅 KimiK3；无新增数据文件 | P0 |
 | K51 | PDF base64 与文本混合 content 应支持（chat 单协议） | 客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带 text 块与 file 块（PDF base64 Data URL），渠道返回 400——消息被 schema 校验错配到 generic 分支（role 枚举不含 'user'、content 必须字符串），报 decode_worker_failed_to_start——预期接口应支持 PDF base64 与文本混合输入 | 单发 chat 非流式（自拟请求体：text 块文档提问+file 块 data:application/pdf;base64 内置最小合法 PDF 含 xref 表；model 环境注入；max_tokens/stream 未指定不注入）：断言1（核心）HTTP 200（400 校验错误=缺陷复现——接口不支持 text+file 混合输入）；断言2 choices 非空+content 非空；无模型分组标记（模型无关接口 schema 能力，K3 先例）；无新增数据文件 | P0 |
 
 
@@ -4165,80 +4165,113 @@ base64,<内置最小合法 MP4 头>"}}]}]；model 环境注入；max_tokens/thin
 ## test_kimik3_message_level_tools_agdc2_71 (K50)
 
 - **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_message_level_tools_agdc2_71`
-- **优先级**：P0（2026-11-20 追加）
+- **优先级**：P0（2026-11-20 追加；2026-11-23 按官方文档与开发复测修正挂点口径）
 - **marker**：`k_customer_issue` / `KimiK3` / `p0`
-- **协议**：chat 单协议（非流式 ×3 + 流式 ×1）
+- **协议**：chat 单协议（非流式 ×4 + 流式 ×1 + 400 校验 ×1）
 - **来源**：工单 AGDC2-71（2026-11-20，kimi-k3 消息级动态工具声明）
 
 **背景**：客户测试 kimi-k3 发现，同一提示词、同一工具定义
-（read_probe_code），仅在 `messages[].tools` 声明（消息级动态工具）
-时返回 `finish_reason="stop"`、无 tool_calls；改为顶层 `tools` 后返回
-`finish_reason="tool_calls"`、成功调用。全部请求 HTTP 200 无错误状态。
+（read_probe_code），仅在 `messages[].tools` 声明时返回
+`finish_reason="stop"`、无 tool_calls；改为顶层 `tools` 后正常调用。
 客户诉求：确认是否支持消息级动态工具声明，支持则提供请求示例。
-消息级动态工具声明（`messages[].tools`）为 Kimi 官方扩展特性——工具
-定义挂在 messages 数组内某条消息上随对话上下文动态注入，按官方行为
-应与顶层 `tools` 声明等价可调用。若渠道静默忽略该字段（200 + stop +
-无 tool_calls），属缺陷：静默吞掉工具定义比报错更危险（调用方无任何
-信号）。
 
-**请求构造**：4 组对照（同一提示词、同一工具定义，仅声明位置/形态
-不同；请求体自拟——工单仅含参数形态不含报文/schema）：
+**官方口径**（Kimi《动态加载工具》文档，2026-11-23 查阅）：**支持
+消息级动态工具声明**——在 messages 中插入 `role=system` 的消息并通
+过该消息的 `tools` 字段声明（声明格式与顶层 `tools` 完全一致，且与
+顶层 tools 并存）；**仅 `kimi-k3.1-pro`、`kimi-k3` 支持**（不支持的
+模型报 `tokenization failed`）；携带 `tools` 的 system 消息**不能再
+携带 `content` 字段**，否则 400（`cannot be used with content`）；
+**官方文档未支持 user 消息挂 tools**。动态工具声明追加在 messages
+尾部，与前缀缓存兼容（对应客户的 4096 词缓存测试场景）。
+
+**渠道实测差异**（开发 20261122，Pod 直连）：合法挂点（空 content
+的 system/developer 消息）可正常调用；`user.tools` 显式 400
+（`'tools' on a message with role 'user' is not allowed`）；非空
+content 的 system/developer 声明 400（`requires empty content`）。而
+**公网入口**（K50 首跑 20261123）对 user 挂点返回 **200 静默忽略**
+（无 tool_calls，模型自白"可用工具列表中不包含这个函数"）——入口
+一致性差异：Router 显式拒绝，公网静默剥离工具字段。
+
+**请求构造**：6 组对照（同一提示词、同一工具定义；客户挂点未知——
+工单未含完整报文，请求体自拟）：
 
 | 组 | 声明位置 | 形态 | 角色 |
 |----|---------|------|------|
-| S1 | `messages[].tools`（user 消息上） | 非流式 | **核心**（客户形态） |
-| S2 | 顶层 `tools` | 非流式 | **对照组**（客户已验证正常；先发——对照失败则 S1 判定不可归因） |
-| S3 | `messages[].tools` | 流式 stream=true | 流式形态覆盖 |
-| S4 | `messages[].tools` | 非流式 + 4096 英文词长输入 | 还原客户缓存测试上下文 |
+| S1 | `messages[尾]` 的 `system` 消息（**不携带 content**）挂 tools | 非流式 | **核心**（官方合法形态） |
+| S2 | 顶层 `tools` | 非流式 | **对照组**（先发——对照失败则其余判定不可归因） |
+| S3 | 同 S1 | 流式 stream=true | 合法形态流式覆盖 |
+| S4 | 同 S1 | 非流式 + 4096 英文词长输入 | 还原客户缓存测试上下文 |
+| S5 | `messages[].tools`（user 消息上） | 非流式 | 非官方形态探测 |
+| S6 | `messages[尾]` 的 `system` 消息带**非空 content** 挂 tools | 非流式 | 官方 400 校验守护 |
 
-工具定义自拟（按「读取探针代码」语义的最小 schema：`probe_name` 必填
-字符串）；提示词自拟短指令（要求必须调用工具）；`model` 环境注入；
-`max_tokens=256` 小预算；temperature/thinking 等未指定——不注入
-（test_k 独立性规则）。S4 长输入为自然英文重复句精确 4096 词
-（`prompt_tokens` 留观——客户口径 4096 词 ≈ 4196-4198 token，不硬断）。
+工具定义自拟（按「读取探针代码」语义的最小 schema：`probe_name` 必
+填字符串）；提示词自拟短指令；`model` 环境注入；`max_tokens=256` 小
+预算；temperature/thinking 等未指定——不注入（test_k 独立性规则）。
+S4 长输入为自然英文重复句精确 4096 词（`prompt_tokens` 留观——客户
+口径 4096 词 ≈ 4196-4198 token，不硬断）。
 
 **断言**：
 1. 断言1（对照前置）：S2 顶层组 200 + `finish_reason="tool_calls"` +
-   tool_calls 含 read_probe_code——对照组失败则整体标记环境异常
-2. 断言2（核心）：S1 消息级组 200 + `finish_reason="tool_calls"` +
-   tool_calls 含 read_probe_code + arguments 合法 JSON
-3. 断言3：S3 流式组 200 + SSE tool_calls 增量帧 + `finish_reason=
-   "tool_calls"`
-4. 断言4：S4 长输入组同 S1 断言
+   tool_calls 含 read_probe_code
+2. 断言2（核心）：S1 官方合法挂点 200 + `finish_reason="tool_calls"` +
+   tool_calls 含 read_probe_code + arguments 合法 JSON——stop/无
+   tool_calls 为缺陷复现（官方形态被静默忽略）
+3. 断言3：S3 流式合法挂点 200 + SSE tool_calls 增量帧 +
+   `finish_reason="tool_calls"`
+4. 断言4：S4 长输入合法挂点同 S1 断言
+5. 断言5：S5 user 挂点——200 静默忽略（无 tool_calls）为 FAIL（入口
+   一致性缺陷：Router 显式 400 而公网静默剥离）；400 且错误信息明确
+   为 PASS（与 Router 对齐）；200+tool_calls 为提升支持（PASS 并记录
+   观察）
+6. 断言6：S6 带非空 content 挂 tools 应 400（官方 `cannot be used
+   with content` 校验口径守护）
 
 **观察记录**（不计判据，留日志）：各组 content/finish_reason/usage
 全文、耗时；S1 被忽略时 content 是否提及工具（工具定义被当普通文本
-处理的旁证）；S4 `usage.prompt_tokens` 实测值。
+处理的旁证）；S4 `usage.prompt_tokens` 实测值；S5 提升支持形态的记
+录。
 
 **判定矩阵**：
-- S2 对照组非 200 / 无 tool_calls → FAIL（环境/工具定义异常，S1 判定
-  不可归因）
-- S1 stop 或无 tool_calls → FAIL（**缺陷复现——消息级声明被静默忽
-  略**）
-- S3 流式 finish_reason≠tool_calls 或无 tool_calls 帧 → FAIL（流式形
-  态缺陷复现）
-- S4 stop 或无 tool_calls → FAIL（长输入下缺陷复现）
-- 全部按官方行为 → PASS（渠道支持消息级声明；用例报告请求/响应全量
-  录制即可作为客户「请求示例」）
+- S2 对照组非 200 / 无 tool_calls → FAIL（环境/工具定义异常，其余判
+  定不可归因）
+- S1/S3/S4 官方合法挂点 stop 或无 tool_calls → FAIL（**缺陷复现——
+  渠道不支持官方消息级动态工具声明形态**）
+- S5 200 且静默忽略（无 tool_calls）→ FAIL（**入口一致性缺陷——公
+  网未透传 Router 的显式拒绝，静默剥离工具定义**）；S5 400 但错误信
+  息不明确 → FAIL（拒绝但指引不足）；S5 400 信息明确或 200+tool_calls
+  → PASS
+- S6 非 400 → FAIL（官方校验口径破坏）
+- 全部符合 → PASS
 
 **设计决策记录**：
-- **对照组前置**（S2 先发）：S1 失败需排除工具定义/环境因素——对照
-  组证明同工具顶层可用时，S1 的失败才能归因为「消息级声明被忽略」
-- **请求体自拟**（test_k 独立性规则）：工单仅含参数形态（工具名与声
-  明位置），不含报文/schema——按语义最小构造并注明自拟口径
-- **断 tool_calls 精确行为**（Kimi 官方行为）：消息级声明应与顶层等
-  价；`stop` 与 `tool_calls` 二值边界清晰，无中间态
-- **S4 不硬断 token 数**：客户口径为「约 4196-4198」的观察值，长输
-  入仅还原上下文形态，token 数留观
-- **P0**：渠道疑似静默吞掉工具定义的缺陷复现（客户报障）
+- **挂点口径按官方文档修正**（2026-11-23）：首版误将客户形态假设为
+  user 挂点并按「应支持」断言——官方文档确认合法挂点为不携带
+  content 的 system 消息（kimi-k3 在支持列表）；客户实际挂点未知（工
+  单未含完整报文），故用例改为「合法挂点判可调用 + 非官方挂点判显
+  式拒绝」的双口径
+- **S5 的 FAIL 条件收窄为「静默忽略」**：200 静默剥离工具字段是客
+  户困惑的真正来源（无法区分模型不调用与从未收到）；400 明确拒绝
+  （Router 对齐）与 200+tool_calls（网关提升支持）均为可接受行为
+- **对照组前置**（S2 先发）：排除工具定义/环境因素，S1 失败才能归
+  因为「官方形态不被支持」
+- **S4 长输入改挂合法形态**：动态工具声明的官方设计场景就是与前缀
+  缓存叠加使用——长输入 + 合法挂点完整还原客户缓存测试上下文；
+  `prompt_tokens` 留观不硬断
+- **请求体自拟**（test_k 独立性规则）：工单仅含参数形态（工具名与
+  声明位置），不含报文/schema；客户挂点未知，S1 采用官方文档示例形
+  态（system 无 content 挂 tools 追加尾部）
+- **P0**：官方形态支持性核验 + 入口静默缺陷复现（客户报障）
 - **不进 smoke 集**：新用例首跑观察期
 
 **注意事项**：
-- 本用例为能力确认/缺陷复现双语义用例：渠道支持消息级声明则 PASS
-  （用例报告即客户「请求示例」），不支持则 FAIL（缺陷证据：S1 stop +
-  S2 tool_calls 对照）
-- `messages[].tools` 为 Kimi 系扩展字段，OpenAI 标准无此字段——不断
-  言「必须报错拒绝」口径，按 Kimi 官方「等价可调用」行为断言
+- 本用例为能力确认/缺陷复现双语义用例：S1 官方形态被支持则 PASS
+  （用例报告即客户「请求示例」），被静默忽略则 FAIL（缺陷证据：
+  S1 stop + S2 tool_calls 对照）；S5 单独判定入口一致性
+- `messages[].tools` 为 Kimi 系扩展字段，OpenAI 标准无此字段；官方挂
+  点约束（system 角色 + 不携带 content）以《动态加载工具》文档为准
+- 渠道 Router 已验证 developer 角色空 content 挂 tools 亦可调用——
+  本用例 S1 采用官方文档的 system 形态，developer 变体未覆盖（如需
+  补充可后续追加）
 - 不进 smoke 集：新用例首跑观察期
 
 ## test_pdf_base64_text_mixed_content_support_agdc2_76 (K51)

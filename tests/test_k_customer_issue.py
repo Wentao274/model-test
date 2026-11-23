@@ -1126,19 +1126,20 @@ K36-K40、K42、K45-K51 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
 - K50: Kimi-K3 消息级动态工具声明核验（chat 单协议） [P0]
   客户问题（工单 AGDC2-71，2026-11-20）：同一提示词同一工具定义
   （read_probe_code），仅 messages[].tools 声明时返回 stop 无 tool_
-  calls（疑似消息级声明被静默忽略），顶层 tools 则正常调用。客户
-  诉求：确认是否支持消息级动态工具声明。按 Kimi 官方行为断言：
-  messages[].tools 应与顶层 tools 等价可调用——被忽略属缺陷复现
-  （静默吞掉工具定义）。4 组对照（同提示词同工具定义仅声明位置/
-  形态不同）：S1 消息级非流式（核心）、S2 顶层非流式（对照前置，
-  对照失败则判定不可归因）、S3 消息级流式、S4 长输入变体（4096
-  英文词还原客户缓存测试上下文）；断言各组 200+finish_reason=
-  tool_calls+tool_calls 含 read_probe_code（arguments 合法 JSON）；
-  usage.prompt_tokens 记录观察（客户口径 4096 词 ≈ 4196-4198
-  token，留观不硬断）。请求体自拟（工单仅含参数形态）：短指令
-  prompt+最小工具 schema；model 环境注入；max_tokens 小预算；未
-  指定参数不注入。chat 单协议。仅 KimiK3。无新增数据文件。（不
-  进 smoke 集：新用例首跑观察期；4 请求）
+  calls，顶层 tools 则正常调用。官方口径（Kimi《动态加载工具》文
+  档，2026-11-23 查阅）：支持消息级动态工具声明——system 消息
+  （不携带 content）挂 tools 为合法形态，kimi-k3 在支持列表；user
+  挂点官方未支持（渠道 Router 显式 400，公网入口 200 静默忽略—
+  —入口一致性差异）。6 组对照：S1 官方合法挂点（system 无
+  content 挂 tools，核心——200+tool_calls，静默忽略=缺陷复现）、
+  S2 顶层（对照前置）、S3 合法挂点流式、S4 4096 英文词+合法挂点
+  （还原客户缓存场景，prompt_tokens 留观）、S5 user 挂点（非官方
+  形态探测——应显式 400 且错误信息明确，200 静默忽略=入口一致
+  性缺陷）、S6 system 带非空 content 挂 tools（官方 400 守护）。
+  请求体自拟（客户挂点未知）：短指令 prompt+最小工具 schema；
+  model 环境注入；max_tokens 小预算；未指定参数不注入。chat 单协
+  议。仅 KimiK3。无新增数据文件。（不进 smoke 集：新用例首跑观
+  察期；6 请求）
 - K51: PDF base64 与文本混合 content 应支持（chat 单协议） [P0]
   客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带 text
   块与 file 块（PDF base64 Data URL），渠道返回 400——消息被 schema
@@ -14727,41 +14728,57 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         self, api_client: ModelAPIClient, test_logger
     ):
         """K50 [P0]: 客户问题 - Kimi-K3 消息级动态工具声明核验
-        （messages[].tools 应与顶层 tools 等价可调用，chat 单协议）
+        （官方合法挂点应可调用；非官方挂点应显式拒绝而非静默忽略，
+        chat 单协议）
 
         客户问题（工单 AGDC2-71，2026-11-20）：同一提示词、同一工具
         定义（read_probe_code），仅在 messages[].tools 声明时返回
-        finish_reason="stop"、无 tool_calls（疑似消息级声明被静默忽
-        略）；改为顶层 tools 后 finish_reason="tool_calls"、成功调用。
-        客户诉求：确认是否支持消息级动态工具声明，支持则提供请求示
-        例。全部请求 HTTP 200 无错误状态。按 Kimi 官方行为断言：
-        messages[].tools 应与顶层 tools 等价（tool_calls 可调用）——
-        消息级声明被忽略属缺陷复现（静默吞掉工具定义，调用方无任
-        何信号）。
-        请求体自拟（工单仅含参数形态不含报文/schema）：短指令提示词
-        + 最小 read_probe_code 函数 schema；4 组对照（同一提示词、同
-        一工具定义，仅声明位置/形态不同）：S1 消息级 tools 非流式
-        （核心）、S2 顶层 tools 非流式（对照组）、S3 消息级 tools
-        流式、S4 长输入变体（4096 英文词还原客户缓存测试上下文，
-        消息级 tools 非流式）；model 环境注入；max_tokens 小预算；
-        temperature/thinking 等未指定不注入。
+        finish_reason="stop"、无 tool_calls；改为顶层 tools 后正常
+        调用。客户诉求：确认是否支持消息级动态工具声明，支持则提
+        供请求示例。
+        官方口径（Kimi《动态加载工具》文档 2026-11-23 查阅）：支持
+        消息级动态工具声明——在 messages 中插入 role=system 的消息
+        并通过该消息的 tools 字段声明（与顶层 tools 并存；仅
+        kimi-k3.1-pro、kimi-k3 支持，不支持的模型报 tokenization
+        failed）；携带 tools 的 system 消息不能再携带 content 字段
+        （否则 400 cannot be used with content）；官方文档未支持
+        user 消息挂 tools。渠道 Router 实测（开发 20261122）：合法
+        挂点（空 content 的 system/developer）可调用；user 挂点显式
+        400「'tools' on a message with role 'user' is not allowed」；
+        公网入口对 user 挂点 200 静默忽略（入口一致性差异）。
+        请求体自拟（工单仅含参数形态不含报文/schema；客户挂点未
+        知）：短指令提示词 + 最小 read_probe_code 函数 schema；6 组
+        对照（同一提示词、同一工具定义）：S1 官方合法挂点（system
+        无 content 挂 tools，核心）、S2 顶层 tools（对照前置）、
+        S3 合法挂点流式、S4 4096 英文词+合法挂点（还原客户缓存测
+        试上下文）、S5 user 挂点（非官方形态探测）、S6 system 带非
+        空 content 挂 tools（官方 400 守护）；model 环境注入；
+        max_tokens 小预算；temperature/thinking 等未指定不注入。
         判定：
-        1. 断言1（对照前置）：S2 顶层组 200 + finish_reason=tool_calls
-           + tool_calls 含 read_probe_code——对照组失败则环境/工具定
-           义异常，S1 判定不可归因
-        2. 断言2（核心）：S1 消息级组 200 + finish_reason=tool_calls
-           + tool_calls 含 read_probe_code——stop 或无 tool_calls 为
-           缺陷复现（消息级声明被静默忽略）
-        3. 断言3：S3 流式组 200 + SSE tool_calls 增量帧 + finish_
-           reason=tool_calls——流式形态同等要求
-        4. 断言4：S4 长输入组同 S1 断言（长上下文下消息级声明同
-           样应生效）；usage.prompt_tokens 记录观察（客户口径 4096
-           词 ≈ 4196-4198 token，实测留观不硬断）
+        1. 断言1（对照前置）：S2 顶层组 200 + finish_reason=
+           tool_calls + tool_calls 含 read_probe_code——对照失败则
+           环境/工具定义异常，其余判定不可归因
+        2. 断言2（核心）：S1 官方合法挂点 200 + finish_reason=
+           tool_calls + tool_calls 含 read_probe_code——stop/无
+           tool_calls 为缺陷复现（官方形态被静默忽略，渠道不支持
+           消息级动态工具声明）
+        3. 断言3：S3 流式合法挂点 200 + SSE tool_calls 增量帧 +
+           finish_reason=tool_calls
+        4. 断言4：S4 长输入合法挂点同 S1 断言；usage.prompt_tokens
+           记录观察（客户口径 4096 词 ≈ 4196-4198 token，留观不硬
+           断）
+        5. 断言5：S5 user 挂点——200 静默忽略（无 tool_calls）为
+           FAIL（入口一致性缺陷：Router 显式 400 而公网静默剥离）；
+           400 且错误信息明确为 PASS（与 Router 对齐）；200+
+           tool_calls 为提升支持（PASS 并记录观察）
+        6. 断言6：S6 带非空 content 挂 tools 应 400（官方 cannot
+           be used with content 校验口径守护）
         观察（不计判据）：各组 content/finish_reason/usage 全文、
         耗时；S1 被忽略时 content 是否提及工具（工具定义被当普通
         文本处理的旁证）。超时沿用全局。chat 单协议。仅 KimiK3
-        （消息级动态工具声明为 kimi 系特性）。无新增数据文件。
-        （不进 smoke 集：新用例首跑观察期；4 请求）
+        （消息级动态工具声明为 kimi 系特性，kimi-k3 官方在支持列
+        表）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；
+        6 请求）
         """
         # K50: 工具定义自拟（工单仅含工具名 read_probe_code，未含
         # schema）——按「读取探针代码」语义构造最小参数集
@@ -14910,35 +14927,36 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
                 f"可归因——工具定义/环境问题）: {e}"
             )
 
-        # ---- S1 消息级 tools（核心，客户形态）----
+        # ---- S1 官方合法挂点（核心）：system 无 content 挂 tools，
+        # 追加在 messages 尾部（官方《动态加载工具》示例形态）----
         payload_s1: Dict[str, Any] = {
             "model": api_client.model_name,
-            "messages": [{
-                "role": "user",
-                "content": K50_PROMPT,
-                "tools": [K50_TOOL],
-            }],
+            "messages": [
+                {"role": "user", "content": K50_PROMPT},
+                {"role": "system", "tools": [K50_TOOL]},
+            ],
             "max_tokens": 256,
         }
         resp, elapsed = _k50_send(payload_s1)
-        _k50_check_tool_call("S1 消息级 tools（核心）", resp, elapsed)
+        _k50_check_tool_call("S1 官方合法挂点 system 无 content（核心）",
+                             resp, elapsed)
 
-        # ---- S3 消息级 tools + 流式 ----
+        # ---- S3 官方合法挂点 + 流式 ----
         payload_s3: Dict[str, Any] = {
             "model": api_client.model_name,
-            "messages": [{
-                "role": "user",
-                "content": K50_PROMPT,
-                "tools": [K50_TOOL],
-            }],
+            "messages": [
+                {"role": "user", "content": K50_PROMPT},
+                {"role": "system", "tools": [K50_TOOL]},
+            ],
             "max_tokens": 256,
             "stream": True,
         }
         resp, elapsed = _k50_send(payload_s3, streaming=True)
-        _k50_check_tool_call("S3 消息级 tools 流式", resp, elapsed,
+        _k50_check_tool_call("S3 官方合法挂点流式", resp, elapsed,
                              from_sse=True)
 
-        # ---- S4 长输入变体（4096 英文词还原客户缓存测试上下文）----
+        # ---- S4 长输入 + 官方合法挂点（4096 英文词还原客户缓存
+        # 测试上下文——动态工具声明与前缀缓存叠加的官方设计场景）----
         # 自然英文重复句凑精确 4096 词（10 词/句 × 409 + 6 词）
         base_words = ("lorem ipsum dolor sit amet consectetur "
                       "adipiscing elit sed").split()
@@ -14946,25 +14964,112 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         long_text = " ".join(words)
         payload_s4: Dict[str, Any] = {
             "model": api_client.model_name,
-            "messages": [{
-                "role": "user",
-                "content": long_text + "\n\n" + K50_PROMPT,
-                "tools": [K50_TOOL],
-            }],
+            "messages": [
+                {"role": "user",
+                 "content": long_text + "\n\n" + K50_PROMPT},
+                {"role": "system", "tools": [K50_TOOL]},
+            ],
             "max_tokens": 256,
         }
         resp, elapsed = _k50_send(payload_s4)
-        usage_s4 = _k50_check_tool_call("S4 长输入消息级 tools", resp,
+        usage_s4 = _k50_check_tool_call("S4 长输入官方合法挂点", resp,
                                         elapsed)
         test_logger.info(
             f"K50 S4 长输入观察: 输入 {len(words)} 词，实测 "
             f"prompt_tokens={usage_s4.get('prompt_tokens')!r}"
             f"（客户口径 4096 词 ≈ 4196-4198 token，留观不硬断）"
         )
+
+        # ---- S5 user 挂点（非官方形态探测）：应显式 400 且错误信息
+        # 明确（Router 直连行为对齐）；200 静默忽略=入口一致性缺陷；
+        # 200+tool_calls=提升支持（PASS 并记录观察）----
+        payload_s5: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": K50_PROMPT,
+                "tools": [K50_TOOL],
+            }],
+            "max_tokens": 256,
+        }
+        resp, elapsed = _k50_send(payload_s5)
+        st5 = resp.status_code
+        body5 = resp.text
+        if st5 == 200:
+            try:
+                data5 = resp.json()
+            except ValueError:
+                data5 = None
+            ch5 = ((data5 or {}).get("choices") or [{}])[0]
+            tc5 = ((ch5 or {}).get("message") or {}).get("tool_calls") or []
+            fr5 = (ch5 or {}).get("finish_reason")
+            assert tc5, (
+                f"K50 S5 user 挂点（非官方形态）: 公网 200 静默忽略"
+                f"（finish_reason={fr5!r}，无 tool_calls）——入口一致性"
+                f"缺陷复现：Router 直连对该形态显式 400「'tools' on a "
+                f"message with role 'user' is not allowed」，公网应显式"
+                f"拒绝而非静默剥离工具定义；响应: {body5[:300]}"
+            )
+            test_logger.info(
+                f"K50 S5 user 挂点: 200 且 tool_calls 非空——网关提升"
+                f"支持非官方形态（PASS 并记录观察），finish_reason={fr5!r}"
+            )
+        else:
+            assert 400 <= st5 < 500, (
+                f"K50 S5 user 挂点（非官方形态）: 应显式 4xx 拒绝（Router "
+                f"对齐），实测 HTTP {st5}；响应: {body5[:300]}"
+            )
+            try:
+                data5 = resp.json()
+            except ValueError:
+                data5 = None
+            err5 = data5.get("error") if isinstance(data5, dict) else None
+            has_msg5 = (
+                isinstance(err5, dict)
+                and (str(err5.get("message") or "").strip()
+                     or str(err5.get("code") or "").strip())
+            ) or (
+                isinstance(data5, dict)
+                and bool(str(data5.get("message") or "").strip())
+            )
+            assert has_msg5, (
+                f"K50 S5 user 挂点: {st5} 拒绝但错误信息不明确（调用方"
+                f"无法识别挂点非法——拒绝应写明原因）；"
+                f"响应: {body5[:300]}"
+            )
+            test_logger.info(
+                f"K50 S5 user 挂点: HTTP {st5} 显式拒绝且错误信息明确"
+                f"（与 Router 直连行为对齐）"
+            )
+
+        # ---- S6 system 带非空 content 挂 tools（官方 400 守护）----
+        payload_s6: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [
+                {"role": "user", "content": K50_PROMPT},
+                {"role": "system",
+                 "content": "以下为可用工具声明。",
+                 "tools": [K50_TOOL]},
+            ],
+            "max_tokens": 256,
+        }
+        resp, elapsed = _k50_send(payload_s6)
+        st6 = resp.status_code
+        body6 = resp.text
+        assert st6 == 400, (
+            f"K50 S6 带非空 content 挂 tools: 官方校验口径应 400"
+            f"（cannot be used with content / requires empty content），"
+            f"实测 HTTP {st6}；响应: {body6[:300]}"
+        )
         test_logger.info(
-            "客户问题整改验证通过: 消息级动态工具声明与顶层 tools 等价"
-            "（S1/S3/S4 均 finish_reason=tool_calls 并成功调用 "
-            "read_probe_code）——消息级声明被静默忽略缺陷未复现"
+            f"K50 S6 带非空 content 挂 tools: HTTP 400（官方校验口径"
+            f"守护通过）；响应截 200: {body6[:200]}"
+        )
+
+        test_logger.info(
+            "客户问题整改验证通过: 官方合法挂点（system 无 content 挂 "
+            "tools）可正常调用（S1/S3/S4），非官方挂点显式拒绝（S5/"
+            "S6）——消息级动态工具声明支持性与入口静默缺陷均未复现"
         )
 
     @pytest.mark.k_customer_issue
