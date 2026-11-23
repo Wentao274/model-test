@@ -238,13 +238,14 @@ H9/H10/H11 为补充用例，分别覆盖默认行为探测、行为级验证、
 | K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 以 base64 方式提交视频并走流式，不支持的输入类型应前置返回 400 明确错误（而非 5xx 内部异常——接入层模态校验缺失致客户端无效重试） | 单发 chat 流式（自拟请求体：text+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入；直接 session.post 直发观察首响）：断言1（核心）HTTP 400——5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL；断言2 400 错误体含明确错误信息（error.code 记录观察不硬断）；超时沿用全局；KimiK3+KimiK31 | P0  |
 | K50 | Kimi-K3 消息级动态工具声明核验（chat 单协议） | 消息级动态工具声明的官方合法挂点（system 消息不携带 content 挂 tools）应可正常调用（finish_reason=tool_calls）；user 挂点等非官方形态应显式 400 拒绝而非静默忽略 | 6 组对照（同提示词同工具定义；客户挂点未知，请求体自拟）：S1 官方合法挂点（system 无 content 挂 tools，核心——200+tool_calls，静默忽略=缺陷复现）、S2 顶层（对照前置，对照失败则判定不可归因）、S3 合法挂点流式、S4 4096 英文词+合法挂点（还原客户缓存场景，prompt_tokens 留观）、S5 user 挂点（应显式 400 且错误信息明确，200 静默忽略=入口一致性缺陷，200+tool_calls=提升支持）、S6 system 带非空 content 挂 tools（官方 400 守护）；model 环境注入；仅 KimiK3 | P0  |
 | K51 | PDF base64 与文本混合 content 应支持（chat 单协议） | user 消息 content 数组同时携带 text 块与 file 块（PDF base64）应被接口支持（200 正常应答），400 schema 校验失败即接口不支持缺陷 | 单发 chat 非流式（自拟请求体：text 块文档提问+file 块 data:application/pdf;base64 内置最小合法 PDF 含 xref 表；model 环境注入；max_tokens/stream 未指定不注入）：断言1（核心）HTTP 200——400 校验错误=缺陷复现；断言2 choices 非空+content 非空；无模型分组标记（模型无关接口 schema 能力，K3 先例） | P0  |
+| K52 | image_url 空值应 400 而非 5xx（chat 单协议） | image_url 块 url 为空值（声明图片输入但无图片数据）应前置返回 400 明确错误（而非 5xx 内部异常——接入层参数校验缺失致客户端无效重试） | 单发 chat 非流式（自拟请求体：text 块图片描述请求+image_url 块 url="" 空值；model 环境注入；max_tokens/stream 未指定不注入）：断言1（核心）HTTP 400——5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL；断言2 400 错误体含明确错误信息；无模型分组标记（模型无关接入层参数校验，K51 先例） | P0  |
 
 
 ---
 
 ## 三、测试执行优先级建议
 
-### P0（上线必测，63 项）
+### P0（上线必测，64 项）
 
 ```
 A1-A5, A8        基础推理 6 项
@@ -256,10 +257,10 @@ E1, E4           稳定性 2 项（E1 空输入、E4 特殊字符注入；E2/E3/
 F1, F3, F4, F6, F7   API 兼容 5 项（F3 模型列表升至 P0，F7 Responses API 新增）
 G1, G4, G5, G6, G7, G8, G9, G12  Chat Completions API 质量评估 8 项（G2 降为 P1，G8 升至 P0）
                      clear_thinking 参数行为 0 项（H 类全部降为 P1/P2，仅做选测）
-K1-K3, K5-K7, K10-K14, K16, K18, K20, K22-K25, K27-K29, K36-K40, K42, K45-K51  反馈问题验证 34 项（均 P0，客户报障必测；经使用重要性重划，2026-11-11 用户确认；K49/K50/K51 于 2026-11-20 追加）
+K1-K3, K5-K7, K10-K14, K16, K18, K20, K22-K25, K27-K29, K36-K40, K42, K45-K52  反馈问题验证 35 项（均 P0，客户报障必测；经使用重要性重划，2026-11-11 用户确认；K49/K50/K51/K52 于 2026-11-20/23 追加）
 ```
 
-总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 34 = 63 项。
+总计 6 + 2 + 2 + 0 + 4 + 2 + 5 + 8 + 0 + 35 = 64 项。
 
 K46（AGDC2-58 · 杭州永沐科技，P0，仅 GLM53FLASH）用户正文含聊天
 模版控制词转义核验——消息正文含 ＜think＞B＜/think＞ 字面量（期望输出 A＜think＞B＜/think＞C）仅输出 "A"：模版渲染未转义控制词被编码

@@ -3,8 +3,8 @@ K. 反馈问题验证测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
-2026-11-11；K49/K50/K51 于 2026-11-20 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45-K51 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+2026-11-11；K49/K50/K51/K52 于 2026-11-20/23 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
+K36-K40、K42、K45-K52 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -1153,6 +1153,18 @@ K36-K40、K42、K45-K51 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   式；chat 单协议。无模型分组标记（模型无关接口 schema 能力，K3
   先例）。无新增数据文件。（不进 smoke 集：新用例首跑观察期；1
   请求）
+- K52: image_url 空值应 400 而非 5xx（chat 单协议） [P0]
+  客户问题（工单 AGDC2-77，2026-11-23）：user 消息 content 数组携
+  带 image_url 块但 image_url.url 为空字符串（声明图片输入但无图
+  片数据），服务端未对空值前置校验，透传至图片处理层抛出内部异
+  常，对外返回 HTTP 500。客户预期接入层前置参数校验——image_url
+  空值直接返回 400 明确错误。断言：HTTP 400（5xx=缺陷复现、200/
+  其他=未按预期拒绝，均 FAIL）+ 400 错误体含明确错误信息。请求
+  体自拟：text 块图片描述请求 + image_url 块（url="" 空值）；model
+  环境注入；max_tokens/stream 未指定不注入。单发非流式；chat 单
+  协议。KimiK3（image_url 空值校验按 kimi 模型域归组，用户指定
+  2026-11-23）。无新增数据文件。（不进 smoke 集：新用例首跑观察
+  期；1 请求）
 """
 
 import base64
@@ -15070,6 +15082,109 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "客户问题整改验证通过: 官方合法挂点（system 无 content 挂 "
             "tools）可正常调用（S1/S3/S4），非官方挂点显式拒绝（S5/"
             "S6）——消息级动态工具声明支持性与入口静默缺陷均未复现"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK3
+    @pytest.mark.p0
+    def test_image_url_empty_value_agdc2_77(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K52 [P0]: 客户问题 - image_url 空值应 400 而非 5xx
+        （chat 单协议）
+
+        客户问题（工单 AGDC2-77，2026-11-23）：user 消息 content 数
+        组携带 image_url 块但 image_url.url 为空字符串（声明图片输
+        入但无图片数据），服务端未对空值做前置校验，透传至图片处
+        理层抛出内部异常，对外返回 HTTP 500「An internal server
+        error occurred.」。客户预期接入层前置参数校验——image_url
+        空值直接返回 400 明确错误（调用方可区分调用方式问题与服
+        务故障，不再按 5xx 无效重试）。
+        请求体自拟（反馈仅含参数形态与错误状态）：messages=[user：
+        text 块图片描述请求 + image_url 块（url="" 空值）]；model
+        环境注入；max_tokens/stream 等未指定——不注入。
+        判定：
+        1. 断言1（核心）：HTTP 400——image_url 空值应前置 4xx 拒
+           绝；5xx 为缺陷复现（内部异常对外），200/其他为未按预
+           期拒绝，均 FAIL
+        2. 断言2：400 错误体可解析 JSON 且含明确错误信息（error 外
+           层或 message 非空——调用方需据此识别空 image_url）
+        观察（不计判据）：响应耗时、错误体全文、error.code 取值。
+        超时沿用全局。chat 单协议。KimiK3（image_url 空值校验按
+        kimi 模型域归组，用户指定 2026-11-23）。无新增数据文件。
+        （不进 smoke 集：新用例首跑观察期；1 请求）
+        """
+        payload: Dict[str, Any] = {
+            "model": api_client.model_name,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请描述这张图片的内容。"},
+                    {"type": "image_url", "image_url": {"url": ""}},
+                ],
+            }],
+        }
+
+        test_logger.info(
+            "=== 测试开始: 客户问题 - image_url 空值应 400 而非 5xx"
+            "（image_url 块 url=\"\" 空值，非流式，model 环境注入）==="
+        )
+        chat_url = f"{api_client.api_prefix}/chat/completions"
+        headers: Dict[str, Any] = {"Content-Type": "application/json"}
+        if api_client.api_key:
+            headers["Authorization"] = f"Bearer {api_client.api_key}"
+        start_time = time.time()
+        response = api_client.session.post(
+            chat_url, json=payload, headers=headers,
+            timeout=api_client.timeout,
+        )
+        elapsed = time.time() - start_time
+        status = response.status_code
+        body_text = response.text
+        test_logger.info(
+            f"K52 请求 1 实测: HTTP {status}, elapsed={elapsed:.1f}s, "
+            f"响应: {body_text[:300]}"
+        )
+
+        # 断言1（核心）：HTTP 400——image_url 空值应前置 4xx 拒绝
+        assert status == 400, (
+            f"K52: image_url 空值应返回 400（参数前置校验拒绝），"
+            f"实测 HTTP {status}"
+            + ("——缺陷复现：内部异常对外 5xx（应前置校验返回 400 明"
+               "确错误，调用方无法区分调用问题与服务故障）"
+               if status >= 500 else "")
+            + ("——未按预期拒绝（空 image_url 被放行）"
+               if status == 200 else "")
+            + f"，elapsed={elapsed:.1f}s，响应: {body_text[:500]}"
+        )
+
+        # 断言2：400 错误体可解析 JSON 且含明确错误信息
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        err = data.get("error") if isinstance(data, dict) else None
+        has_err_msg = (
+            isinstance(err, dict)
+            and (str(err.get("message") or "").strip()
+                 or str(err.get("code") or "").strip())
+        ) or (
+            isinstance(data, dict)
+            and bool(str(data.get("message") or "").strip())
+        )
+        assert has_err_msg, (
+            f"K52: 400 错误体应含明确错误信息（error 外层或 message 非"
+            f"空——调用方需据此识别 image_url 空值），"
+            f"实测: {body_text[:500]}"
+        )
+        err_code = err.get("code") if isinstance(err, dict) else None
+        test_logger.info(
+            f"K52 400 错误体: error.code={err_code!r}（记录观察），"
+            f"error={err!r}"
+        )
+        test_logger.info(
+            "客户问题整改验证通过: image_url 空值返回 400 且错误信息"
+            "明确（参数前置校验已生效，内部异常对外 500 缺陷未复现）"
         )
 
     @pytest.mark.k_customer_issue

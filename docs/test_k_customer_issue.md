@@ -97,6 +97,7 @@
 | K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，在消息解析层抛出内部异常），客户端按瞬时故障多次重试无果——预期不支持的输入类型前置 4xx 拒绝（400 明确错误），调用方可区分调用方式问题与服务故障 | 单发 chat 流式（自拟请求体：text 询问+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入）：断言1（核心）HTTP 400（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）；断言2 400 错误体含明确错误信息（error.code 记录观察，整改目标 code 落地前不硬断）；直接 session.post 直发观察首响；超时沿用全局；KimiK3+KimiK31；无新增数据文件 | P0 |
 | K50 | Kimi-K3 消息级动态工具声明核验（chat 单协议） | 客户问题（工单 AGDC2-71，2026-11-20）：同一提示词同一工具定义（read_probe_code），仅 messages[].tools 声明时返回 stop 无 tool_calls，顶层 tools 则正常调用——官方口径（Kimi《动态加载工具》文档）：system 消息（不携带 content）挂 tools 为合法形态，kimi-k3 在支持列表；user 挂点官方未支持（Router 显式 400，公网入口 200 静默忽略=入口一致性差异） | 6 组对照（同提示词同工具定义；客户挂点未知，请求体自拟）：S1 官方合法挂点（system 无 content 挂 tools，核心——200+tool_calls，静默忽略=缺陷复现）、S2 顶层（对照前置）、S3 合法挂点流式、S4 4096 英文词+合法挂点（还原客户缓存场景，prompt_tokens 留观）、S5 user 挂点（应显式 400 且错误信息明确，200 静默忽略=入口一致性缺陷）、S6 system 带非空 content 挂 tools（官方 400 守护）；model 环境注入；仅 KimiK3；无新增数据文件 | P0 |
 | K51 | PDF base64 与文本混合 content 应支持（chat 单协议） | 客户问题（2026-11-20 反馈）：user 消息 content 数组同时携带 text 块与 file 块（PDF base64 Data URL），渠道返回 400——消息被 schema 校验错配到 generic 分支（role 枚举不含 'user'、content 必须字符串），报 decode_worker_failed_to_start——预期接口应支持 PDF base64 与文本混合输入 | 单发 chat 非流式（自拟请求体：text 块文档提问+file 块 data:application/pdf;base64 内置最小合法 PDF 含 xref 表；model 环境注入；max_tokens/stream 未指定不注入）：断言1（核心）HTTP 200（400 校验错误=缺陷复现——接口不支持 text+file 混合输入）；断言2 choices 非空+content 非空；无模型分组标记（模型无关接口 schema 能力，K3 先例）；无新增数据文件 | P0 |
+| K52 | image_url 空值应 400 而非 5xx（chat 单协议） | 客户问题（工单 AGDC2-77，2026-11-23）：user 消息 content 数组携带 image_url 块但 image_url.url 为空字符串（声明图片输入但无图片数据），服务端未对空值前置校验，透传至图片处理层抛出内部异常，对外返回 HTTP 500——预期接入层前置参数校验，image_url 空值直接返回 400 明确错误 | 单发 chat 非流式（自拟请求体：text 块图片描述请求+image_url 块 url="" 空值；model 环境注入；max_tokens/stream 未指定不注入）：断言1（核心）HTTP 400（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）；断言2 400 错误体含明确错误信息（error 外层或 message 非空）；KimiK3（image_url 空值校验按 kimi 模型域归组，用户指定 2026-11-23）；无新增数据文件 | P0 |
 
 
 ## 运行方式
@@ -4335,4 +4336,62 @@ errors 细节、错误码、耗时。
   支持后转 PASS
 - `file` 块（`file_data` Data URL）为 OpenAI file 输入形态；公网 URL
   形态与 files API（file_id 引用）形态不在本用例范围
+- 不进 smoke 集：新用例首跑观察期
+
+## test_image_url_empty_value_agdc2_77 (K52)
+
+- **用例**：`tests/test_k_customer_issue.py::TestCustomerIssue::test_image_url_empty_value_agdc2_77`
+- **优先级**：P0（2026-11-23 追加）
+- **marker**：`k_customer_issue` / `KimiK3` / `p0`（KimiK3 分组标记——image_url 空值校验按 kimi 模型域归组，用户指定 2026-11-23）
+- **协议**：chat 单协议（非流式）
+- **来源**：工单 AGDC2-77（2026-11-23，image_url 空值返回 500）
+
+**背景**：客户请求的 user 消息 content 数组携带 `image_url` 块，但
+`image_url.url` 为空字符串——声明了图片输入但没有图片数据。服务端
+未对该空值做前置校验，空值透传至图片处理层后抛出内部异常，对外返
+回 HTTP 500「An internal server error occurred.」。该 500 不表示服
+务故障——正确的行为是接入层对 `image_url.url` 空值前置校验，直接
+返回 400 明确错误，调用方据此即可区分「调用方式问题」与「服务故
+障」，不再按 5xx 无效重试（与 K49 视频通路 500 同类的「参数校验缺
+失导致内部异常外泄」问题）。
+
+**请求构造**：单发非流式（反馈未含 stream——不注入），请求体自拟
+（反馈仅含参数形态与错误状态）：messages=[{"role": "user", "content":
+[{"type": "text", "text": "请描述这张图片的内容。"}, {"type":
+"image_url", "image_url": {"url": ""}}]}]；model 环境注入；max_tokens
+等未指定——不注入（test_k 独立性规则）。
+
+**断言**：
+1. 断言1（核心）：HTTP 400——image_url 空值应前置 4xx 拒绝
+2. 断言2：400 错误体可解析 JSON 且含明确错误信息（error 外层或
+   message 非空）
+
+**观察记录**（不计判据，留日志）：响应耗时、错误体全文、error.code
+取值。
+
+**判定矩阵**：
+- HTTP 5xx → FAIL（**缺陷复现——内部异常对外，应前置参数校验返回
+  400**）
+- HTTP 200 → FAIL（未按预期拒绝——空 image_url 被放行）
+- HTTP 400 但错误体无明确错误信息 → FAIL（调用方无法识别空
+  image_url）
+- HTTP 400 + 错误信息明确 → PASS
+
+**设计决策记录**：
+- **断 400 精确值**（客户预期「传 400 比较合适」）：5xx 属缺陷复
+  现、200/其他 4xx 属未按预期——首版按 400 硬断，落地后若出现其
+  他 4xx 合法形态再放宽
+- **空值形态取 `url=""`**：反馈「image_url 是空的」的最直接对应
+  （test_k 独立性规则——只使用用户提供的形态；`image_url: null`/
+  缺字段/data URL 空数据等变体未提供不注入，如需覆盖另行追加）
+- **KimiK3 分组标记**（用户指定 2026-11-23）：image_url 空值校验
+  按 kimi 模型域归组（K 套件按模型分组标记口径）
+- **P0**：客户报障接入层校验缺失（500 误导客户端无效重试）
+- **不进 smoke 集**：新用例首跑观察期
+
+**注意事项**：
+- 本用例为缺陷复现用例：整改部署前预期 FAIL（当前渠道返回 500），
+  前置参数校验落地后转 PASS
+- 与 K49（视频通路 500）属同类缺陷族：「未前置校验 → 内部异常 →
+  500 外泄」；本用例聚焦 image_url 空值这一输入形态
 - 不进 smoke 集：新用例首跑观察期

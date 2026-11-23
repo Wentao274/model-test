@@ -56,7 +56,7 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K51，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）、test_zjxm_agdc2_61 全部 45 用例（九章功能对比报告 20261110「实际传参」原始报文 + 20261116 复测报告补入 3 条，原样发送，不注入采样参数）、test_sksn_agdc2_57 全部 38 用例（kimi-k3 能力确认请求含缓存/TTL 参数原样发送，不注入采样参数）、test_yqzl_agdc2_75 全部 239 用例（九章 kimi-k3 测试报告「实际请求参数」原样重放，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K52，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）、test_zjxm_agdc2_61 全部 45 用例（九章功能对比报告 20261110「实际传参」原始报文 + 20261116 复测报告补入 3 条，原样发送，不注入采样参数）、test_sksn_agdc2_57 全部 38 用例（kimi-k3 能力确认请求含缓存/TTL 参数原样发送，不注入采样参数）、test_yqzl_agdc2_75 全部 239 用例（九章 kimi-k3 测试报告「实际请求参数」原样重放，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
         booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65、Z 类 test_zjxm_agdc2_61、S 类 test_sksn_agdc2_57 与 Y 类 test_yqzl_agdc2_75——L/Z/S/Y 类仅勾选对应 MARKER 或 SPECIFIC_TEST 点名（Z/S/Y 类暂不进 SPECIFIC_TEST）时执行）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
@@ -220,6 +220,7 @@ pipeline {
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimi_video_base64_stream_agdc2_70',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_kimik3_message_level_tools_agdc2_71',
             'tests/test_k_customer_issue.py::TestCustomerIssue::test_pdf_base64_text_mixed_content_support_agdc2_76',
+            'tests/test_k_customer_issue.py::TestCustomerIssue::test_image_url_empty_value_agdc2_77',
             'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_01_chat_logic_basic',
             'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_02_chat_logic_multi_turn',
             'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_03_chat_retry_on_hit',

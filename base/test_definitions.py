@@ -1975,6 +1975,25 @@ TEST_CATEGORIES = {
                 "P0",
                 "user 消息 content 数组同时携带 text 块与 file 块（PDF base64）应被接口支持（200 正常应答），400 schema 校验失败即接口不支持缺陷",
             ),
+            (
+                "K52",
+                "image_url 空值应 400 而非 5xx（chat 单协议）",
+                "客户问题（工单 AGDC2-77，2026-11-23）：user 消息 content 数组携带"
+                " image_url 块但 image_url.url 为空字符串（声明图片输入但无图片数据），"
+                "服务端未对空值做前置校验，透传至图片处理层抛出内部异常，对外返回 HTTP 500"
+                "「An internal server error occurred.」。客户预期接入层前置参数校验——"
+                "image_url 空值直接返回 400 明确错误（调用方可区分调用方式问题与服务故障，"
+                "不再按 5xx 无效重试）。断言（当前渠道预期 FAIL——缺陷复现）：HTTP 400"
+                "（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）+ 400 错误体可解析 JSON"
+                " 且含明确错误信息（error 外层或 message 非空）。请求体自拟（反馈仅含参数"
+                "形态与错误状态）：text 块图片描述请求+image_url 块（url=\"\" 空值）；model "
+                "环境注入；max_tokens/stream 等未指定不注入。单发非流式；chat 单协议；"
+                "KimiK3（image_url 空值校验按 kimi 模型域归组，用户指定 2026-11-23）。"
+                "无新增数据文件",
+                "image_url_empty_value_agdc2_77",
+                "P0",
+                "image_url 块 url 为空值（声明图片输入但无图片数据）应前置返回 400 明确错误（而非 5xx 内部异常），错误体应含明确错误信息",
+            ),
         ],
     },
 }
