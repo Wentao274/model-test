@@ -3,8 +3,8 @@ K. 反馈问题验证测试
 
 本测试类专门收录来自客户反馈的真实问题，将客户提供的 curl 命令还原为
 标准模型请求进行复现与回归验证。优先级经使用重要性重划（用户确认
-2026-11-11；K49/K50/K51/K52 于 2026-11-20/23 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
-K36-K40、K42、K45-K52 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
+2026-11-11；K49/K50/K51/K52/K53 于 2026-11-20/23 追加 P0）：K1-K3、K5-K7、K10-K14、K16、K18、K20、K22-K25、K27-K29、
+K36-K40、K42、K45-K53 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K17/K19/K21/K26/K30/K31/K32/K35/K41/K43/K44 为 P1，K33/K34 为 P2。
 
 环境注入约定：客户 curl 中的 URL、API key、模型名仅用于当时的问题定位，
 不写入测试代码。与其他测试类一致，目标服务地址与凭证由 Jenkinsfile 构建
@@ -1165,6 +1165,21 @@ K36-K40、K42、K45-K52 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   协议。KimiK3（image_url 空值校验按 kimi 模型域归组，用户指定
   2026-11-23）。无新增数据文件。（不进 smoke 集：新用例首跑观察
   期；1 请求）
+- K53: max_completion_tokens 边界值应 400 而非 5xx（chat 单协议，
+  覆盖流式与非流式） [P0]
+  客户问题（工单 AGDC2-78，2026-11-23）：kimi-k3.1 请求 max_
+  completion_tokens 超上限返回 HTTP 500。客户预期：输入+输出预算
+  超过模型上下文上限的请求应返回 HTTP 400（kimi-k3.1 窗口 1M，
+  输出预算上限即窗口本身）。三组值（用户确认 2026-11-23）：
+  S1 max_completion_tokens=1048576（上限边界值，原 1048577 调整）、
+  S2 max_completion_tokens=1048575（同样需要响应 400）、S3 max_
+  completion_tokens=1048577（超上限值，仅非流式，断言与 S1 相同）
+  ——非空输入下输入+输出预算均超 1M 窗口；同口径断言 HTTP 400
+  （5xx=缺陷复现、200=官方自动调低口径差异、其他=未按预期）+
+  400 错误体含明确错误信息；S1/S2 覆盖非流式与流式、S3 仅非流
+  式（共 5 请求）。请求体自拟：短 user 消息；model 环境注入；
+  temperature 未指定不注入。chat 单协议。KimiK31（用户指定）。
+  无新增数据文件。（不进 smoke 集：新用例首跑观察期；5 请求）
 """
 
 import base64
@@ -15185,6 +15200,158 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         test_logger.info(
             "客户问题整改验证通过: image_url 空值返回 400 且错误信息"
             "明确（参数前置校验已生效，内部异常对外 500 缺陷未复现）"
+        )
+
+    @pytest.mark.k_customer_issue
+    @pytest.mark.KimiK31
+    @pytest.mark.p0
+    def test_kimik31_max_completion_tokens_over_limit_agdc2_78(
+        self, api_client: ModelAPIClient, test_logger
+    ):
+        """K53 [P0]: 客户问题 - max_completion_tokens 边界值应 400
+        而非 5xx（chat 单协议，覆盖流式与非流式）
+
+        客户问题（工单 AGDC2-78，2026-11-23）：kimi-k3.1 请求
+        max_completion_tokens 超上限返回 HTTP 500。客户预期：输入
+        +输出预算超过模型上下文上限的请求应返回 HTTP 400（kimi-
+        k3.1 上下文窗口 1M=1048576，输出预算上限即窗口本身；超上
+        限属参数错误而非服务故障）。
+        官方参照（Kimi Chat 文档）：「输入 token 数与 max_
+        completion_tokens 之和超过模型上下文窗口时，API 会根据剩
+        余上下文空间自动调低生成上限并继续处理」——实测放行 200
+        时失败信息标注为口径差异供复核（官方调低行为与官方一致）。
+        请求体自拟（反馈仅含参数形态）：三组值——S1 max_
+        completion_tokens=1048576（上限边界值，用户确认 2026-11-23
+        将原 1048577 调整为 1048576）、S2 max_completion_tokens=
+        1048575（边界值，用户确认 2026-11-23：1048575 同样需要响应
+        400——非空输入下输入+输出预算均超 1M 窗口）、S3 max_
+        completion_tokens=1048577（超上限值，仅非流式，用户确认
+        2026-11-23 追加）；短 user 消息；model 环境注入；
+        temperature 等未指定——不注入。S1/S2 覆盖非流式与流式
+        （stream=true，共 4 请求；流式 400 为普通 JSON 错误体非
+        SSE），S3 仅非流式（共 1 请求，断言与 S1 相同——合计 5
+        请求）。
+        判定（两组同口径）：
+        1. 断言1（核心）：HTTP 400——输入+输出预算超模型上下文上
+           限应前置 4xx 拒绝；5xx 为缺陷复现（内部异常对外），200
+           为官方自动调低口径差异（Kimi 文档：输入+预算超窗口时自
+           动调低生成上限继续处理——与官方一致属口径差异供复核而
+           非缺陷），其他状态为未按预期，均 FAIL
+        2. 断言2：400 错误体可解析 JSON 且含明确错误信息（error
+           外层或 message 非空）
+        观察（不计判据）：响应耗时、错误体全文、error.code 取值、
+        放行时 usage.completion_tokens（官方调低后的实际预算）。
+        超时沿用全局。chat 单协议。KimiK31（用户指定：测试模型
+        kimi-k3.1）。无新增数据文件。（不进 smoke 集：新用例首跑
+        观察期；4 请求）
+        """
+
+        def _k53_send(max_completion_tokens: int, stream: bool):
+            payload: Dict[str, Any] = {
+                "model": api_client.model_name,
+                "messages": [{"role": "user", "content": "你好"}],
+                "max_completion_tokens": max_completion_tokens,
+            }
+            if stream:
+                payload["stream"] = True
+            chat_url = f"{api_client.api_prefix}/chat/completions"
+            headers: Dict[str, Any] = {"Content-Type": "application/json"}
+            if api_client.api_key:
+                headers["Authorization"] = f"Bearer {api_client.api_key}"
+            start = time.time()
+            resp = api_client.session.post(
+                chat_url, json=payload, headers=headers,
+                timeout=api_client.timeout, stream=stream,
+            )
+            elapsed = time.time() - start
+            if stream:
+                body = "\n".join(
+                    ln for ln in resp.iter_lines(decode_unicode=True) if ln)
+            else:
+                body = resp.text
+            return resp, body, elapsed
+
+        def _k53_check_400(resp, body, tag: str):
+            status = resp.status_code
+            assert status == 400, (
+                f"K53 {tag}: 应返回 400（输入+输出预算超模型上下文上"
+                f"限的前置参数拒绝），实测 HTTP {status}"
+                + ("——缺陷复现：内部异常对外 5xx（应前置校验返回 "
+                   "400 明确错误）" if status >= 500 else "")
+                + ("——官方自动调低口径差异（文档：输入+预算超窗口时"
+                   "自动调低生成上限继续处理；客户预期为 400——此行"
+                   "为与官方一致，属口径差异供复核而非缺陷）"
+                   if status == 200 else "")
+                + f"，响应: {body[:400]}"
+            )
+            try:
+                data = json.loads(body)
+            except ValueError:
+                data = None
+            err = data.get("error") if isinstance(data, dict) else None
+            has_err_msg = (
+                isinstance(err, dict)
+                and (str(err.get("message") or "").strip()
+                     or str(err.get("code") or "").strip())
+            ) or (
+                isinstance(data, dict)
+                and bool(str(data.get("message") or "").strip())
+            )
+            assert has_err_msg, (
+                f"K53 {tag}: 400 错误体应含明确错误信息（error 外层"
+                f"或 message 非空——调用方需据此识别预算超上限），"
+                f"实测: {body[:400]}"
+            )
+            err_code = err.get("code") if isinstance(err, dict) else None
+            test_logger.info(
+                f"K53 {tag}: 400 错误体 error.code={err_code!r}（记录"
+                f"观察），error={err!r}"
+            )
+
+        def _k53_run(value: int, tag: str):
+            for stream, form in ((False, "非流式"), (True, "流式")):
+                resp, body, elapsed = _k53_send(value, stream)
+                test_logger.info(
+                    f"K53 {tag}（{form}）: max_completion_tokens={value}，"
+                    f"实测 HTTP {resp.status_code}, elapsed={elapsed:.1f}s, "
+                    f"响应: {body[:300]}"
+                )
+                if resp.status_code == 200 and not stream:
+                    try:
+                        data = json.loads(body)
+                    except ValueError:
+                        data = None
+                    comp = (((data or {}).get("usage") or {})
+                            .get("completion_tokens"))
+                    test_logger.info(
+                        f"K53 {tag}（{form}）放行观察（官方自动调低口"
+                        f"径）: usage.completion_tokens={comp!r}"
+                    )
+                _k53_check_400(resp, body, f"{tag}（{form}）")
+
+        # S1（核心，用户确认调整为 1048576）：max_completion_tokens=
+        # 1048576 上限边界值——非空输入下输入+输出预算超 1M 窗口
+        _k53_run(1048576, "S1 边界值 1048576")
+
+        # S2（用户确认：1048575 同样需要响应 400）：max_completion_
+        # tokens=1048575——非空输入下输入+输出预算同样超 1M 窗口
+        _k53_run(1048575, "S2 边界值 1048575")
+
+        # S3（用户确认追加：1048577 仅非流式，断言与 1048576 相同）：
+        # max_completion_tokens=1048577 超上限值——应前置 400
+        resp, body, elapsed = _k53_send(1048577, stream=False)
+        test_logger.info(
+            f"K53 S3 超上限 1048577（非流式）: max_completion_tokens="
+            f"1048577，实测 HTTP {resp.status_code}, elapsed="
+            f"{elapsed:.1f}s, 响应: {body[:300]}"
+        )
+        _k53_check_400(resp, body, "S3 超上限 1048577（非流式）")
+
+        test_logger.info(
+            "客户问题整改验证通过: max_completion_tokens=1048576/"
+            "1048575（输入+输出预算超模型上下文窗口）非流式与流式、"
+            "1048577 非流式均返回 400 且错误信息明确（内部异常对外 "
+            "500 缺陷未复现）"
         )
 
     @pytest.mark.k_customer_issue

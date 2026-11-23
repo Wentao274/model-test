@@ -1,6 +1,6 @@
 # 大模型推理能力测试框架
 
-基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 138 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
+基于 checkpoints.md 文档设计的大模型推理能力测试框架，覆盖 9 大类共 139 个测试点，用于评估大模型推理服务（OpenAI 兼容 API）的功能完备性与生成质量。
 
 测试可通过 **本地手动执行** 或 **Jenkins 流水线触发** 两种方式运行，自动生成 Allure HTML 报告与 Markdown 汇总报告，并按用例优先级（P0/P1/P2）给出测试结论。
 
@@ -33,9 +33,9 @@
 | F. API 兼容性 | `f_api` | 7 | OpenAI 接口兼容（Chat/Completions/Models/SDK/错误码，含 /v1/responses 新一代接口） |
 | G. Chat Completions API 质量评估 | `g_quality_chat_completions` | 13 | 生成质量、幻觉率、回答相关性、乱码检测 |
 | H. clear_thinking 参数行为 | `h_clear_thinking` | 11 | 多轮对话下历史思考的清除/保留、参数正交性、reasoning_content 字段、多 assistant 边界、默认行为探测、行为级验证、last_user 边界 |
-| K. 反馈问题验证 | `k_customer_issue` | 52 | 客户实测反馈相关问题（缺陷复现与官方行为对齐核验），P0 为主持续追加 |
+| K. 反馈问题验证 | `k_customer_issue` | 53 | 客户实测反馈相关问题（缺陷复现与官方行为对齐核验），P0 为主持续追加 |
 
-> 总计：138 个测试点（P0: 64 / P1: 57 / P2: 17）
+> 总计：139 个测试点（P0: 65 / P1: 57 / P2: 17）
 
 ---
 
@@ -281,7 +281,7 @@ pytest -m slow -v                           # 慢速测试
 
 豁免机制（用户口径）：以下用例全局覆盖对其**不生效**，始终按用例自身参数执行——
 
-- **test_k 全部用例（K1-K52，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
+- **test_k 全部用例（K1-K53，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
 - **test_lexin_agdc2_65 全部 72 用例 / test_zjxm_agdc2_61 全部 45 用例 / test_sksn_agdc2_57 全部 38 用例 / test_yqzl_agdc2_75 全部 239 用例（同模块级规则）**：客户卷子/功能对比报告原始报文原样重放（含采样参数的保留原值，未含参数的不注入）；
 - 测试点即采样参数行为的 a-h 用例：A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`（见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
@@ -381,7 +381,7 @@ pytest --junit-xml=report.xml       # JUnit XML
 | `API_KEY` | password | 空 | API Key（可选，留空则不携带鉴权头） |
 | `THINKING_MODE` | boolean | `true` | 启用思考模式 |
 | `REASONING_EFFORT` | choice | 空 | 全局 `reasoning_effort` 参数，可选值 `空`/`max`/`high`/`low`；空值表示不传该参数，非空时自动注入到所有 `chat_completion` 请求 |
-| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K52，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
+| `SAMPLING_PARAMS` | string | `{"temperature": "", "top_p": "", "seed": ""}` | 全局采样参数（JSON）。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；`null`/空串表示不覆盖该字段；整体留空表示全部不覆盖。test_k 全部用例（K1-K53，整套件保持原始测试参数）与参数行为用例（A6/A7/A10/E3/G2，见[全局采样参数覆盖](#全局采样参数覆盖)）始终按自身参数执行；其余 a-h 用例设值时走全局参数值 |
 | `MARKER` | choice | `all` | 测试标记，见下表（当 `SPECIFIC_TEST` 不为 `none` 时此项被忽略） |
 | `SPECIFIC_TEST` | choice | `none` | 指定单个测试用例执行（选 `none` 则使用 `MARKER`；选具体用例后仅执行该用例，忽略 `MARKER`）。可选值为 test_a ~ test_h 与 test_k 下的所有具体测试函数 |
 | `DESCRIPTION` | string | 空 | 模型服务的描述信息（展示在邮件概要中） |
