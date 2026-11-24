@@ -50,9 +50,9 @@ with open(_CASES_PATH, "r", encoding="utf-8") as _f:
 _YQZL_BY_ID: Dict[str, Dict[str, Any]] = {c["id"]: c for c in _YQZL_CASES}
 
 # TTL 缓存边界探针组（TTL-001~007）独立成参数化方法：复刻报告等待
-# 时长（180s~600s，合计约 44 分钟）+ 二次缓存命中断言，带 slow_ttl
-# 标记（用户确认 2026-11-23 方案 A）——-m "yqzl_agdc2_75 and not
-# slow_ttl" 可快速排除。
+# 时长（180s~600s，合计约 44 分钟）+ 严格 TTL 语义判定（等待≥TTL 应
+# 过期未命中 / 等待<TTL 应命中，用户确认 2026-11-24 方案 B），带
+# slow_ttl 标记——-m "yqzl_agdc2_75 and not slow_ttl" 可快速排除。
 _TTL_CASES: List[Dict[str, Any]] = [c for c in _YQZL_CASES
                                     if c["id"].startswith("TTL-")]
 _MAIN_CASES: List[Dict[str, Any]] = [c for c in _YQZL_CASES
@@ -887,12 +887,19 @@ class TestYqzlAGDC2_75:
     def test_ttl_boundary(self, case, api_client, test_logger):
         """TTL 缓存边界探针（TTL-001~007，slow_ttl 慢速约 44 分钟）。
 
-        复刻报告等待时长（场景期望「实际静默等待 Xs」：180/300.1/300/
-        301/360/600/600s）后断言二次缓存命中（用户确认 2026-11-23 方案
-        A）：请求 1 → sleep(报告等待时长) → 请求 2 → 断言 HTTP 200 +
-        cached_tokens > 0（报告 20261119 实测二次 cached_tokens=1728；
-        实测 cached=0 时判 FAIL——若为 5m TTL 正确过期则属报告记录异
-        常，若为缓存未生效则属缺陷，需人工复核）。
+        严格 TTL 语义判定（用户确认 2026-11-24 方案 B）：等待时长 ≥
+        TTL → 缓存应已过期，二次 cached_tokens 应为 0（过期探针组：
+        TTL-002 5m/300.1s——仅超边界 0.1s 亦严格断言、TTL-003 5m/
+        360s、TTL-004 5m/600s）；等待时长 < TTL → 缓存应存活，二次
+        cached_tokens 应 > 0（命中控制组：TTL-001 5m/180s、TTL-005/
+        006 1h/300s/301s、TTL-007 1h/600s）。执行：请求 1（写入）→
+        sleep(报告等待时长) → 请求 2（同前缀）。断言：① 首次 HTTP
+        200；② 二次 HTTP 200；③ 按分组命中/未命中。背景：原报告与
+        复测 20261124 均在超 TTL 等待后命中 1728（报告标「待复核」未
+        判失败；方案 A「命中即 PASS」无法暴露 TTL 未生效——超 TTL 仍
+        命中现判 FAIL「TTL 未生效：缓存未按设置过期」，缺陷或 TTL 档
+        位口径差异需人工复核；TTL 内未命中判 FAIL「缓存未生效或提前
+        过期」）。
         """
         import re as _re
 
@@ -905,6 +912,16 @@ class TestYqzlAGDC2_75:
         wait_s = float(wm.group(1)) if wm else 0.0
         if wait_s <= 0:
             pytest.skip(f"{cid}: 场景期望未含等待时长（无法复刻边界探针）")
+        # 严格 TTL 语义分组（方案 B，用户确认 2026-11-24）：等待 ≥ TTL
+        # → 过期探针（预期二次未命中）；等待 < TTL → 命中控制（预期二
+        # 次命中）。TTL 取请求 1 的 prompt_cache_options.ttl。
+        pco = ((case["requests"][0]["payload"] or {}).get(
+            "prompt_cache_options") or {})
+        ttl_s = {"5m": 300.0, "1h": 3600.0}.get(str(pco.get("ttl") or ""))
+        if ttl_s is None:
+            _yqzl_obs(f"{cid} TTL 参数未识别（ttl={pco.get('ttl')!r}），"
+                      f"按命中控制口径判定")
+        expect_expired = ttl_s is not None and wait_s >= ttl_s
 
         def _payload_of(req):
             p = json.loads(json.dumps(req["payload"]))
@@ -931,30 +948,51 @@ class TestYqzlAGDC2_75:
 
         time.sleep(wait_s)
 
-        # 请求 2（同前缀——缓存命中探测）
+        # 请求 2（同前缀——缓存命中/过期探测）
         r2 = _yqzl_send(api_client, case.get("kind") or "chat",
                         _payload_of(case["requests"][1]),
                         bool(case.get("stream")), case.get("auth") or "session")
         ct2 = _cached_tokens(r2)
+        if expect_expired:
+            eval_txt = ("二次 cached_tokens 过期未命中"
+                        "（等待≥TTL，缓存应已过期）")
+            eval_ok = ct2 == 0
+            exp_note = "预期未命中=0（等待≥TTL 应过期）"
+        else:
+            eval_txt = ("二次 cached_tokens 命中"
+                        "（TTL 内缓存应存活；报告实测 1728）")
+            eval_ok = ct2 > 0
+            exp_note = "预期命中>0（TTL 内应存活）"
         _yqzl_obs(f"{cid} 二次请求（等待 {wait_s}s 后）: HTTP {r2['status']}，"
-                  f"cached_tokens={ct2}（报告 20261119 实测 1728）")
+                  f"cached_tokens={ct2}（报告 20261119 实测 1728；"
+                  f"严格 TTL 语义{exp_note}）")
         _YQZL_EVALS[cid] = [
             ("首次请求 HTTP 200", r1["status"] == 200,
              f"实测 HTTP {r1['status']}"),
             ("两次请求 HTTP 200", r2["status"] == 200,
              f"实测 HTTP {r2['status']}"),
-            ("二次 cached_tokens 命中（报告实测 1728）", ct2 > 0,
-             f"实测 cached_tokens={ct2}"),
+            (eval_txt, eval_ok, f"实测 cached_tokens={ct2}"),
         ]
         assert r2["status"] == 200, (
             f"{cid} 二次请求应 HTTP 200，实测 HTTP {r2['status']}；"
             f"响应: {r2['raw'][:200]}"
         )
-        assert ct2 > 0, (
-            f"{cid} 二次 cached_tokens 应命中（>0，报告 20261119 实测 "
-            f"1728），实测 {ct2}——若为 5m TTL 正确过期（{wait_s}s>300s）"
-            f"则属报告记录异常；若为缓存未生效则属缺陷，需人工复核"
-        )
+        if expect_expired:
+            assert ct2 == 0, (
+                f"{cid} TTL 未生效：缓存未按设置过期——等待 {wait_s}s ≥ "
+                f"TTL {ttl_s:.0f}s（prompt_cache_options.ttl="
+                f"{pco.get('ttl')}）后二次请求仍命中 cached_tokens={ct2}"
+                f"（报告 20261119 与复测 20261124 实测均为 1728，原报告标"
+                f"「待复核」未判失败——缺陷或 TTL 档位口径差异（如内部仅"
+                f"支持更长 TTL），需人工复核）"
+            )
+        else:
+            ttl_note = f"{ttl_s:.0f}s" if ttl_s else "未知"
+            assert ct2 > 0, (
+                f"{cid} 缓存未生效或提前过期：等待 {wait_s}s < TTL "
+                f"{ttl_note}，二次应命中（报告 20261119 实测 1728），"
+                f"实测 cached_tokens={ct2}——属缺陷需人工复核"
+            )
         test_logger.info(
-            "%s 边界探针通过: 等待 %.1fs 后二次 cached_tokens=%d",
-            cid, wait_s, ct2)
+            "%s 边界探针通过: 等待 %.1fs 后二次 cached_tokens=%d（%s）",
+            cid, wait_s, ct2, exp_note)
