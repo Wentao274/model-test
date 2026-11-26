@@ -1087,8 +1087,10 @@ K36-K40、K42、K45-K53 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   内容本身的文本，必须作为正文保留，不得被识别为模版思考标
   签而丢弃（用户核心语义）。5 请求非流式（S1→S4 相邻 3s）：
   S1 工单原样单发回放；S2 构造历史单请求（user 工单原句+
-  assistant "A＜think＞B＜/think＞C" 构造回复+user 复述指令——正文干
-  净不含标签）；S3 真实两连发（第 1 发工单原句真实回复原样作
+  assistant "A＜think＞B＜/think＞C" 构造回复+reasoning_content=""
+  （空思考字段形态，用户确认 2026-11-26 替换原无字段形态——复测
+  差分证据定位触发条件）+user 复述指令——正文干净不含标
+  签）；S3 真实两连发（第 1 发工单原句真实回复原样作
   assistant 历史、第 2 发复述指令——第 1 发响应含 reasoning_
   content 时一并随 assistant 历史回填字段原样重放（真实客户端
   形态；无思考字段则该变体路径空转不构造））；S4 构造思考历史
@@ -14167,7 +14169,9 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         K41 先例）：
         - S1：工单原样单发回放（单条 user 输入转义面）
         - S2：构造历史单请求——messages=[user 工单原句, assistant
-          "A＜think＞B＜/think＞C"（构造回复）, user 复述指令（正
+          "A＜think＞B＜/think＞C"（构造回复）+reasoning_content=""
+          （空思考字段形态，用户确认 2026-11-26 替换原无字段形态
+          ——复测差分证据定位触发条件）, user 复述指令（正
           文干净不含标签）]，历史内容确定
         - S3：真实两连发——第 1 发工单原句取真实回复原样作
           assistant 历史；第 2 发复述指令（贴近客户客户端实
@@ -14238,8 +14242,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "character for character. Output only that line and "
             "nothing else."
         )
-        # K46 S2 构造历史：assistant 历史轮含完整控制词字面量（修
-        # 复后工单场景的期望回复形态）
+        # K46 构造回复（S2/S4 共用）：assistant 历史 content 含完整
+        # 控制词字面量（修复后工单场景的期望回复形态）
         K46_CONSTRUCTED_REPLY = "A<think>B</think>C"
         # K46 S4 构造思考历史：assistant 历史 reasoning_content 含
         # 控制词字面量的思考文本（工单口径构造——标签在思考段中
@@ -14395,12 +14399,21 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         time.sleep(3)
 
         # S2: 构造历史多轮单请求——历史 user/assistant 轮均含控制
-        # 词字面量，第二轮正文干净复述指令（历史内容确定）
+        # 词字面量，assistant 历史带空 reasoning_content 字段（用户
+        # 确认 2026-11-26 替换原无字段形态——复测差分证据：S2 无字
+        # 段失败、S3b/S4 带思考字段通过，空字段形态定位触发条件；
+        # 无字段缺陷形态以手动复现三次证据留档工单侧），第二轮正文
+        # 干净复述指令（历史内容确定）
         _k46_send_and_check_soft(
-            "S2 构造历史多轮（user/assistant 历史均含控制词字面量）",
+            "S2 构造历史多轮（user/assistant 历史均含控制词字面量，"
+            "assistant 历史带空 reasoning_content 字段）",
             [
                 {"role": "user", "content": K46_PROMPT},
-                {"role": "assistant", "content": K46_CONSTRUCTED_REPLY},
+                {
+                    "role": "assistant",
+                    "content": K46_CONSTRUCTED_REPLY,
+                    "reasoning_content": "",
+                },
                 {"role": "user", "content": K46_RECALL_PROMPT},
             ],
         )
