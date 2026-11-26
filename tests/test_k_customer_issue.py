@@ -1095,9 +1095,12 @@ K36-K40、K42、K45-K53 为 P0（任何失败应阻断发布），K4/K8/K9/K15/K
   （assistant 历史 content=构造回复+reasoning_content=含控制词
   字面量的思考文本+user 复述指令——确定性，不依赖真实输出；
   K46_CONSTRUCTED_REASONING 工单口径构造——标签在思考段中被
-  计数 2 次）。每请求四断言：断言1 HTTP
-  200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正
-  文非空；断言4（核心）正文（strip 后）包含完整控制词字面量
+  计数 2 次）。每请求四断言（软收集，用户确认 2026-11-26）：
+  任一场景失败记录后不中止后续场景，5 请求全部执行后末尾汇总
+  断言——一次运行产出全部场景证据；用例整体判定=任一断言失败
+  即 FAIL（判定口径不变）。断言1 HTTP 200+合法 JSON+choices 非
+  空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）
+  正文（strip 后）包含完整控制词字面量
   ＜think＞B＜/think＞（S1 缺陷形态仅 "A"；S2/S3/S4 历史被吞则
   无从复述——多轮变体缺陷形态）。观察（不计判据）：与期望行严
   格相等对照、reasoning_content 存在性与长度（输出侧是否二次吞
@@ -14178,7 +14181,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
           文干净不含标签）]——确定性，不依赖真实输出；思考历
           史中的控制词字面量是思考内容本身的文本，须作为正文
           保留不得被识别为模版思考标签而丢弃（用户核心语义）
-        每请求四断言：
+        每请求四断言（逐场景软收集，用户确认 2026-11-26）：任一场
+        景失败不中止后续场景，5 请求全部执行后末尾汇总断言——一次
+        运行产出全部场景证据；用例整体判定=任一断言失败即 FAIL
+        （判定口径不变，仅证据收集方式调整）：
         1. 断言1：HTTP 200 + 合法 JSON + choices 非空
         2. 断言2：finish_reason 非空（正常结束）
         3. 断言3：正文非空
@@ -14196,7 +14202,8 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         不注入；stream/thinking/采样参数未含——不注入；超时沿用全
         局。仅 GLM-5.3-Flash（工单模型 glm-5.3-flash，缺陷实证于
         flash 编码链路）。无新增数据文件。（不进 smoke 集：新用例
-        首跑观察期；5 请求）
+        首跑观察期；5 请求；断言失败逐项软收集后末尾汇总断言，
+        任一断言失败即用例 FAIL）
         """
         test_logger.info(
             "=== 测试开始: 客户问题 - 用户正文与多轮历史含聊天模版控"
@@ -14209,8 +14216,10 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "史——思考中控制词字面量是思考内容本身的文本须保留，不"
             "得被识别为模版思考标签而丢弃；修复=sanitize_control_"
             "tokens；5 请求：S1 单轮回放+S2 构造历史+S3 真实两连发"
-            "+S4 构造思考历史；每请求四断言：200+finish 非空+正文"
-            "非空+含完整 ＜think＞B＜/think＞ 字面量）==="
+            "+S4 构造思考历史；每请求四断言（软收集失败不中止，末尾汇"
+            "总断言，用户确认 2026-11-26）：200+finish 非空+正文非空+"
+            "含完整 ＜think＞B＜/think＞ 字面量；任一断言失败即用例"
+            " FAIL）==="
         )
 
         # K46: 工单测试用例原样（AGDC2-58：消息原文含聊天模版控制
@@ -14245,12 +14254,18 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             "thinking tag."
         )
 
+        # K46 场景失败软收集（用户确认 2026-11-26）：任一场景失败
+        # 不中止后续场景，5 请求全部执行后末尾汇总断言——一次运
+        # 行产出全部场景证据；用例整体判定=任一断言失败即
+        # FAIL（判定口径不变，仅证据收集方式调整）
+        k46_failures: List[str] = []
         chat_url = f"{api_client.api_prefix}/chat/completions"
 
-        # K46: 每请求发送+四断言+观察留证（S1/S2/S3a/S3b/S4 共用）；
+        # K46: 每请求发送+四断言（软收集失败记录，不中止后续
+        # 场景）+观察留证（S1/S2/S3a/S3b/S4 共用）；
         # 返回 (原始正文, reasoning_content)——S3b 以第 1 发真实回复
         # （响应含思考时一并回填）作 assistant 历史
-        def _k46_send_and_check(
+        def _k46_send_and_check_soft(
             tag: str, messages: List[Dict[str, Any]]
         ) -> Tuple[str, Any]:
             payload: Dict[str, Any] = {
@@ -14282,52 +14297,70 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             elapsed = time.time() - start_time
             status = response.status_code
             body_text = response.text
-            # 断言1：HTTP 200 + 合法 JSON + choices 非空
-            assert status == 200, (
-                f"[{tag}] 请求失败 HTTP {status}，elapsed="
-                f"{elapsed:.1f}s, 响应体全文: {body_text[:2000]}"
-            )
+            # 断言1（软收集）：HTTP 200——失败记录并提前返回
+            # （无响应体可解析，后续断言无从执行）
+            if status != 200:
+                k46_failures.append(
+                    f"[{tag}] 断言1失败: 请求失败 HTTP {status}，"
+                    f"elapsed={elapsed:.1f}s, "
+                    f"响应体全文: {body_text[:2000]}"
+                )
+                return "", None
             try:
                 data = response.json()
             except ValueError:
                 data = None
-            assert isinstance(data, dict), (
-                f"[{tag}] 响应体非合法 JSON，elapsed={elapsed:.1f}s, "
-                f"响应体全文: {body_text[:2000]}"
-            )
+            if not isinstance(data, dict):
+                k46_failures.append(
+                    f"[{tag}] 断言1失败: 响应体非合法 JSON，"
+                    f"elapsed={elapsed:.1f}s, "
+                    f"响应体全文: {body_text[:2000]}"
+                )
+                return "", None
             choices = data.get("choices")
-            assert isinstance(choices, list) and choices, (
-                f"[{tag}] choices 缺失或为空（结构不完整），响应体全"
-                f"文: {body_text[:2000]}"
-            )
+            if not (isinstance(choices, list) and choices):
+                k46_failures.append(
+                    f"[{tag}] 断言1失败: choices 缺失或为空"
+                    f"（结构不完整），响应体全文: {body_text[:2000]}"
+                )
+                return "", None
             message = choices[0].get("message") or {}
             content_text = str(message.get("content") or "")
             reasoning_content = message.get("reasoning_content")
 
-            # 断言2：finish_reason 非空（正常结束）
+            # 断言2（软收集）：finish_reason 非空（正常结束）
+            # ——失败记录后继续（消息体仍可观察留证）
             finish_reason = choices[0].get("finish_reason")
-            assert finish_reason, (
-                f"[{tag}] finish_reason 为空（未正常结束），响应体全"
-                f"文: {body_text[:2000]}"
-            )
-            # 断言3：正文非空
-            assert content_text.strip(), (
-                f"[{tag}] 正文为空，响应体全文: {body_text[:2000]}"
-            )
-            # 断言4（核心）：正文（strip 后）包含完整控制词字面量
-            # A<think>B</think>（S1 缺陷形态仅 "A"——B/C 被吞即截
-            # 断；S2/S3 复述场景历史被吞则模型无从复述——多轮变体
-            # 缺陷形态）
+            if not finish_reason:
+                k46_failures.append(
+                    f"[{tag}] 断言2失败: finish_reason 为空"
+                    f"（未正常结束），响应体全文: {body_text[:2000]}"
+                )
+            # 断言3（软收集）：正文非空——失败记录并提前返回
+            # （空正文无可观察）
+            if not content_text.strip():
+                k46_failures.append(
+                    f"[{tag}] 断言3失败: 正文为空，"
+                    f"响应体全文: {body_text[:2000]}"
+                )
+                return "", None
+            # 断言4（核心·软收集）：正文（strip 后）包含完整控制词
+            # 字面量 K46_CONTROL_LITERAL（S1 缺陷形态仅 "A"——
+            # B/C 被吞即截断；S2/S3 复述场景历史被吞则模型无从复
+            # 述——多轮变体缺陷形态）——失败记录后继续观察留证
+            # （生成层形态记录，不中止后续场景）
             stripped = content_text.strip()
-            assert K46_CONTROL_LITERAL in stripped, (
-                f"[{tag}] 缺陷复现: 正文未含完整控制词字面量 "
-                f"A<think>B</think>（工单期望输出 {K46_EXPECTED!r} "
-                f"的必要内容——实际正文 {stripped[:200]!r}：S1 形态 "
-                f"B/C 被吞即模版渲染未转义控制词致正文被提前截断；"
-                f"S2/S3 形态为历史含标签被吞致模型无从复述——多轮变"
-                f"体缺陷形态——缺陷复现或生成侧未配合复述需人工复"
-                f"核），响应体全文: {body_text[:2000]}"
-            )
+            if K46_CONTROL_LITERAL not in stripped:
+                k46_failures.append(
+                    f"[{tag}] 断言4失败（核心）: 正文未含完整控制词"
+                    f"字面量 {K46_CONTROL_LITERAL!r}（工单期望输出 "
+                    f"{K46_EXPECTED!r} 的必要内容——实际正文 "
+                    f"{stripped[:200]!r}：S1 形态 B/C 被吞即模版渲"
+                    f"染未转义控制词致正文被提前截断；S2/S3 形态为"
+                    f"历史含标签被吞致模型无从复述——多轮变体缺陷形"
+                    f"态——缺陷复现或生成侧未配合复述需人工复核），"
+                    f"响应体全文: {body_text[:2000]}"
+                )
 
             # 观察（不计判据）：与期望行严格相等对照、
             # reasoning_content 存在性与长度（输出侧解析器是否二次
@@ -14355,7 +14388,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             return content_text, reasoning_content
 
         # S1: 工单原样单发回放（单条 user 输入转义面）
-        _k46_send_and_check(
+        _k46_send_and_check_soft(
             "S1 单轮回放（工单原样）",
             [{"role": "user", "content": K46_PROMPT}],
         )
@@ -14363,7 +14396,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
 
         # S2: 构造历史多轮单请求——历史 user/assistant 轮均含控制
         # 词字面量，第二轮正文干净复述指令（历史内容确定）
-        _k46_send_and_check(
+        _k46_send_and_check_soft(
             "S2 构造历史多轮（user/assistant 历史均含控制词字面量）",
             [
                 {"role": "user", "content": K46_PROMPT},
@@ -14378,27 +14411,36 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 响应含 reasoning_content 时思考一并随 assistant 历史回填
         # 字段原样重放（真实客户端形态；无思考字段则该变体路径
         # 空转不构造）
-        s3a_content, s3a_reasoning = _k46_send_and_check(
+        s3a_content, s3a_reasoning = _k46_send_and_check_soft(
             "S3 真实两连发第 1 发（工单原样重发取真实回复）",
             [{"role": "user", "content": K46_PROMPT}],
         )
         time.sleep(3)
-        s3b_assistant: Dict[str, Any] = {
-            "role": "assistant", "content": s3a_content
-        }
-        if s3a_reasoning:
-            s3b_assistant["reasoning_content"] = s3a_reasoning
-            s3b_tag = "S3 真实两连发第 2 发（第 1 发真实回复+真实思考作历史）"
+        # 软收集：S3a 结构性失败返回空正文时 S3b 空转不构造
+        # （无真实回复可作历史——不引入与工单场景无关的空历史
+        # 形态；失败证据已由 S3a 记录，末尾汇总断言不变）
+        if not s3a_content:
+            test_logger.info(
+                "K46 S3b 空转：S3a 无正文（结构性失败已记录），"
+                "第 2 发不构造"
+            )
         else:
-            s3b_tag = "S3 真实两连发第 2 发（第 1 发真实回复作历史——响应无思考字段变体空转）"
-        _k46_send_and_check(
-            s3b_tag,
-            [
-                {"role": "user", "content": K46_PROMPT},
-                s3b_assistant,
-                {"role": "user", "content": K46_RECALL_PROMPT},
-            ],
-        )
+            s3b_assistant: Dict[str, Any] = {
+                "role": "assistant", "content": s3a_content
+            }
+            if s3a_reasoning:
+                s3b_assistant["reasoning_content"] = s3a_reasoning
+                s3b_tag = "S3 真实两连发第 2 发（第 1 发真实回复+真实思考作历史）"
+            else:
+                s3b_tag = "S3 真实两连发第 2 发（第 1 发真实回复作历史——响应无思考字段变体空转）"
+            _k46_send_and_check_soft(
+                s3b_tag,
+                [
+                    {"role": "user", "content": K46_PROMPT},
+                    s3b_assistant,
+                    {"role": "user", "content": K46_RECALL_PROMPT},
+                ],
+            )
         time.sleep(3)
 
         # S4: 构造思考历史——assistant 历史 content=构造回复+
@@ -14406,7 +14448,7 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
         # 令（确定性，不依赖真实输出；思考历史中的控制词字面量
         # 是思考内容本身的文本，须作为正文保留不得被识别为模版
         # 思考标签而丢弃——用户核心语义）
-        _k46_send_and_check(
+        _k46_send_and_check_soft(
             "S4 构造思考历史（assistant 历史含 reasoning_"
             "content 控制词字面量思考文本）",
             [
@@ -14420,14 +14462,32 @@ class TestCustomerIssue(BaseTest, StreamingTestMixin):
             ],
         )
 
+        # K46 末尾汇总断言（用户确认 2026-11-26）：5 请求全部执行
+        # 后汇总判定——无任何断言失败即 PASS 并输出验证通过日志；
+        # 有失败逐条列出并断言失败（用例整体判定=任一断言失败即
+        # FAIL，与首败中止口径等强，仅证据收集方式不同）
+        if k46_failures:
+            test_logger.info(
+                "客户问题整改验证失败（软收集汇总）: 共 %s 项断言未"
+                "过，逐条如下:", len(k46_failures)
+            )
+            for failure in k46_failures:
+                test_logger.info("  - %s", failure)
+            assert not k46_failures, (
+                f"K46 汇总断言失败: 共 {len(k46_failures)} 项断言未"
+                f"过（判定口径不变——任一断言失败即用例 FAIL；逐条"
+                f"失败明细见上方日志与断言消息）:\n"
+                + "\n".join(f"  - {item}" for item in k46_failures)
+            )
         test_logger.info(
             "客户问题整改验证通过: S1 单轮回放+S2 构造历史多轮+S3 "
             "真实两连发（含思考历史回放）+S4 构造思考历史共 5 请求"
-            "正文均含完整控制词字面量 "
-            "A<think>B</think>（单轮输入与多轮历史/思考历史模版渲染控制词"
-            "转义均正常——无提前截断/历史吞噬，思考中标签作为正文保"
-            "留不被识别为模版思考标签丢弃）；严格相等与 "
-            "reasoning_content 形态留观察，缺陷未复现"
+            "全部执行完毕且无断言失败——正文均含完整控制词字面量 "
+            + K46_CONTROL_LITERAL
+            + "（单轮输入与多轮历史/思考历史模版渲染控制词转义均"
+            "正常——无提前截断/历史吞噬，思考中标签作为正文保留不"
+            "被识别为模版思考标签丢弃）；严格相等与 reasoning_"
+            "content 形态留观察，缺陷未复现"
         )
 
     @pytest.mark.k_customer_issue

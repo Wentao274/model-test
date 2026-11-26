@@ -91,7 +91,7 @@
 
   | K44 | reasoning_effort="none" 应被 400 拒绝核验（code 1210 硬断言；message 按官方文案对齐为警告观察，chat 单协议） | 客户问题（工单 AGDC2-55 · alayanew vs 智谱官方未对齐 #10，2026-11-11 复测修正）：相同请求 POST /v1/chat/completions（确认参数 max_completion_tokens=128 + reasoning_effort="none"——标题与 alayanew 错误文案双重佐证；原始消息 349,732 字符被截断不可得，校验为参数校验层与消息内容无关），实测两侧均 400（工单原记录「官方 200 接受」有误）：alayanew 返回 400 {"code": 1210, "message": "reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）"}（顶层 code/message 形态），智谱官方返回 400 {"error": {"code": "1210", "message": "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"}}（嵌套 error 形态）——两侧同拒，仅文案与结构不同 | 单发非流式：请求体 = 工单确认参数 max_completion_tokens=128 + reasoning_effort="none" 原样 + 自拟最小 user 消息（工单消息不可得且不影响校验路径）；模型名由环境注入；两侧实测响应均非流式形态——stream 不传（不注入）；断言1 HTTP 400（200=none 被接受——与两侧实测预期不符，留证 FAIL；500 等其他状态同样 FAIL）；断言2 错误体合法 JSON 且 code==1210（顶层 code 与嵌套 error.code 兼容解析，int/字符串兼容——两侧实测均为 1210）；观察（警告不计判据）：message 对齐官方文案「该模型始终思考，不支持关闭思考；请使用 low、high 或 max。」——一致时 info 留痕，不一致（alayanew「reasoning_effort 取值非法: none（glm-5.3 仅支持 low / high / max）」形态即不一致）时 warning 留证不致失败；超时沿用全局；chat 单协议（校验为 chat 参数校验层）；GLM-5.3 专用（工单模型 glm-5.3）；无新增数据文件 | P1 |
 | K45 | responses 端点思考计数核验（reasoning_tokens 恒 0 缺陷，responses 单协议） | 客户问题（工单实证，2026-11-10）：POST /v1/responses 原样请求（glm-5.3、instructions="Answer concisely."、input 单 user 消息「Compute 47*89 step by step, then reply with just the number.」、max_output_tokens=1024、stream=false）响应 200 completed——思考已下发（output 含 type=="reasoning" 块，summary 为完整思考过程 ~3000 字符）、思考已计入 output_tokens（545 vs 可见正文 "4183" 仅 ~2 token——差值全为思考消耗），但 usage.output_tokens_details.reasoning_tokens=0——明细恒 0 与总量自相矛盾=缺陷（客户最初另报「content 无思考块」，报文实证块在——缺陷收敛到计数口径） | 原样回放 ×3（「恒 0」稳定性复现口径；每发独立断言，相邻 3s）：请求体五字段工单原样，仅 model 环境注入（K43 先例）；断言1 HTTP 200+合法 JSON+output 数组存在；断言2 有思考内容（type=="reasoning" 块 summary 文本非空——思考暴露缺失即 FAIL）；断言3 有正文（type=="message" 块 output_text 非空——数值正误不定留证）；断言4 reasoning_tokens>0（恒 0/缺失=缺陷复现——工单形态）且 ≤output_tokens（K30 断言4 下界口径）；观察（不计判据）：正文全文、output_tokens 与可见正文差值（思考量旁证）、summary 长度、顶层 reasoning 回显、id 形态、error 字段；工单密钥不入库（鉴权走环境配置）；thinking/采样参数未带——不注入；非流式（stream=false 原样）；超时沿用全局；GLM-5.3 专用（工单模型 glm-5.3，缺陷为 usage 计数口径，无模型分支）；无新增数据文件 | P0 |
-| K46 | 用户正文与多轮历史含聊天模版控制词转义核验（＜think＞ 字面量截断缺陷+多轮历史场景，chat 单协议，AGDC2-58） | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A＜think＞B＜/think＞C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A＜think＞B＜/think＞C。开发分析确证根因（输入侧编码链路，非推理解析器）：用户提示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面量，transformers 应用聊天模版时未对用户输入关键字做转义——渲染时被编码成模版控制 token 与模版自身思考标签碰撞，令牌器无法区分用户正文与模版控制词——＜think＞B... 部分被提前截断。修复=transformers≥5.20.2 chat_template_kwargs {"sanitize_control_tokens": true}（vLLM main-1106+transformers v5.21.0 支持，部署默认开启 --default-chat-template-kwargs）或改造 Dynamo 自制编码器（dynamo-renderer==6.0.0/dynamo-tokenizers==2.0.0） | 5 请求非流式（用户确认 2026-11-25 两批增强，S1→S4 相邻 3s）：S1 工单原样单发回放；S2 构造历史单请求（user/assistant 历史均含控制词字面量+user 复述指令——正文干净不含标签）；S3 真实两连发（第 1 发工单原句真实回复原样作 assistant 历史、第 2 发复述指令——贴近客户客户端实况；第 1 发响应含 reasoning_content 时思考一并随 assistant 历史回填字段原样重放——真实客户端形态，无思考字段则该变体路径空转不构造）；S4 构造思考历史（assistant 历史 content=构造回复+reasoning_content=含控制词字面量思考文本（工单口径构造，字面量出现 2 次）+user 复述指令——确定性，不依赖真实输出；思考历史中控制词字面量是思考内容本身的文本，须作为正文保留不得被识别为模版思考标签而丢弃——用户核心语义）；请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；每请求断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量 ＜think＞B＜/think＞（S1 缺陷形态仅 "A"——B/C 被吞即截断；S2/S3/S4 历史被吞则模型无从复述——多轮变体缺陷形态） | P0 |
+| K46 | 用户正文与多轮历史含聊天模版控制词转义核验（＜think＞ 字面量截断缺陷+多轮历史场景，chat 单协议，AGDC2-58） | 客户问题（工单 AGDC2-58 · 杭州永沐科技，2026-11-10，状态修复中）：POST /v1/chat/completions（glm-5.3-flash、max_tokens=2000、单 user 消息 "Reply with exactly this line and nothing else: A＜think＞B＜/think＞C"）——模型仅输出 "A"，加大推理程度无效；期望输出 A＜think＞B＜/think＞C。开发分析确证根因（输入侧编码链路，非推理解析器）：用户提示词正文含聊天模版控制词 ＜think＞/＜/think＞ 字面量，transformers 应用聊天模版时未对用户输入关键字做转义——渲染时被编码成模版控制 token 与模版自身思考标签碰撞，令牌器无法区分用户正文与模版控制词——＜think＞B... 部分被提前截断。修复=transformers≥5.20.2 chat_template_kwargs {"sanitize_control_tokens": true}（vLLM main-1106+transformers v5.21.0 支持，部署默认开启 --default-chat-template-kwargs）或改造 Dynamo 自制编码器（dynamo-renderer==6.0.0/dynamo-tokenizers==2.0.0） | 5 请求非流式（用户确认 2026-11-25 两批增强，S1→S4 相邻 3s）：S1 工单原样单发回放；S2 构造历史单请求（user/assistant 历史均含控制词字面量+user 复述指令——正文干净不含标签）；S3 真实两连发（第 1 发工单原句真实回复原样作 assistant 历史、第 2 发复述指令——贴近客户客户端实况；第 1 发响应含 reasoning_content 时思考一并随 assistant 历史回填字段原样重放——真实客户端形态，无思考字段则该变体路径空转不构造）；S4 构造思考历史（assistant 历史 content=构造回复+reasoning_content=含控制词字面量思考文本（工单口径构造，字面量出现 2 次）+user 复述指令——确定性，不依赖真实输出；思考历史中控制词字面量是思考内容本身的文本，须作为正文保留不得被识别为模版思考标签而丢弃——用户核心语义）；请求体工单原样（max_tokens=2000+消息原文——控制词字面量精确复现），model 环境注入；seed/temperature（Wiki 复现带 seed=123/temperature=0.7）为开发侧复现辅助参数——客户原始请求未含，不注入；stream/thinking/采样参数未含——不注入；超时沿用全局；每请求断言1-4 软收集（用户确认 2026-11-26：任一场景失败记录后不中止后续场景，5 请求全部执行后末尾汇总断言，任一断言失败即 FAIL——判定口径不变）：断言1 HTTP 200+合法 JSON+choices 非空；断言2 finish_reason 非空；断言3 正文非空；断言4（核心）正文 strip 后包含完整控制词字面量 ＜think＞B＜/think＞（S1 缺陷形态仅 "A"——B/C 被吞即截断；S2/S3/S4 历史被吞则模型无从复述——多轮变体缺陷形态） | P0 |
 | K47 | Kimi-K3 思考开关参数对齐官方核验（不传/enabled 应思考、disabled/effort+disabled 不思考、effort 四档应思考，chat 单协议） | 客户问题（工单比对文档，2026-11-11）：渠道与 Kimi-K3 官方思考开关参数行为不一致——不传与 thinking={"type": "enabled"} 官方思考而渠道不思考（缺陷）；thinking={"type": "disabled"} 与 reasoning_effort+disabled 双方不思考；reasoning_effort（low/medium/high/max）双方思考（渠道唯一开思考通路）——预期全按官方行为断言 | 自拟请求体 8 发非流式（工单仅含参数形态不含报文）：短算术 prompt，思考场景 max_tokens=512、不思考 64；断言1（全部）HTTP 200+合法 JSON+choices 非空；断言2（思考场景）reasoning 信号存在（message.reasoning_content/reasoning 非空 或 usage.reasoning_tokens>0——不思考即缺陷复现）；断言3（不思考场景）reasoning 空+reasoning_tokens==0+content 非空+finish_reason 非空；相邻 3s；超时沿用全局；model 环境注入；仅 Kimi-K3；无新增数据文件 | P0 |
 | K48 | chunk_include_usage 中间帧累计 usage 核验（chat 单协议） | 客户问题（工单 AGDC2-63，广西智算）：chat 流式请求设置 stream_options.chunk_include_usage=true 后 SSE 中间帧无累计 usage——渠道未支持智谱官方参数（官方：每帧返回当前累计用量，prompt_tokens 恒定、completion/reasoning 逐帧累计；区别于 OpenAI include_usage 仅末帧 usage）——预期按官方行为断言 | 单发 chat 流式（工单原样请求体仅 model 环境注入；max_tokens 未含不注入；temperature/top_p 原样保留豁免注入）：断言1 HTTP 200+SSE 数据帧非空+[DONE]；断言2（核心）含 delta 内容的每帧必带 usage（缺失即缺陷复现）；断言3 usage 三项 tokens 非负整数且 completion_tokens 单调不减；断言4 finish_reason 非空；finish 帧 usage 留观察；超时沿用全局；GLM-5.3 专用；无新增数据文件 | P0 |
 | K49 | kimi 视频 base64 流式提交应 400 而非 5xx（chat 单协议） | 客户问题（2026-11-20 反馈）：以 base64 方式向 kimi 模型提交视频并走流式，渠道返回 500（接入点未开放视频通路，请求未被前置拒绝，在消息解析层抛出内部异常），客户端按瞬时故障多次重试无果——预期不支持的输入类型前置 4xx 拒绝（400 明确错误），调用方可区分调用方式问题与服务故障 | 单发 chat 流式（自拟请求体：text 询问+video_url 块 data:video/mp4;base64 内置最小合法 MP4 头；model 环境注入；max_tokens/thinking 未指定不注入）：断言1（核心）HTTP 400（5xx=缺陷复现、200/其他=未按预期拒绝，均 FAIL）；断言2 400 错误体含明确错误信息（error.code 记录观察，整改目标 code 落地前不硬断）；直接 session.post 直发观察首响；超时沿用全局；KimiK3+KimiK31；无新增数据文件 | P0 |
@@ -3956,7 +3956,7 @@ completions`。
   是思考内容本身的文本，须作为正文保留不得被识别为模版思考标签
   而丢弃（用户核心语义）
 
-**断言**（每请求四断言，S1/S2/S3a/S3b/S4 共用）：
+**断言**（每请求四断言，S1/S2/S3a/S3b/S4 共用；软收集模式——用户确认 2026-11-26：任一场景失败记录后不中止后续场景，5 请求全部执行后末尾汇总断言）：
 1. HTTP 200 + 合法 JSON + choices 非空
 2. finish_reason 非空（正常结束）
 3. 正文非空
@@ -3982,6 +3982,12 @@ reasoning_content 存在性与长度（输出侧解析器是否二次吞标签/�
   或输出被截断**——S4 形态为思考历史中标签被识别为模版思考标签
   丢弃；生成侧未配合复述需人工复核区分）
 - 200 + 正文包含完整 ＜think＞B＜/think＞ 字面量 → PASS
+- 软收集机制（用户确认 2026-11-26）：断言1（HTTP/JSON/choices）
+  与断言3（正文空）为结构性失败——记录后该场景提前返回（S3a
+  结构性失败时 S3b 空转不构造）；断言2（finish 缺失）与断言4
+  （字面量缺失）记录后继续观察留证；所有场景执行完毕后末尾汇
+  总断言——任一失败条目存在即用例 FAIL（与首败中止等强，仅
+  证据收集方式不同）
 
 **设计决策记录**：
 - **工单号拼接方法名**（用户指定）：`test_user_content_control_
@@ -4025,6 +4031,12 @@ reasoning_content 存在性与长度（输出侧解析器是否二次吞标签/�
   思考段中出现 2 次）以复述结果含完整字面量判定（思考被吞则模
   型无从复述）；K25 回填形态先例、K39 双字段共存兼容已覆盖
   schema 层，本例判模版渲染转义域
+- **软收集失败模式**（用户确认 2026-11-26）：原首败中止模式一次
+  运行只见首个失败场景，缺陷修复观察期需一次运行产出全部 5 场
+  景证据（各场景独立暴露面）；改为逐场景软收集+末尾汇总断言——
+  判定口径不变（任一断言失败即 FAIL）；S3a 结构性失败返回空正
+  文时 S3b 空转不构造（无真实回复可作历史，不引入与工单场景无
+  关的空历史形态）
 
 **注意事项**：
 - marker：仅 `GLM53FLASH`（K 套件按模型分组标记；工单模型
@@ -4034,11 +4046,13 @@ reasoning_content 存在性与长度（输出侧解析器是否二次吞标签/�
   sanitize_control_tokens 部署后转 PASS
 - 5 请求非流式（S1→S4 相邻 3s）：总时长≈单请求 5 倍+3s×4 间
   隔，超时沿用全局
-- S3 两连发以第 1 发真实回复作历史——第 1 发断言失败（缺陷复现
-  形态）时用例即中止，第 2 发不执行；S3b 思考回填依赖第 1 发响
-  应实际含 reasoning_content（GLM-5.3-Flash 默认开思考——通常
-  含；无思考字段则该变体路径空转不构造，tag 标注差异留证）；
-  S2/S4 构造历史不受此影响
+- S3 两连发以第 1 发真实回复作历史——软收集模式下第 1 发断言失
+  败不中止用例：缺陷复现形态（正文非空缺字面量）时第 2 发以其
+  真实（截断）回复继续复述留证；结构性失败（HTTP/JSON/choices/
+  正文空）返回空正文时 S3b 空转不构造（失败证据已由第 1 发记
+  录）；S3b 思考回填依赖第 1 发响应实际含 reasoning_content
+  （GLM-5.3-Flash 默认开思考——通常含；无思考字段则该变体路径
+  空转不构造，tag 标注差异留证）；S2/S4 构造历史不受此影响
 - 不进 smoke 集：新用例首跑观察期
 
 ### test_kimik3_thinking_switch_contract (K47)
