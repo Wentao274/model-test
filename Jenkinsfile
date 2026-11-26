@@ -13,6 +13,7 @@ def selectedMarkerList() {
         ['MARKER_ZJXM_AGDC2_61', 'zjxm_agdc2_61'],
         ['MARKER_SKSN_AGDC2_57', 'sksn_agdc2_57'],
         ['MARKER_YQZL_AGDC2_75', 'yqzl_agdc2_75'],
+        ['MARKER_AIYI_AGDC2_74', 'aiyi_agdc2_74'],
         ['MARKER_GLM52', 'GLM52'],
         ['MARKER_GLM53', 'GLM53'],
         ['MARKER_KIMIK3', 'KimiK3'],
@@ -36,7 +37,7 @@ def selectedMarkerList() {
 def markerDisplayText() {
     def selected = selectedMarkerList()
     if (params.MARKER_ALL || selected.isEmpty()) {
-        return 'all (全部测试，不含 L 类 lexin_agdc2_65、Z 类 zjxm_agdc2_61、S 类 sksn_agdc2_57 与 Y 类 yqzl_agdc2_75)'
+        return 'all (全部测试，不含 L 类 lexin_agdc2_65、Z 类 zjxm_agdc2_61、S 类 sksn_agdc2_57、Y 类 yqzl_agdc2_75 与 AY 类 aiyi_agdc2_74)'
     }
     return selected.join(', ')
 }
@@ -56,8 +57,10 @@ pipeline {
         password(name: 'API_KEY', defaultValue: '', description: 'API Key (可选，无需认证时留空)')
         booleanParam(name: 'THINKING_MODE', defaultValue: true, description: '启用思考模式')
         choice(name: 'REASONING_EFFORT', choices: ['', 'max', 'high', 'low'], description: '全局 reasoning_effort 参数（空值表示不传该参数；选择 max/high/low 时所有对话请求均携带该参数）')
-        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K53，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）、test_zjxm_agdc2_61 全部 45 用例（九章功能对比报告 20261110「实际传参」原始报文 + 20261116 复测报告补入 3 条，原样发送，不注入采样参数）、test_sksn_agdc2_57 全部 38 用例（kimi-k3 能力确认请求含缓存/TTL 参数原样发送，不注入采样参数）、test_yqzl_agdc2_75 全部 239 用例（九章 kimi-k3 测试报告「实际请求参数」原样重放，不注入采样参数）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
-        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65、Z 类 test_zjxm_agdc2_61、S 类 test_sksn_agdc2_57 与 Y 类 test_yqzl_agdc2_75——L/Z/S/Y 类仅勾选对应 MARKER 或 SPECIFIC_TEST 点名（Z/S/Y 类暂不进 SPECIFIC_TEST）时执行）')
+        string(name: 'REF_MODEL_NAME', defaultValue: 'minimax-h3-ref2va', description: '参考图工作流（ref2va）模型名称（AGDC2-74 T9 用例透传；留空回退 minimax-h3-ref2va；设为 none/skip/- 跳过 T9 用例）')
+        booleanParam(name: 'AGDC2_74_LINK_EXPIRY', defaultValue: false, description: '开启 AGDC2-74 T11 直链 15 分钟过期慢用例（等待约 15 分钟；默认关闭按需触发）')
+        string(name: 'SAMPLING_PARAMS', defaultValue: '{"temperature": "", "top_p": "", "seed": ""}', description: '全局采样参数(JSON)。三字段默认均为空——不覆盖（用例未显式指定则请求不带采样参数）；字段设为数值即全局覆盖；null/空串表示不覆盖该字段；整体留空表示全部不覆盖。参数行为用例(A6/A7/A10/E3/G2)与 test_k 全部用例（K1-K53，整套件保持原始测试参数——工单/原始请求含采样参数的原样保留，未含参数的不注入）、test_lexin_agdc2_65 全部 72 用例（run-432「测试结果报文详情」全量导出的请求体原样发送，不注入采样参数）、test_zjxm_agdc2_61 全部 45 用例（九章功能对比报告 20261110「实际传参」原始报文 + 20261116 复测报告补入 3 条，原样发送，不注入采样参数）、test_sksn_agdc2_57 全部 38 用例（kimi-k3 能力确认请求含缓存/TTL 参数原样发送，不注入采样参数）、test_yqzl_agdc2_75 全部 239 用例（九章 kimi-k3 测试报告「实际请求参数」原样重放，不注入采样参数）、test_aiyi_agdc2_74 全部 11 用例（minimax-h3 视频生成接口，无采样参数概念，不注入）始终按自身参数执行；其余 a-h 用例设值时走全局参数值')
+        booleanParam(name: 'MARKER_ALL', defaultValue: false, description: '执行全部测试（勾选后忽略下方具体标记；不勾选任何标记时同样执行全部测试；当SPECIFIC_TEST不为none时所有标记均被忽略；全部测试不含 L 类 test_lexin_agdc2_65、Z 类 test_zjxm_agdc2_61、S 类 test_sksn_agdc2_57、Y 类 test_yqzl_agdc2_75 与 AY 类 test_aiyi_agdc2_74——L/Z/S/Y/AY 类仅勾选对应 MARKER 或 SPECIFIC_TEST 点名（Z/S/Y 类暂不进 SPECIFIC_TEST）时执行）')
         booleanParam(name: 'MARKER_A_BASIC', defaultValue: false, description: 'A类测试 - 基础推理能力')
         booleanParam(name: 'MARKER_B_ADVANCED', defaultValue: false, description: 'B类测试 - 高级生成功能')
         booleanParam(name: 'MARKER_C_MULTIMODAL', defaultValue: false, description: 'C类测试 - 多模态能力')
@@ -71,6 +74,7 @@ pipeline {
         booleanParam(name: 'MARKER_ZJXM_AGDC2_61', defaultValue: false, description: 'Z类测试 - 浙江讯盟工单 AGDC2-61 glm-5.3 功能对比报告失败场景 45 用例复现（42 失败场景预期遵循智谱官方行为；3 条官方基线异常守护预期遵循九章复测基线，20261116 复测报告补入；不进 SPECIFIC_TEST，用户指定）')
         booleanParam(name: 'MARKER_SKSN_AGDC2_57', defaultValue: false, description: 'S类测试 - 深空数能工单 AGDC2-57 kimi-k3 能力确认 38 用例（缓存写入/TTL/usage/响应头/OpenAI/Anthropic 六域；协议层硬断言 FAIL、能力层软断言记录差异；#17 TTL 过期验证为 slow_ttl 慢速用例约 5.5 分钟；不进 SPECIFIC_TEST，用户指定 2026-11-17）')
         booleanParam(name: 'MARKER_YQZL_AGDC2_75', defaultValue: false, description: 'Y类测试 - 杭州耘擎智联工单 AGDC2-75 kimi-k3 功能测试报告 239 用例重放（按报告实际请求参数原样重放，断言基准=报告场景期望与逐项判定；记录式判定项只记录不判，无期望/不适用项 skip；不进 SPECIFIC_TEST，同 Z/S 套件口径）')
+        booleanParam(name: 'MARKER_AIYI_AGDC2_74', defaultValue: false, description: 'AY类测试 - API易工单 AGDC2-74 minimax-h3 视频生成接口 11 用例（multipart 提交/任务轮询/400 非法矩阵修复验证/并发限流 429/直链行为与过期；T11 直链过期慢用例经 AGDC2_74_LINK_EXPIRY 参数开启；生成任务成本约 8 个、典型时长 25-45 分钟）')
         booleanParam(name: 'MARKER_GLM52', defaultValue: false, description: 'GLM-5.2 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_GLM53', defaultValue: false, description: 'GLM-5.3 模型缺陷相关用例（K套件按模型分组标记）')
         booleanParam(name: 'MARKER_KIMIK3', defaultValue: false, description: 'Kimi K3 模型缺陷相关用例（K套件按模型分组标记）')
@@ -293,7 +297,18 @@ pipeline {
             'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_71_cuoti_51_1',
             'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_72_cuoti_52_1',
             'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_73_cuoti_53_1',
-            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_74_cuoti_54_1'
+            'tests/test_lexin_agdc2_65.py::TestLexinAGDC2_65::test_74_cuoti_54_1',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_01_text_to_video_baseline_and_direct_link',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_02_idempotency_same_key_dedup',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_03_invalid_params_matrix_400_no_task_leftover',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_04_idempotency_key_reusable_after_400',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_05_adaptive_single_image_default_mapping',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_06_adaptive_two_images_default_mapping',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_07_concurrent_2k_rate_limit_and_completion',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_08_rate_limit_recovery_after_terminal',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_09_ref2va_reference_workflow_permission',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_10_direct_link_with_authorization_header',
+            'tests/test_aiyi_agdc2_74.py::TestAiyiAGDC2_74::test_11_direct_link_expiry_403'
         ], description: '指定单个测试用例执行（选择none则使用MARKER参数；选择具体用例后仅执行该用例，忽略MARKER参数）')
         string(name: 'DESCRIPTION', defaultValue: '', description: '模型服务的描述信息')
         text(name: 'RECIPIENTS', defaultValue: 'liwt@zetyun.com', description: '测试报告邮件接收者（逗号分隔）')
@@ -320,8 +335,10 @@ pipeline {
                     println("PD分离模式:   ${params.PD}")
                     println("模型服务名称: ${params.MODEL}")
                     println("BASE_URL:     ${params.BASE_URL}")
-                    println("思考模式:     ${params.THINKING_MODE}")
-                    println("ReasoningEffort: ${params.REASONING_EFFORT ?: '(空)'}")
+                println("思考模式:     ${params.THINKING_MODE}")
+                println("ReasoningEffort: ${params.REASONING_EFFORT ?: '(空)'}")
+                println("参考工作流模型(AGDC2-74): ${params.REF_MODEL_NAME ?: '(空)'}")
+                println("直链过期慢用例(AGDC2-74): ${params.AGDC2_74_LINK_EXPIRY}")
                     println("采样参数:     ${params.SAMPLING_PARAMS ?: '(空, 不覆盖)'}")
                     def markerDisplay = markerDisplayText()
                     println("测试标记:     ${markerDisplay}")
@@ -377,6 +394,8 @@ ENDSSH"""
                     def reasoningEffortFlag = params.REASONING_EFFORT ? "--reasoning-effort ${params.REASONING_EFFORT}" : ''
                     def samplingParamsValue = params.SAMPLING_PARAMS ? params.SAMPLING_PARAMS.toString().trim() : ''
                     def samplingParamsFlag = samplingParamsValue ? "--sampling-params '${samplingParamsValue}'" : ''
+                    def refModelFlag = params.REF_MODEL_NAME ? "--ref-model-name '${params.REF_MODEL_NAME}'" : ''
+                    def linkExpiryFlag = params.AGDC2_74_LINK_EXPIRY ? '--link-expiry-test' : ''
                     def selectedMarkers = selectedMarkerList()
                     def markerFlag = (params.MARKER_ALL || selectedMarkers.isEmpty()) ? "-m 'not lexin_agdc2_65'" : "-m '${selectedMarkers.join(' or ')}'"
                     sshagent(credentials: ["${SSH_CREDENTIALS}"]) {
@@ -405,7 +424,7 @@ if [ -n "${params.SPECIFIC_TEST}" ] && [ "${params.SPECIFIC_TEST}" != "none" ]; 
         --build-number "${BUILD_NUMBER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag} ${refModelFlag} ${linkExpiryFlag}
 else
     pytest -v ${markerFlag} \\
         --base-url "${params.BASE_URL}" \\
@@ -418,7 +437,7 @@ else
         --build-number "${BUILD_NUMBER}" \\
         --alluredir="${BUILD_OUTPUT_DIR}/allure-results" \\
         --summary-report-dir="${BUILD_OUTPUT_DIR}/allure-report" \\
-        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag}
+        ${thinkingFlag} ${reasoningEffortFlag} ${samplingParamsFlag} ${refModelFlag} ${linkExpiryFlag}
 fi
 ENDSSH"""
                         }

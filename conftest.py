@@ -88,7 +88,10 @@ RAW_SAMPLING_PARAM_TESTS = {
 # 杭州耘擎智联 yqzl 套件（test_yqzl_agdc2_75.py）同样整模块豁免（用户
 # 口径 2026-11-23）：九章 kimi-k3 测试报告「实际请求参数」原样重放，
 # 不注入采样参数；报告用例变更自动适用。
-RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py", "test_lexin_agdc2_65.py", "test_zjxm_agdc2_61.py", "test_sksn_agdc2_57.py", "test_yqzl_agdc2_75.py"}
+# API易 aiyi 套件（test_aiyi_agdc2_74.py）同样整模块豁免（用户口径
+# 2026-11-25）：minimax-h3 视频生成接口（multipart 异步任务）无采样
+# 参数概念，不注入 temperature/top_p/seed；新增 aiyi 用例自动适用。
+RAW_SAMPLING_EXEMPT_FILES = {"test_k_customer_issue.py", "test_lexin_agdc2_65.py", "test_zjxm_agdc2_61.py", "test_sksn_agdc2_57.py", "test_yqzl_agdc2_75.py", "test_aiyi_agdc2_74.py"}
 
 
 def _parse_sampling_params(raw: str) -> Optional[Dict[str, Any]]:
@@ -634,12 +637,32 @@ def pytest_addoption(parser):
         default=None,
         help="Directory for summary report output (default: allure-report)",
     )
+    parser.addoption(
+        "--ref-model-name",
+        action="store",
+        default="",
+        help="AGDC2-74 T9 参考图工作流（ref2va）模型名（Jenkins "
+        "REF_MODEL_NAME 透传；本地缺省回退 env REF_MODEL_NAME，再缺省 "
+        "minimax-h3-ref2va；显式 none/skip/- 表示跳过 T9 用例）",
+    )
+    parser.addoption(
+        "--link-expiry-test",
+        action="store_true",
+        default=False,
+        help="开启 AGDC2-74 T11 直链 15 分钟过期慢用例（Jenkins "
+        "AGDC2_74_LINK_EXPIRY 透传；本地回退 env "
+        "AIYI_LINK_EXPIRY_TEST=1/true/yes/on）",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
     """修改测试项，添加marker"""
     for item in items:
-        if "test_a_" in item.nodeid:
+        # aiyi 分支必须先于 test_a_ 判定：test_a_ 是 test_aiyi_ 的子串，
+        # 先判 test_a_ 会把 aiyi 用例错标为 a_basic（用户口径 2026-11-25）
+        if "test_aiyi_" in item.nodeid:
+            item.add_marker(pytest.mark.aiyi_agdc2_74)
+        elif "test_a_" in item.nodeid:
             item.add_marker(pytest.mark.a_basic)
         elif "test_b_" in item.nodeid:
             item.add_marker(pytest.mark.b_advanced)
@@ -711,6 +734,18 @@ def pytest_collection_modifyitems(config, items):
     if not yqzl_explicit:
         items[:] = [i for i in items if "test_yqzl_agdc2_75" not in i.nodeid]
 
+    # aiyi 套件（test_aiyi_agdc2_74）默认排除口径（用户口径 2026-11-25，
+    # 同 L/Z/S/Y 套件双保险）：无显式点名时不收集 aiyi 用例——仅当
+    # -m 表达式含 aiyi_agdc2_74 或命令行显式指定该文件/节点时收集
+    # （Jenkins 勾选 MARKER_AIYI_AGDC2_74、SPECIFIC_TEST 点名、本地
+    # -m aiyi_agdc2_74/指定路径均属显式）。视频生成套件任务分钟级、
+    # 有生成成本，默认不进 all。
+    aiyi_explicit = "aiyi_agdc2_74" in markexpr or any(
+        "test_aiyi_agdc2_74" in str(a) for a in (config.args or [])
+    )
+    if not aiyi_explicit:
+        items[:] = [i for i in items if "test_aiyi_agdc2_74" not in i.nodeid]
+
 
 def pytest_configure(config):
     """注册自定义marker"""
@@ -750,6 +785,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "yqzl_agdc2_75: Y类测试 - 杭州耘擎智联工单 AGDC2-75 kimi-k3 功能测试报告 239 用例重放（断言基准=报告场景期望与逐项判定）",
+    )
+    config.addinivalue_line(
+        "markers",
+        "aiyi_agdc2_74: AY类测试 - API易工单 AGDC2-74 minimax-h3 视频生成接口 11 用例（multipart 提交/任务轮询/400 非法矩阵/并发限流 429/直链行为与过期）",
     )
     config.addinivalue_line(
         "markers",

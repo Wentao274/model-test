@@ -282,7 +282,7 @@ pytest -m slow -v                           # 慢速测试
 豁免机制（用户口径）：以下用例全局覆盖对其**不生效**，始终按用例自身参数执行——
 
 - **test_k 全部用例（K1-K53，模块级规则——见 `conftest.py` 的 `RAW_SAMPLING_EXEMPT_FILES`）**：整套件保持原始测试参数，工单/原始请求含采样参数的原样保留（K1 temperature=0.1、K2 temperature=1+top_p=0.95、K5-K9 思考档契约温度、K10/K11/K12 脚本 temperature=0、K24 temperature=0.0、K32 temperature=0.5/1.5/2.0/2.5/-0.5——chat/msg 双协议），未含参数的用例一律不注入（无全局注入口）；
-- **test_lexin_agdc2_65 全部 72 用例 / test_zjxm_agdc2_61 全部 45 用例 / test_sksn_agdc2_57 全部 38 用例 / test_yqzl_agdc2_75 全部 239 用例（同模块级规则）**：客户卷子/功能对比报告原始报文原样重放（含采样参数的保留原值，未含参数的不注入）；
+- **test_lexin_agdc2_65 全部 72 用例 / test_zjxm_agdc2_61 全部 45 用例 / test_sksn_agdc2_57 全部 38 用例 / test_yqzl_agdc2_75 全部 239 用例 / test_aiyi_agdc2_74 全部 11 用例（同模块级规则）**：客户卷子/功能对比报告原始报文原样重放（含采样参数的保留原值，未含参数的不注入）；aiyi 为视频生成接口（multipart 异步任务）无采样参数概念，不注入；
 - 测试点即采样参数行为的 a-h 用例：A6 `test_temperature_control`、A7 `test_top_p_top_k_sampling`、A10 `test_seed_reproducibility`、E3 `test_invalid_parameters`、G2 `test_generation_consistency`（见 `conftest.py` 的 `RAW_SAMPLING_PARAM_TESTS`）。
 
 其余 a-h 用例测试点未指定 temperature/top_p/seed——无全局覆盖时请求一律不带采样参数；设值后走全局参数值（受限模型场景即全量统一携带允许值）。
@@ -314,6 +314,8 @@ pytest -m slow -v                           # 慢速测试
 深空数能 S 套件（`test_sksn_agdc2_57`）另有**专用 HTML 能力确认报告**（`base/sksn_html_report.py`）：7 项确认事项结论表 + 用例明细「断言口径 vs 实测观察」+ 能力观察清单，纯 sksn 运行时顶替通用 Markdown 汇总（详见 `docs/test_sksn_agdc2_57.md`「测试报告」）。
 
 杭州耘擎智联 Y 套件（`test_yqzl_agdc2_75`）另有**专用 HTML 重放对比报告**（`base/yqzl_html_report.py`）：报告类别分组统计 + 用例明细「报告场景期望/逐项判定 vs 实测」，纯 yqzl 运行时顶替通用 Markdown 汇总（详见 `docs/test_yqzl_agdc2_75.md`「测试报告」）。
+
+API易 AY 套件（`test_aiyi_agdc2_74`）使用通用 Markdown/Allure 报告（暂无专用报告生成器）：minimax-h3 视频生成接口 11 用例（multipart 提交/任务轮询/400 非法矩阵修复验证/并发限流 429/直链行为与过期），判定口径与用例详述见 `docs/test_aiyi_agdc2_74.md`。
 
 ### 目录结构
 
